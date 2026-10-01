@@ -39,7 +39,7 @@ A mobile-first PWA that replaces a Runna subscription for one runner first, more
 - **Deploy:** migrations at process start, expand/contract only; rollback is Render's redeploy of the previous build. Daily cron via GitHub Actions; Dependabot activity keeps it enabled; Settings shows last sync.
 - **Login:** email + password via Better Auth, sign-up off, in-memory rate limits, owner seeded by CLI; Google or passkeys when other users join. Why: no third party, no redirect, works in the installed PWA; email needs a domain we lack.
 - **Garmin:** `garminconnect` 0.3.x native auth (garth deprecated), pinned. Token bundle encrypted per user; access token about 24.6 h; refresh token rotates, so write back after every call and serialize per user. About 1 s between calls, never auto-retry 429. Slice 1 connects via a laptop CLI; the web 2FA flow (in-memory state, two calls) comes later. Details in `.claude/skills/garmin-call/garminconnect-api.md`.
-- **Garmin risk:** accepted for personal use. Unofficial client, fingerprint and datacenter blocks seen; slice 1 on Render is the test; fallbacks in LATER.md.
+- **Garmin risk:** accepted for personal use. Unofficial client, fingerprint and datacenter blocks seen; slice 1 on Render is the test; fallbacks in the `later` issues (#13 to #19).
 - **Garmin calendar:** the app touches only workouts it created (IDs tracked) and offers to unschedule third-party ones in the plan window.
 - **Watch:** Instinct 2 Solar, firmware 13.19+: pace/HR/time/distance step workouts and strength sets; HRV, training readiness, status and load, VO2 max, running power; no running dynamics or multi-band GPS.
 - **Contract:** zod only, written once in `packages/shared`; Node parses at runtime, Python validates fixtures against the exported JSON Schema. No OpenAPI codegen.
@@ -57,6 +57,6 @@ Coach chat; sign-up for other users; Google or passkey login; custom domain; pre
 
 ## Open risks
 
-- Garmin may block calls from Render's datacenter IPs. Slice 1 is the test; fallbacks in LATER.md.
+- Garmin may block calls from Render's datacenter IPs. Slice 1 is the test; fallbacks in issue #13.
 - 512 MB must hold Node, uvicorn and curl_cffi. Slice 1 measures; fallback is a second free service.
 - Whether bot commits count as repository activity for the 60-day cron rule is undocumented; add a keepalive if it ever stops.
