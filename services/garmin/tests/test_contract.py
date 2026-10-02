@@ -67,6 +67,30 @@ def test_history_responses_match_garmin_history_response(
         assert_valid("garmin-activity-summary", activity)
 
 
+@pytest.mark.parametrize(
+    ("activity_id", "behaviour"),
+    [
+        (10_000_000_007, None),  # outdoor, with the fake's fictional route
+        (10_000_000_006, None),  # treadmill
+        (10_000_000_004, None),  # no heart rate
+        (10_000_000_003, None),  # manual entry
+        (9_000_000_035, None),  # heart rate 0
+        (10_000_000_007, "rotate"),
+    ],
+)
+def test_activity_detail_responses_match_garmin_activity_detail_response(
+    client: TestClient, activity_id: int, behaviour: str | None
+) -> None:
+    request = {"tokenBundle": bundle() if behaviour is None else bundle(fixture=behaviour)}
+    assert_valid("garmin-activity-detail-request", request)
+
+    response = client.post(f"/activities/{activity_id}/detail", json=request)
+
+    assert response.status_code == 200
+    assert_valid("garmin-activity-detail-response", response.json())
+    assert_valid("activity-detail", response.json()["detail"])
+
+
 def test_sync_requests_the_tests_send_match_garmin_sync_request() -> None:
     assert_valid("garmin-sync-request", {"tokenBundle": bundle(), **FULL_RANGE})
     assert_valid("garmin-profile-request", {"tokenBundle": bundle()})
@@ -100,6 +124,11 @@ def error_responses(make_client: AppFactory) -> dict[str, Any]:
         "history_validation": client.post(
             "/history", json={"tokenBundle": bundle(), "start": 0, "limit": 201}
         ),
+        "detail_not_found": client.post("/activities/12345/detail", json={"tokenBundle": bundle()}),
+        "detail_rotate_then_unavailable": client.post(
+            "/activities/10000000007/detail",
+            json={"tokenBundle": bundle(fixture="rotate_then_unavailable")},
+        ),
         "not_found": client.get("/nope"),
         "internal": make_client(connect=crashing).post("/profile", json={"tokenBundle": bundle()}),
     }
@@ -118,6 +147,8 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         "validation": 400,
         "history_rotate_then_rate_limited": 429,
         "history_validation": 400,
+        "detail_not_found": 404,
+        "detail_rotate_then_unavailable": 502,
         "not_found": 404,
         "internal": 500,
     }
@@ -129,6 +160,7 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         "rotate_then_rate_limited",
         "rotate_then_unavailable",
         "history_rotate_then_rate_limited",
+        "detail_rotate_then_unavailable",
     }
 
 

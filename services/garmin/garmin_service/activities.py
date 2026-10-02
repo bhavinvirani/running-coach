@@ -66,9 +66,9 @@ def to_summary(activity: GarminActivity) -> ActivitySummary:
         tz=None,
         distance_m=max(activity.distance or 0.0, 0.0),
         duration_s=max(activity.duration or 0.0, 0.0),
-        avg_hr=_positive(activity.average_hr),
-        max_hr=_positive(activity.max_hr),
-        cadence=_positive(activity.average_running_cadence_in_steps_per_minute),
+        avg_hr=positive(activity.average_hr),
+        max_hr=positive(activity.max_hr),
+        cadence=positive(activity.average_running_cadence_in_steps_per_minute),
         calories=_non_negative(activity.calories),
         elevation_gain_m=activity.elevation_gain,
         is_indoor=type_key in INDOOR_TYPE_KEYS,
@@ -76,7 +76,7 @@ def to_summary(activity: GarminActivity) -> ActivitySummary:
     )
 
 
-def _positive(value: float | None) -> float | None:
+def positive(value: float | None) -> float | None:
     """A 0 bpm or 0 spm average means the sensor had nothing; report it as missing."""
     return value if value is not None and value > 0 else None
 

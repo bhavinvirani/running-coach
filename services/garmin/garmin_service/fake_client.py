@@ -5,6 +5,14 @@ history.json (hand-made fake years before them, with non-runs mixed in).
 Both list calls serve that union newest first and ignore the activity type, so the routes' own run
 filter must hold by itself.
 
+The three detail calls serve detail-splits.json, detail-series.json and detail-hr-zones.json (one
+real run, sanitized and trimmed) for any activity of the account, with its id patched in, and
+derive the variants from the account's list item: an indoor type has no route and no elevation, a
+run without heart rate has no HR series, no lap HR and no second in any zone, a manual entry has no
+laps, no samples and no zones. An outdoor run gets a fictional loop around 0.0, -30.0 (open
+ocean) as its route: the sanitizer removes the real one. An id outside the account is a 404, as
+Garmin answers.
+
 The token bundle drives the behaviour, so the API's integration tests and e2e reach every path
 through the real service. Base bundle:
     {"di_token":"fixture-token","di_refresh_token":"fixture-refresh","di_client_id":"fixture-client"}
@@ -20,17 +28,28 @@ them, causes chained, so errors.py runs exactly as in production.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 from garminconnect import (
     GarminConnectAuthenticationError,
     GarminConnectConnectionError,
+    GarminConnectNotFoundError,
     GarminConnectTooManyRequestsError,
 )
 
+from garmin_service.activities import INDOOR_TYPE_KEYS
+
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 ACTIVITY_FIXTURES = ("sync.json", "history.json")
+SPLITS_FIXTURE = "detail-splits.json"
+SERIES_FIXTURE = "detail-series.json"
+HR_ZONES_FIXTURE = "detail-hr-zones.json"
+# The fictional route: a loop in open ocean, far from anyone's real runs.
+FAKE_ROUTE_CENTER = (0.0, -30.0)
+FAKE_ROUTE_RADIUS_DEG = 0.02
+FAKE_ROUTE_POINTS = 120
 
 # What garminconnect's _run_request raises underneath login() for each simulated failure.
 _LOGIN_FAILURES = {
@@ -51,6 +70,45 @@ def _call_failure(behaviour: str) -> Exception:
         cause = GarminConnectConnectionError("API Error 503")
     error.__cause__ = cause
     return error
+
+
+def _not_found() -> Exception:
+    """What garminconnect's API-call wrapper raises when Garmin answers 404 for an unknown id."""
+    error = GarminConnectNotFoundError("API call client error (404): API Error 404")
+    error.__cause__ = GarminConnectNotFoundError("API Error 404")
+    return error
+
+
+def _drop_metric(details: dict[str, Any], key: str) -> None:
+    """Leave one series out the way Garmin does: no descriptor and no column in any row."""
+    descriptors = details["metricDescriptors"]
+    index = next((d["metricsIndex"] for d in descriptors if d["key"] == key), None)
+    if index is None:
+        return
+    kept = []
+    for d in descriptors:
+        if d["key"] != key:
+            column = d["metricsIndex"]
+            kept.append({**d, "metricsIndex": column - 1 if column > index else column})
+    details["metricDescriptors"] = kept
+    for row in details["activityDetailMetrics"]:
+        del row["metrics"][index]
+    details["measurementCount"] = len(details["metricDescriptors"])
+
+
+def _fake_route() -> dict[str, Any]:
+    lat0, lon0 = FAKE_ROUTE_CENTER
+    points = []
+    for i in range(FAKE_ROUTE_POINTS + 1):  # the last point closes the loop
+        angle = 2 * math.pi * i / FAKE_ROUTE_POINTS
+        points.append(
+            {
+                "lat": round(lat0 + FAKE_ROUTE_RADIUS_DEG * math.sin(angle), 6),
+                "lon": round(lon0 + FAKE_ROUTE_RADIUS_DEG * math.cos(angle), 6),
+                "valid": True,
+            }
+        )
+    return {"polyline": points}
 
 
 class FakeTokenStore:
@@ -129,6 +187,57 @@ class FakeGarmin:
     ) -> list[dict[str, Any]]:
         self._fail_pending_call()
         return self._account()[start : start + limit]
+
+    def get_activity_splits(self, activity_id: str) -> dict[str, Any]:
+        self._fail_pending_call()
+        item = self._activity(activity_id)
+        splits: dict[str, Any] = self._read(SPLITS_FIXTURE)
+        splits["activityId"] = item["activityId"]
+        if item.get("manualActivity"):
+            splits["lapDTOs"] = []
+        elif not item.get("averageHR"):
+            for lap in splits["lapDTOs"]:
+                lap.pop("averageHR", None)
+                lap.pop("maxHR", None)
+        return splits
+
+    def get_activity_details(
+        self, activity_id: str, maxchart: int = 2000, maxpoly: int = 4000
+    ) -> dict[str, Any]:
+        self._fail_pending_call()
+        item = self._activity(activity_id)
+        details: dict[str, Any] = self._read(SERIES_FIXTURE)
+        details["activityId"] = item["activityId"]
+        if item.get("manualActivity"):
+            details.update(
+                measurementCount=0,
+                metricsCount=0,
+                metricDescriptors=[],
+                activityDetailMetrics=[],
+                detailsAvailable=False,
+            )
+            return details
+        if not item.get("averageHR"):
+            _drop_metric(details, "directHeartRate")
+        if item["activityType"]["typeKey"] in INDOOR_TYPE_KEYS:
+            _drop_metric(details, "directElevation")
+        else:
+            details["geoPolylineDTO"] = _fake_route()
+        return details
+
+    def get_activity_hr_in_timezones(self, activity_id: str) -> list[dict[str, Any]]:
+        self._fail_pending_call()
+        item = self._activity(activity_id)
+        zones: list[dict[str, Any]] = self._read(HR_ZONES_FIXTURE)
+        if item.get("manualActivity") or not item.get("averageHR"):
+            zones = [{**zone, "secsInZone": 0.0} for zone in zones]
+        return zones
+
+    def _activity(self, activity_id: str) -> dict[str, Any]:
+        for item in self._account():
+            if str(item["activityId"]) == activity_id:
+                return item
+        raise _not_found()
 
     def _fail_pending_call(self) -> None:
         if self._fail_next_call is not None:

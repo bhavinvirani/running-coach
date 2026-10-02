@@ -68,6 +68,10 @@ class ScriptedGarmin:
         login_error: BaseException | None = None,
         activities_error: BaseException | None = None,
         list_answer: dict[str, Any] | None = None,
+        splits: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
+        hr_zones: dict[str, Any] | list[Any] | None = None,
+        detail_error: BaseException | None = None,
         rotate_to: str | None = None,
         full_name: str | None = "Alex Fixture",
         display_name: str | None = "fixture-runner",
@@ -81,6 +85,12 @@ class ScriptedGarmin:
         self._activities_error = activities_error
         # An object where get_activities should answer a list; None answers `activities`.
         self._list_answer = list_answer
+        # The three detail answers; None serves the fixture files unchanged.
+        self._splits = splits
+        self._details = details
+        self._hr_zones = hr_zones
+        # Raised by the first detail call.
+        self._detail_error = detail_error
         self.full_name = full_name
         self.display_name = display_name
         self.calls: list[str] = []
@@ -125,6 +135,25 @@ class ScriptedGarmin:
         if self._list_answer is not None:
             return self._list_answer
         return self._activities
+
+    def get_activity_splits(self, activity_id: str) -> dict[str, Any]:
+        self.calls.append(f"get_activity_splits:{activity_id}")
+        if self._detail_error is not None:
+            raise self._detail_error
+        answer: dict[str, Any] = read_fixture("detail-splits.json")
+        return answer if self._splits is None else self._splits
+
+    def get_activity_details(
+        self, activity_id: str, maxchart: int = 2000, maxpoly: int = 4000
+    ) -> dict[str, Any]:
+        self.calls.append(f"get_activity_details:{activity_id}:{maxchart}:{maxpoly}")
+        answer: dict[str, Any] = read_fixture("detail-series.json")
+        return answer if self._details is None else self._details
+
+    def get_activity_hr_in_timezones(self, activity_id: str) -> dict[str, Any] | list[Any]:
+        self.calls.append(f"get_activity_hr_in_timezones:{activity_id}")
+        answer: list[Any] = read_fixture("detail-hr-zones.json")
+        return answer if self._hr_zones is None else self._hr_zones
 
     def connect(self) -> Connect:
         def connect(token_bundle: str) -> GarminSession:
