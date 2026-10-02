@@ -1,0 +1,36 @@
+# Secrets
+**/.env
+**/.env.*
+!.env.example
+
+# Personal data and throwaway code (git-ignored too)
+KICKOFF.md
+reference
+spikes
+.garminconnect
+recordings
+cassettes
+**/*.har
+
+# Built inside the image, never copied in
+**/node_modules
+**/.venv
+**/dist
+**/dev-dist
+**/coverage
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Test output and screenshot baselines
+**/playwright-report
+**/test-results
+**/blob-report
+apps/web/e2e/screens/*-snapshots
+
+# Repo tooling the build does not read
+.git
+.github
+.claude
+**/.DS_Store
