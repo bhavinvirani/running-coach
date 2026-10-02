@@ -5,6 +5,8 @@ import {
   type Units,
 } from "@running-coach/shared";
 import { Link } from "react-router";
+import { DotLine } from "@/components/dot-line";
+import { RunTypeChip } from "@/components/run-type-chip";
 import { Stat } from "@/components/stat";
 import {
   MISSING,
@@ -15,6 +17,7 @@ import {
   formatPaceValue,
   paceUnitLabel,
 } from "@/lib/format";
+import { runTypeName } from "@/lib/run-type";
 
 type LatestRunProps = {
   activity: Activity;
@@ -22,7 +25,8 @@ type LatestRunProps = {
 };
 
 /**
- * The newest run: its local start, distance as the one hero number on Today, then time, pace and avg HR.
+ * The newest run: its local start with the Race chip and Indoor when they apply, distance as the one hero
+ * number on Today, then time, pace and avg HR.
  * Pace is derived here from distance and time; an indoor run without a footpod has neither distance nor pace.
  * The whole card opens the run.
  */
@@ -33,10 +37,12 @@ export function LatestRun({ activity, units }: LatestRunProps) {
       : MISSING;
   const pace = formatPaceValue(paceSecondsPerUnit(activity.distanceM, activity.durationS, units));
   const avgHr = formatHeartRate(activity.avgHr);
+  const typeName = runTypeName(activity.eventType);
   // Named in words: read from the figures, a screen reader would run "10.0km" into "52:18".
   const name = [
     "Open the latest run",
     formatLocalDateTime(activity.startLocal),
+    typeName,
     distance === MISSING ? null : `${distance} ${units}`,
     formatDuration(activity.durationS),
   ]
@@ -52,10 +58,11 @@ export function LatestRun({ activity, units }: LatestRunProps) {
       >
         <div className="flex items-baseline justify-between gap-4">
           <h2 className="text-body font-semibold text-ink">Latest run</h2>
-          <p className="text-body text-ink-2">
+          <DotLine className="justify-end text-body text-ink-2">
             <time dateTime={activity.startLocal}>{formatLocalDateTime(activity.startLocal)}</time>
-            {activity.isIndoor ? " · Indoor" : null}
-          </p>
+            {typeName ? <RunTypeChip eventType={activity.eventType} /> : null}
+            {activity.isIndoor ? "Indoor" : null}
+          </DotLine>
         </div>
         <HeroFigure
           label="Distance"

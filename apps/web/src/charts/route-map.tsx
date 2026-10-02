@@ -34,7 +34,7 @@ export function RouteMap({ route }: RouteMapProps) {
           <div
             role="status"
             aria-label="Loading the map"
-            className="h-60 rounded-md bg-surface-1"
+            className="h-60 rounded-md bg-surface-2"
           />
         }
       >

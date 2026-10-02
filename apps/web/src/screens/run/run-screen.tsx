@@ -89,7 +89,7 @@ function RunLayout({
   );
 }
 
-/** The time line and the seven stats at their loaded heights, then a block where the detail goes. */
+/** The time line and the seven stats at their loaded heights, then a card where the detail goes. */
 function RunSkeleton() {
   return (
     <RunLayout title={null} busy>
@@ -103,7 +103,8 @@ function RunSkeleton() {
             </div>
           ))}
         </div>
-        <div className="border-t border-line pt-4">
+        <div className="mt-2 flex flex-col gap-2">
+          <div className="h-5.5 w-16 rounded-sm bg-surface-2" />
           <div className="h-60 rounded-md bg-surface-1" />
         </div>
       </div>

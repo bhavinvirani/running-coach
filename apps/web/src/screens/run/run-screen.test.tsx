@@ -1,5 +1,5 @@
 import type { Activity, ActivityDetail, MeResponse } from "@running-coach/shared";
-import { ErrorCode } from "@running-coach/shared";
+import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
@@ -77,9 +77,17 @@ function detailLoaded() {
   return screen.findByRole("region", { name: "Route" });
 }
 
-const lapBars = () => section("Splits").querySelectorAll(".recharts-bar-rectangle");
+/** The split pace bars, one list item per lap. */
+const splitRows = () =>
+  within(within(section("Splits")).getByRole("list", { name: "Splits" })).getAllByRole("listitem");
 
-/** The line above the stats: start time and flags, "07:12 · Indoor". */
+/** Switches the Splits card to its table view and returns the table. */
+async function splitsTable() {
+  await userEvent.click(within(section("Splits")).getByRole("button", { name: "Show table" }));
+  return within(section("Splits")).getByRole("table", { name: "Splits" });
+}
+
+/** The line above the stats: start time and flags, "07:12·Indoor" (the dots are spaced by a gap). */
 const startLine = () => within(section("Summary")).getByText("07:12").parentElement;
 const miles = meFixture({ settings: { ...meFixture().settings, units: "mi" } });
 
@@ -176,21 +184,22 @@ describe("RunScreen", () => {
     expect(detailFetches(calls)).toHaveLength(0);
   });
 
-  it("shows every part of the detail: route sketch, lap pace, splits, zones, cadence and elevation", async () => {
+  it("shows every part of the detail on its own card: route sketch, split bars, zones, cadence and elevation", async () => {
     fakeRunApi({ stored: activityDetailFixture() });
     renderRun();
     await detailLoaded();
 
-    expect(within(section("Route")).getByRole("img", { name: "Route sketch" })).toBeInTheDocument();
+    for (const name of ["Route", "Splits", "Heart rate zones", "Cadence", "Elevation"]) {
+      const card = within(section(name)).getByRole("heading", { name }).nextElementSibling;
+      expect(card).toHaveClass("rounded-md", "bg-surface-1", "p-4");
+    }
+    const sketch = within(section("Route")).getByRole("img", { name: "Route sketch" });
+    // The card is the sketch's background.
+    expect(sketch).not.toHaveClass("bg-surface-1");
     expect(within(section("Route")).getByText("Route only: no map token.")).toBeInTheDocument();
-    expect(within(section("Splits")).getByRole("img", { name: "Lap pace chart" })).toBeVisible();
-    // The splits table is the chart's table view: no toggle in this section.
-    expect(within(section("Splits")).queryByRole("button")).not.toBeInTheDocument();
-    const splits = within(section("Splits")).getByRole("table", { name: "Splits" });
-    expect(within(splits).getAllByRole("row")).toHaveLength(12);
-    expect(within(splits).getByRole("row", { name: "1 1.0 km 5:18 138" })).toBeInTheDocument();
-    // The 40 m that end the run, at 19 s.
-    expect(within(splits).getByRole("row", { name: "11 0.04 km 7:55 158" })).toBeInTheDocument();
+    expect(
+      within(section("Heart rate zones")).getByRole("button", { name: "Show table" }),
+    ).toBeInTheDocument();
     expect(
       within(section("Heart rate zones")).getByRole("img", { name: "Heart rate zones chart" }),
     ).toBeInTheDocument();
@@ -198,6 +207,50 @@ describe("RunScreen", () => {
     expect(
       within(section("Elevation")).getByRole("img", { name: "Elevation chart" }),
     ).toBeVisible();
+  });
+
+  it("shows the splits as pace bars by default and the lap table with avg HR on Show table", async () => {
+    fakeRunApi({ stored: activityDetailFixture() });
+    renderRun();
+    await detailLoaded();
+
+    const bars = splitRows();
+    expect(bars).toHaveLength(11);
+    expect(within(bars[0] as HTMLElement).getByRole("img", { name: "5:18 /km" })).toBeVisible();
+    // Lap 2 at 5:15 is 3 s faster than lap 1.
+    expect(within(bars[1] as HTMLElement).getByText("+0:03")).toHaveClass("text-good");
+    // The 40 m that end the run, at 19 s, labelled by their distance.
+    expect(bars[10]).toHaveTextContent(/^0\.047:55 \/km/);
+    expect(within(section("Splits")).queryByRole("table")).not.toBeInTheDocument();
+
+    const splits = await splitsTable();
+    expect(within(splits).getAllByRole("row")).toHaveLength(12);
+    expect(within(splits).getByRole("row", { name: "1 1.0 km 5:18 138" })).toBeInTheDocument();
+    expect(within(splits).getByRole("row", { name: "11 0.04 km 7:55 158" })).toBeInTheDocument();
+
+    await userEvent.click(within(section("Splits")).getByRole("button", { name: "Show chart" }));
+    expect(splitRows()).toHaveLength(11);
+  });
+
+  it("lists the first 12 splits of a long run and all of them on Show all", async () => {
+    const laps = Array.from({ length: 21 }, (_, lap) => ({
+      index: lap + 1,
+      distanceM: 1000,
+      durationS: 300 + (lap % 4),
+      avgHr: 150,
+      avgCadence: 172,
+    }));
+    fakeRunApi({ stored: activityDetailFixture({ laps }) });
+    renderRun();
+    await detailLoaded();
+
+    expect(splitRows()).toHaveLength(12);
+    await userEvent.click(
+      within(section("Splits")).getByRole("button", { name: "Show all 21 laps" }),
+    );
+    expect(splitRows()).toHaveLength(21);
+    const splits = await splitsTable();
+    expect(within(splits).getAllByRole("row")).toHaveLength(22);
   });
 
   it("fetches the detail from Garmin once when the run has none, with a skeleton below the stats meanwhile", async () => {
@@ -356,7 +409,7 @@ describe("RunScreen", () => {
 
     const loading = await screen.findByRole("status", { name: "Loading laps, route and zones" });
     expect(loading.querySelector(".h-60")).toBeNull();
-    expect(startLine()).toHaveTextContent(/^07:12 · Indoor$/);
+    expect(startLine()).toHaveTextContent(/^07:12·Indoor$/);
     answer(json({ activity: treadmill, detail: indoorDetail }));
 
     const route = await detailLoaded();
@@ -393,8 +446,9 @@ describe("RunScreen", () => {
     expect(within(zones).getByText("No heart rate recorded, so no zones.")).toBeInTheDocument();
     expect(within(zones).queryByRole("img")).not.toBeInTheDocument();
     expect(figure("Avg HR")).toHaveTextContent(new RegExp(`^Avg HR${MISSING}$`));
+    const splits = await splitsTable();
     expect(
-      within(section("Splits")).getByRole("row", { name: `1 1.0 km 5:18 ${MISSING}` }),
+      within(splits).getByRole("row", { name: `1 1.0 km 5:18 ${MISSING}` }),
     ).toBeInTheDocument();
   });
 
@@ -407,14 +461,17 @@ describe("RunScreen", () => {
     expect(figure("Distance")).toHaveTextContent(/^Distance6\.2mi$/);
     expect(figure("Avg pace")).toHaveTextContent(/^Avg pace8:23\/mi$/);
     expect(figure("Elevation gain")).toHaveTextContent(/^Elevation gain210ft$/);
-    const splits = within(section("Splits")).getByRole("table", { name: "Splits" });
+    // The km laps keep their numbers in miles (every one is 0.62 mi); 318 s a km is 8:32 a mile.
+    const [first] = splitRows();
+    expect(first).toHaveTextContent(/^18:32 \/mi$/);
+    expect(within(first as HTMLElement).getByRole("img", { name: "8:32 /mi" })).toBeVisible();
+    const splits = await splitsTable();
     expect(within(splits).getByRole("columnheader", { name: "Pace /mi" })).toBeInTheDocument();
-    // 1 km is 0.62 mi; 318 s a km is 8:32 a mile.
     expect(within(splits).getByRole("row", { name: "1 0.62 mi 8:32 138" })).toBeInTheDocument();
     expect(within(section("Elevation")).getByText("Feet above sea level")).toBeInTheDocument();
   });
 
-  it("names a sub-2:00/km lap as a GPS glitch in the splits and leaves it out of the lap pace chart (GPS glitches)", async () => {
+  it("names a sub-2:00/km lap as a GPS glitch in place of its bar and in the table (GPS glitches)", async () => {
     const base = activityDetailFixture();
     fakeRunApi({
       stored: activityDetailFixture({
@@ -427,14 +484,17 @@ describe("RunScreen", () => {
     renderRun();
     await detailLoaded();
 
-    const glitch = within(section("Splits")).getByRole("row", { name: /^12 / });
-    // Body size like every table cell (web-ui rule), ink-2 like the lap numbers.
-    expect(within(glitch).getByText("GPS glitch")).toHaveClass("text-ink-2");
-    expect(within(glitch).getByText("GPS glitch")).not.toHaveClass("text-caption");
-    expect(lapBars()).toHaveLength(11);
+    const bar = splitRows()[11] as HTMLElement;
+    expect(within(bar).queryByRole("img")).not.toBeInTheDocument();
+    expect(within(bar).getByText("GPS glitch")).toHaveClass("text-body", "text-ink-2");
     expect(
       within(section("Splits")).getByText("1 lap left out as a GPS glitch."),
     ).toBeInTheDocument();
+
+    const glitch = within(await splitsTable()).getByRole("row", { name: /^12 / });
+    // Body size like every table cell (web-ui rule), ink-2 like the lap numbers.
+    expect(within(glitch).getByText("GPS glitch")).toHaveClass("text-ink-2");
+    expect(within(glitch).getByText("GPS glitch")).not.toHaveClass("text-caption");
   });
 
   it("shows dashes for calories, cadence and elevation gain Garmin did not record, and says so below", async () => {
@@ -466,11 +526,37 @@ describe("RunScreen", () => {
     renderRun();
     await detailLoaded();
 
-    expect(within(section("Splits")).queryByRole("img")).not.toBeInTheDocument();
+    expect(within(section("Splits")).queryByRole("list")).not.toBeInTheDocument();
+    expect(within(section("Splits")).queryByRole("button")).not.toBeInTheDocument();
     expect(within(section("Splits")).getByText("No laps recorded for this run.")).toBeVisible();
     expect(within(section("Cadence")).getByText("No cadence recorded.")).toBeVisible();
-    expect(startLine()).toHaveTextContent(/^07:12 · Manual$/);
+    expect(startLine()).toHaveTextContent(/^07:12·Manual$/);
   });
+
+  it("shows a Race chip after the start time for a run marked as a race in Garmin Connect", async () => {
+    fakeRunApi({
+      run: activityFixture({ eventType: RACE_EVENT_TYPE, isIndoor: true }),
+      stored: activityDetailFixture(),
+    });
+    renderRun();
+    await detailLoaded();
+
+    expect(startLine()).toHaveTextContent(/^07:12·Race·Indoor$/);
+    const chip = within(startLine() as HTMLElement).getByText("Race");
+    expect(chip.querySelector(".bg-type-race")).not.toBeNull();
+  });
+
+  it.each(["training", "uncategorized", null])(
+    "shows no chip for a run that is no race (%s)",
+    async (eventType) => {
+      fakeRunApi({ run: activityFixture({ eventType }), stored: activityDetailFixture() });
+      renderRun();
+      await detailLoaded();
+
+      expect(startLine()).toHaveTextContent(/^07:12$/);
+      expect(screen.queryByText("Race")).not.toBeInTheDocument();
+    },
+  );
 
   it("goes back to Progress from a run opened by its address", async () => {
     fakeRunApi({ stored: activityDetailFixture() });

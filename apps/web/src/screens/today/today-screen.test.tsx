@@ -1,5 +1,5 @@
 import type { Activity, MeResponse } from "@running-coach/shared";
-import { ErrorCode } from "@running-coach/shared";
+import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -173,6 +173,30 @@ describe("TodayScreen", () => {
 
     expect(await screen.findByText("Route not under test")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(`/runs/${activityFixture().id}`);
+  });
+
+  it("marks a race with a Race chip beside its start and names it in the card's label", async () => {
+    fakeTodayApi({ latest: activityFixture({ eventType: RACE_EVENT_TYPE }) });
+    renderToday();
+
+    const run = await screen.findByRole("region", { name: "Latest run" });
+    const chip = within(run).getByText("Race");
+    expect(chip.querySelector(".bg-type-race")).not.toBeNull();
+    expect(chip.parentElement).toHaveTextContent(/^Sun 27 Sep, 07:12·Race$/);
+    expect(within(run).getByRole("link")).toHaveAccessibleName(
+      "Open the latest run, Sun 27 Sep, 07:12, Race, 10.0 km, 52:18",
+    );
+  });
+
+  it("shows no chip for a run that is no race", async () => {
+    fakeTodayApi({ latest: activityFixture({ eventType: "training" }) });
+    renderToday();
+
+    const run = await screen.findByRole("region", { name: "Latest run" });
+    expect(within(run).queryByText("Race")).not.toBeInTheDocument();
+    expect(within(run).getByRole("link")).toHaveAccessibleName(
+      "Open the latest run, Sun 27 Sep, 07:12, 10.0 km, 52:18",
+    );
   });
 
   it("converts distance and pace to mi when the runner uses miles", async () => {

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { downsample } from "@/lib/downsample";
 import { formatLapDistance, formatPaceValue, paceUnitLabel } from "@/lib/format";
-import type { LapPoint } from "./lap-point";
+import { glitchCaption, type LapPoint } from "./lap-point";
 
 export type PaceTarget = {
   paceSecondsPerUnit: number;
@@ -17,7 +17,7 @@ type LapsChartProps = {
   laps: readonly LapPoint[];
   unit: Units;
   target?: PaceTarget;
-  /** False when the screen lists every lap in a table of its own below the chart (the run screen). */
+  /** False when the screen lists every lap in a table of its own right below the chart. */
   tableToggle?: boolean;
 };
 
@@ -48,13 +48,6 @@ function paceAxis(paces: number[]): { fast: number; slow: number; ticks: number[
   return { fast, slow, ticks };
 }
 
-function glitchCaption(count: number): string | null {
-  if (count === 0) return null;
-  return count === 1
-    ? "1 lap left out as a GPS glitch."
-    : `${count} laps left out as GPS glitches.`;
-}
-
 /**
  * Lap paces as bars, faster drawn higher (inverted pace axis), against an optional target pace.
  * GPS glitches are left out of the chart and named in a caption; the table shows every lap.
@@ -66,12 +59,11 @@ export function LapsChart({ laps, unit, target, tableToggle = true }: LapsChartP
     return <p className="text-body text-ink-2">No laps recorded for this run.</p>;
   }
 
-  const glitches = laps.filter((lap) => lap.gpsGlitch).length;
   const charted = downsample(
     laps.filter((lap) => lap.paceSecondsPerUnit !== null && !lap.gpsGlitch),
     (lap) => lap.paceSecondsPerUnit ?? 0,
   );
-  const caption = glitchCaption(glitches);
+  const caption = glitchCaption(laps);
 
   return (
     <div className="flex flex-col gap-2">

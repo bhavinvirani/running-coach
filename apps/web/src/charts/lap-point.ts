@@ -4,8 +4,9 @@ import {
   paceSecondsPerUnit,
   type Units,
 } from "@running-coach/shared";
+import { formatCount } from "@/lib/format";
 
-/** One lap in the user's unit, as LapsChart draws it. Build it with toLapPoint. */
+/** One lap in the user's unit, as LapsChart and SplitBars draw it. Build it with toLapPoint. */
 export type LapPoint = {
   /** Lap number as the watch shows it, starting at 1. */
   index: number;
@@ -30,4 +31,11 @@ export function toLapPoint(
     distanceInUnit: distanceInUnits(lap.distanceM, unit),
     gpsGlitch: isGpsGlitch(lap.distanceM, lap.durationS),
   };
+}
+
+/** The line under a lap chart that names what it left out: "1 lap left out as a GPS glitch."; null for none. */
+export function glitchCaption(laps: readonly LapPoint[]): string | null {
+  const count = laps.filter((lap) => lap.gpsGlitch).length;
+  if (count === 0) return null;
+  return `${formatCount(count, "lap", "laps")} left out as ${count === 1 ? "a GPS glitch" : "GPS glitches"}.`;
 }

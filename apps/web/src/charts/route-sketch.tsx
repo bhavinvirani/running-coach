@@ -12,7 +12,8 @@ const BOX = { width: 358, height: 240, padding: 20 } as const;
 
 /**
  * The route's shape without map tiles: what CI, unit tests and screenshots show, and the fallback when
- * Mapbox cannot load. The stroke stays 2 px at any size.
+ * Mapbox cannot load. The stroke stays 2 px at any size. No background of its own: it sits on the
+ * section's card.
  */
 export function RouteSketch({ route, caption }: RouteSketchProps) {
   const points = projectRoute(route, BOX)
@@ -26,7 +27,7 @@ export function RouteSketch({ route, caption }: RouteSketchProps) {
         preserveAspectRatio="xMidYMid meet"
         role="img"
         aria-label="Route sketch"
-        className="h-60 w-full rounded-md bg-surface-1"
+        className="h-60 w-full"
       >
         <polyline
           points={points}
