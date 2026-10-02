@@ -1,6 +1,6 @@
 import { expect, test } from "../fixtures/login";
 
-test("settings", async ({ page, login }) => {
+test("settings shows the seeded runner's defaults and account", async ({ page, login }) => {
   await page.goto("/settings");
   // The last row on the screen: once it shows, every section above it has rendered from /api/me.
   await expect(page.getByRole("region", { name: "Account" }).getByText(login.email)).toBeVisible();
