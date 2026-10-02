@@ -4,6 +4,7 @@ import {
   type Activity,
   type Units,
 } from "@running-coach/shared";
+import { Link } from "react-router";
 import { Stat } from "@/components/stat";
 import {
   MISSING,
@@ -23,6 +24,7 @@ type LatestRunProps = {
 /**
  * The newest run: its local start, distance as the one hero number on Today, then time, pace and avg HR.
  * Pace is derived here from distance and time; an indoor run without a footpod has neither distance nor pace.
+ * The whole card opens the run.
  */
 export function LatestRun({ activity, units }: LatestRunProps) {
   const distance =
@@ -31,31 +33,46 @@ export function LatestRun({ activity, units }: LatestRunProps) {
       : MISSING;
   const pace = formatPaceValue(paceSecondsPerUnit(activity.distanceM, activity.durationS, units));
   const avgHr = formatHeartRate(activity.avgHr);
+  // Named in words: read from the figures, a screen reader would run "10.0km" into "52:18".
+  const name = [
+    "Open the latest run",
+    formatLocalDateTime(activity.startLocal),
+    distance === MISSING ? null : `${distance} ${units}`,
+    formatDuration(activity.durationS),
+  ]
+    .filter((part) => part !== null && part !== MISSING)
+    .join(", ");
 
   return (
-    <section aria-label="Latest run" className="flex flex-col gap-4 border-t border-line pt-4">
-      <div className="flex items-baseline justify-between gap-4">
-        <h2 className="text-body font-semibold text-ink">Latest run</h2>
-        <p className="text-body text-ink-2">
-          <time dateTime={activity.startLocal}>{formatLocalDateTime(activity.startLocal)}</time>
-          {activity.isIndoor ? " · Indoor" : null}
-        </p>
-      </div>
-      <HeroFigure
-        label="Distance"
-        value={distance}
-        unit={distance === MISSING ? undefined : units}
-      />
-      {/* Natural widths, not three equal columns: "1:32:10" at text-figure is wider than a third of 390 px. */}
-      <div className="flex flex-wrap justify-between gap-4 border-t border-line pt-4">
-        <Stat label="Time" value={formatDuration(activity.durationS)} />
-        <Stat
-          label="Pace"
-          value={pace}
-          unit={pace === MISSING ? undefined : paceUnitLabel(units)}
+    <section aria-label="Latest run" className="border-t border-line pt-4">
+      <Link
+        to={`/runs/${activity.id}`}
+        aria-label={name}
+        className="flex flex-col gap-4 rounded-sm active:bg-surface-1"
+      >
+        <div className="flex items-baseline justify-between gap-4">
+          <h2 className="text-body font-semibold text-ink">Latest run</h2>
+          <p className="text-body text-ink-2">
+            <time dateTime={activity.startLocal}>{formatLocalDateTime(activity.startLocal)}</time>
+            {activity.isIndoor ? " · Indoor" : null}
+          </p>
+        </div>
+        <HeroFigure
+          label="Distance"
+          value={distance}
+          unit={distance === MISSING ? undefined : units}
         />
-        <Stat label="Avg HR" value={avgHr} unit={avgHr === MISSING ? undefined : "bpm"} />
-      </div>
+        {/* Natural widths, not three equal columns: "1:32:10" at text-figure is wider than a third of 390 px. */}
+        <div className="flex flex-wrap justify-between gap-4 border-t border-line pt-4">
+          <Stat label="Time" value={formatDuration(activity.durationS)} />
+          <Stat
+            label="Pace"
+            value={pace}
+            unit={pace === MISSING ? undefined : paceUnitLabel(units)}
+          />
+          <Stat label="Avg HR" value={avgHr} unit={avgHr === MISSING ? undefined : "bpm"} />
+        </div>
+      </Link>
     </section>
   );
 }

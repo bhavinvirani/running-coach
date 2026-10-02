@@ -54,6 +54,17 @@ export function formatDistance(distanceInUnit: number | null | undefined, unit: 
   return value === MISSING ? MISSING : `${value} ${unit}`;
 }
 
+/**
+ * A lap's distance already converted to the user's unit: one decimal like any distance, but two under one
+ * unit, so the short last lap of a run reads "0.04 km" rather than a "0.0 km" that looks like no distance.
+ */
+export function formatLapDistance(distanceInUnit: number | null | undefined, unit: Units): string {
+  if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
+  return distanceInUnit < 0.95
+    ? `${distanceInUnit.toFixed(2)} ${unit}`
+    : formatDistance(distanceInUnit, unit);
+}
+
 /** 147.6 → "148". Zero means the watch recorded no HR, not a stopped heart. */
 export function formatHeartRate(bpm: number | null | undefined): string {
   if (!isFiniteNumber(bpm) || bpm <= 0) return MISSING;
@@ -197,4 +208,50 @@ const COUNT = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
 export function formatCount(count: number, singular: string, plural: string): string {
   if (!isFiniteNumber(count) || count < 0) return MISSING;
   return `${COUNT.format(count)} ${count === 1 ? singular : plural}`;
+}
+
+/** "m" with km, "ft" with mi: elevation follows the distance unit, like elevationInUnits in shared. */
+export function elevationUnitLabel(unit: Units): string {
+  return unit === "km" ? "m" : "ft";
+}
+
+/**
+ * Elevation already converted to the user's unit, in whole units: 64.4 → "64", 1250.2 → "1,250". Below
+ * zero is real (a run below sea level), so only a missing reading shows the dash.
+ */
+export function formatElevationValue(elevationInUnit: number | null | undefined): string {
+  if (!isFiniteNumber(elevationInUnit)) return MISSING;
+  // + 0 turns -0 (from rounding -0.4) into 0, which Intl would print as "-0".
+  return COUNT.format(Math.round(elevationInUnit) + 0);
+}
+
+/** Elevation already converted to the user's unit: 64.4, "km" → "64 m"; 210, "mi" → "210 ft". */
+export function formatElevation(elevationInUnit: number | null | undefined, unit: Units): string {
+  const value = formatElevationValue(elevationInUnit);
+  return value === MISSING ? MISSING : `${value} ${elevationUnitLabel(unit)}`;
+}
+
+/** Steps per minute, whole: 171.6 → "172". Zero means the watch recorded no cadence. */
+export function formatCadence(stepsPerMinute: number | null | undefined): string {
+  if (!isFiniteNumber(stepsPerMinute) || stepsPerMinute <= 0) return MISSING;
+  return Math.round(stepsPerMinute).toString();
+}
+
+/** Kilocalories, whole: 689.7 → "690", 2840 → "2,840". Zero means Garmin estimated none. */
+export function formatCalories(kcal: number | null | undefined): string {
+  if (!isFiniteNumber(kcal) || kcal <= 0) return MISSING;
+  return COUNT.format(Math.round(kcal));
+}
+
+/** A share of a whole, 0.478 → "48%". */
+export function formatPercent(fraction: number | null | undefined): string {
+  if (!isFiniteNumber(fraction) || fraction < 0) return MISSING;
+  return `${Math.round(fraction * 100)}%`;
+}
+
+/** The wall-clock time of a run's local start, "2026-09-27T07:12:00" → "07:12". */
+export function formatLocalTime(local: string | null | undefined): string {
+  if (!local || !calendarDay(local)) return MISSING;
+  const time = LOCAL_TIME.exec(local);
+  return time ? `${time[1] ?? ""}:${time[2] ?? ""}` : MISSING;
 }

@@ -1,18 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MISSING,
+  elevationUnitLabel,
+  formatCadence,
+  formatCalories,
   formatCount,
   formatDate,
   formatDateTime,
   formatDistance,
   formatDistanceValue,
   formatDuration,
+  formatElevation,
+  formatElevationValue,
   formatHeartRate,
+  formatLapDistance,
   formatLocalDateTime,
   formatLocalDay,
+  formatLocalTime,
   formatMonthYear,
   formatPace,
   formatPaceValue,
+  formatPercent,
   formatTime,
   formatWeekRange,
 } from "./format";
@@ -81,6 +89,25 @@ describe("formatDistanceValue", () => {
     expect(formatDistanceValue(6.25)).toBe("6.3");
     expect(formatDistanceValue(null)).toBe(MISSING);
     expect(formatDistanceValue(-1)).toBe(MISSING);
+  });
+});
+
+describe("formatLapDistance", () => {
+  it("shows one decimal from about one unit up, like any distance", () => {
+    expect(formatLapDistance(1, "km")).toBe("1.0 km");
+    expect(formatLapDistance(0.996, "mi")).toBe("1.0 mi");
+    expect(formatLapDistance(2.04, "km")).toBe("2.0 km");
+  });
+
+  it("shows two decimals under one unit, so a short last lap never reads 0.0", () => {
+    expect(formatLapDistance(0.04, "km")).toBe("0.04 km");
+    expect(formatLapDistance(0.621, "mi")).toBe("0.62 mi");
+    expect(formatLapDistance(0.949, "km")).toBe("0.95 km");
+  });
+
+  it("shows the missing mark for null and negative distances", () => {
+    expect(formatLapDistance(null, "km")).toBe(MISSING);
+    expect(formatLapDistance(-0.1, "km")).toBe(MISSING);
   });
 });
 
@@ -270,5 +297,80 @@ describe("formatCount", () => {
   it("shows the missing mark for negative and non-finite counts", () => {
     expect(formatCount(-1, "run", "runs")).toBe(MISSING);
     expect(formatCount(Number.NaN, "run", "runs")).toBe(MISSING);
+  });
+});
+
+describe("formatElevation", () => {
+  it("shows whole meters with km and whole feet with mi, grouping thousands", () => {
+    expect(formatElevation(64.4, "km")).toBe("64 m");
+    expect(formatElevation(210.0, "mi")).toBe("210 ft");
+    expect(formatElevation(1250.2, "mi")).toBe("1,250 ft");
+    expect(formatElevation(0, "km")).toBe("0 m");
+    expect(elevationUnitLabel("km")).toBe("m");
+    expect(elevationUnitLabel("mi")).toBe("ft");
+  });
+
+  it("keeps elevation below sea level and never prints -0", () => {
+    expect(formatElevationValue(-27.6)).toBe("-28");
+    expect(formatElevationValue(-0.4)).toBe("0");
+  });
+
+  it("shows the missing mark for null and non-finite elevation", () => {
+    expect(formatElevation(null, "km")).toBe(MISSING);
+    expect(formatElevationValue(undefined)).toBe(MISSING);
+    expect(formatElevationValue(Number.NaN)).toBe(MISSING);
+  });
+});
+
+describe("formatCadence", () => {
+  it("rounds to whole steps per minute", () => {
+    expect(formatCadence(172)).toBe("172");
+    expect(formatCadence(171.6)).toBe("172");
+  });
+
+  it("shows the missing mark when the watch recorded no cadence", () => {
+    expect(formatCadence(null)).toBe(MISSING);
+    expect(formatCadence(0)).toBe(MISSING);
+    expect(formatCadence(Number.POSITIVE_INFINITY)).toBe(MISSING);
+  });
+});
+
+describe("formatCalories", () => {
+  it("rounds to whole kilocalories and groups thousands", () => {
+    expect(formatCalories(689.7)).toBe("690");
+    expect(formatCalories(2840)).toBe("2,840");
+  });
+
+  it("shows the missing mark when Garmin estimated none", () => {
+    expect(formatCalories(null)).toBe(MISSING);
+    expect(formatCalories(0)).toBe(MISSING);
+    expect(formatCalories(-5)).toBe(MISSING);
+  });
+});
+
+describe("formatPercent", () => {
+  it("rounds a share to a whole percent", () => {
+    expect(formatPercent(0.478)).toBe("48%");
+    expect(formatPercent(0)).toBe("0%");
+    expect(formatPercent(1)).toBe("100%");
+  });
+
+  it("shows the missing mark for negative and non-finite shares", () => {
+    expect(formatPercent(-0.1)).toBe(MISSING);
+    expect(formatPercent(Number.NaN)).toBe(MISSING);
+    expect(formatPercent(null)).toBe(MISSING);
+  });
+});
+
+describe("formatLocalTime", () => {
+  it("shows the wall-clock time of the run's own start", () => {
+    expect(formatLocalTime("2026-09-27T07:12:00")).toBe("07:12");
+    expect(formatLocalTime("2026-03-29T01:30:00")).toBe("01:30");
+  });
+
+  it("shows the missing mark for null and malformed values", () => {
+    expect(formatLocalTime(null)).toBe(MISSING);
+    expect(formatLocalTime("2026-09-27")).toBe(MISSING);
+    expect(formatLocalTime("2026-02-30T07:12:00")).toBe(MISSING);
   });
 });

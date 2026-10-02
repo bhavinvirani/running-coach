@@ -13,7 +13,8 @@ export const errorMessages: Record<ErrorCode, string> = {
   internal: "Something failed on the server. Try again in a minute.",
   garmin_not_connected: "Garmin is not connected. Connect it in Settings.",
   garmin_auth_expired: "Garmin login expired. Reconnect in Settings.",
-  garmin_rate_limited: "Garmin is limiting requests. Wait an hour, then sync again.",
+  // "Try again", not "sync again": the run screen's Garmin fetch shows it too.
+  garmin_rate_limited: "Garmin is limiting requests. Wait an hour, then try again.",
   garmin_unavailable: "Garmin is not responding. Try again later.",
   garmin_mfa_required: "Garmin asked for a two-factor code. Reconnect in Settings.",
   claude_key_missing: "No Claude API key is set. Add one in Settings.",

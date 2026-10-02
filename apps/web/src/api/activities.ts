@@ -1,13 +1,24 @@
 import {
+  ErrorCode,
+  activityParamsSchema,
+  activityResponseSchema,
   activityWeeksResponseSchema,
   latestActivityResponseSchema,
   type Activity,
+  type ActivityResponse,
   type ActivityWeek,
   type ActivityWeeksResponse,
   type LatestActivityResponse,
 } from "@running-coach/shared";
-import { queryOptions, useInfiniteQuery, useQuery, type InfiniteData } from "@tanstack/react-query";
-import { apiFetch } from "./client";
+import {
+  queryOptions,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
+import { ApiError, apiFetch } from "./client";
 import { detailKey, listKey } from "./query-keys";
 
 /** GET /api/activities/latest: the run with the latest start, or null before the first sync stored one. */
@@ -53,5 +64,43 @@ export function useActivityWeeks() {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextBefore ?? undefined,
     select: selectWeeks,
+  });
+}
+
+/** The API takes only uuids; anything else in the address is a run that cannot exist. */
+function activityPath(id: string, rest = ""): string {
+  if (!activityParamsSchema.safeParse({ id }).success) {
+    throw new ApiError({ status: 404, code: ErrorCode.notFound });
+  }
+  return `/api/activities/${id}${rest}`;
+}
+
+/**
+ * GET /api/activities/:id: the run as stored, with `detail` null until POST .../detail has fetched its laps,
+ * samples, route and zones from Garmin. A malformed id fails as not found without a request.
+ */
+export function activityQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: detailKey("activities", id),
+    queryFn: ({ signal }) => apiFetch(activityPath(id), { schema: activityResponseSchema, signal }),
+  });
+}
+
+export function useActivity(id: string) {
+  return useQuery(activityQueryOptions(id));
+}
+
+/**
+ * POST /api/activities/:id/detail: fetches the run's detail from Garmin once, stores it and answers with the
+ * whole run, which replaces the cached GET, so no second request follows. Never retried, like Sync now: a 429
+ * from Garmin must not be repeated, and the runner decides when to try again.
+ */
+export function useFetchActivityDetail(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch(activityPath(id, "/detail"), { method: "POST", schema: activityResponseSchema }),
+    onSuccess: (response: ActivityResponse) =>
+      queryClient.setQueryData(detailKey("activities", id), response),
   });
 }

@@ -568,6 +568,25 @@ describe("ProgressScreen", () => {
     );
   });
 
+  it("opens a run from anywhere on its row, a link at least 44 px tall", async () => {
+    fakeProgressApi();
+    const { router } = renderProgress();
+
+    const week = await screen.findByRole("region", { name: "21–27 Sep" });
+    const sunday = within(rows(week)[0] as HTMLElement).getByRole("link");
+    expect(sunday).toHaveAccessibleName("Sun 27 Sep, 10.0 km, 52:18, 5:13 /km");
+    const treadmill = within(rows(week)[2] as HTMLElement).getByRole("link");
+    expect(treadmill).toHaveAccessibleName("Tue 22 Sep, Indoor, 30:00");
+    expect(sunday).toHaveAttribute("href", `/runs/${sundayRun.id}`);
+    expect(sunday).toHaveClass("min-h-12");
+    expect(sunday.querySelector("svg")).toBeNull();
+
+    await userEvent.click(within(sunday).getByText("52:18"));
+
+    expect(await screen.findByText("Route not under test")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/runs/${sundayRun.id}`);
+  });
+
   it("marks manual runs with a caption", async () => {
     fakeProgressApi({ pages: { latest: { weeks: [summerWeek], nextBefore: null } } });
     renderProgress();

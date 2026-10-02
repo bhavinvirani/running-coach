@@ -76,6 +76,8 @@ export default defineConfig({
       APP_URL: baseURL,
       LOG_LEVEL: "error",
       DATABASE_URL: e2eDatabaseUrl,
+      // The build draws routes as a sketch, as in CI, even when the root env file holds a real token.
+      VITE_MAPBOX_TOKEN: "",
       // Fake values that satisfy config.ts; nothing real is encrypted or signed in e2e.
       MASTER_KEY: "ZTJlLW9ubHktbWFzdGVyLWtleS0zMi1ieXRlcy1vayE=",
       BETTER_AUTH_SECRET: "e2e-only-better-auth-secret-not-for-production",

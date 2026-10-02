@@ -7,7 +7,13 @@ import { RouterProvider } from "react-router/dom";
 import { describe, expect, it, vi } from "vitest";
 import { errorMessages } from "@/lib/errors";
 import { json, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
-import { activityFixture, importProgressFixture, meFixture, weekFixture } from "@/test/fixtures";
+import {
+  activityDetailFixture,
+  activityFixture,
+  importProgressFixture,
+  meFixture,
+  weekFixture,
+} from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
 
@@ -26,6 +32,9 @@ function renderApp(path: string) {
 function signedIn({ path }: FakeRequest): Response {
   if (path === "/api/me") return json(meFixture());
   if (path === "/api/activities/latest") return json({ activity: activityFixture() });
+  if (path === `/api/activities/${activityFixture().id}`) {
+    return json({ activity: activityFixture(), detail: activityDetailFixture() });
+  }
   if (path === "/api/activities") {
     return json({ weeks: [weekFixture("2026-09-21", [activityFixture()])], nextBefore: null });
   }
@@ -93,6 +102,23 @@ describe("app routes", () => {
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Today" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "Progress" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("opens a run from its Progress row inside the tab shell, and Back returns to Progress", async () => {
+    stubFetch(signedIn);
+    const router = renderApp("/progress");
+    const week = await screen.findByRole("region", { name: "21–27 Sep" });
+
+    await userEvent.click(within(week).getByRole("link"));
+
+    expect(await screen.findByRole("heading", { name: "Sun 27 Sep" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/runs/${activityFixture().id}`);
+    expect(screen.getByRole("navigation", { name: "Tabs" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("link", { name: "Back" }));
+
+    expect(await screen.findByRole("heading", { name: "Progress" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/progress");
   });
 
   it("redirects an unknown path to Today", async () => {
