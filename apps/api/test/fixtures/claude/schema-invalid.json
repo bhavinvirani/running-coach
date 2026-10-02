@@ -1,0 +1,23 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "text",
+            "json": {
+              "headline": "18.00 km long run at 5:40 /km.",
+              "whatHappened": "18.00 km in 1:42:00.",
+              "whatItMeans": "An aerobic long run.",
+              "nextStep": "Run easy next.",
+              "caution": "maybe"
+            }
+          }
+        ],
+        "usage": { "input_tokens": 1180, "output_tokens": 60 }
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "dev": "docker compose up -d --wait postgres && pnpm --parallel --filter @running-coach/api --filter @running-coach/web dev",
+    "dev": "docker compose up -d --wait postgres && (cd services/garmin && uv sync --frozen --quiet) && pnpm --parallel --filter @running-coach/api --filter @running-coach/web dev",
     "check": "pnpm typecheck && pnpm lint && pnpm contract:check && pnpm test",
     "typecheck": "pnpm -r --parallel typecheck",
     "lint": "eslint . --max-warnings 0",

@@ -1,0 +1,12 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "max_tokens",
+        "content": [{ "type": "text", "text": "{\"headline\": \"18.00 km long run at 5:40" }],
+        "usage": { "input_tokens": 1180, "output_tokens": 4096 }
+      }
+    }
+  ]
+}

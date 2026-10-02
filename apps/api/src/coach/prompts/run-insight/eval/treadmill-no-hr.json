@@ -1,0 +1,25 @@
+{
+  "input": {
+    "activity": {
+      "type": "treadmill_running",
+      "startLocal": "2026-09-24 18:30:00",
+      "distanceM": 8000,
+      "durationS": 2700,
+      "avgHr": null,
+      "maxHr": null,
+      "cadence": 172,
+      "calories": 520,
+      "elevationGainM": null,
+      "isIndoor": true,
+      "isManual": false
+    },
+    "settings": { "units": "km", "coachDetail": "short" }
+  },
+  "output": {
+    "headline": "8.00 km on the treadmill in 45:00.",
+    "whatHappened": "8.00 km indoors at 5:38 /km by the watch's estimate, cadence 172.",
+    "whatItMeans": "No heart rate was recorded, so the effort is unknown; treadmill pace is an estimate.",
+    "nextStep": "Run the next planned session as written.",
+    "caution": "none"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "input": {
+    "activity": {
+      "type": "running",
+      "startLocal": "2026-09-27 08:00:00",
+      "distanceM": 18000,
+      "durationS": 6120,
+      "avgHr": 148,
+      "maxHr": 166,
+      "cadence": 168,
+      "calories": 1150,
+      "elevationGainM": 142,
+      "isIndoor": false,
+      "isManual": false
+    },
+    "settings": { "units": "km", "coachDetail": "standard" }
+  },
+  "output": {
+    "headline": "18.00 km long run at 5:40 /km.",
+    "whatHappened": "18.00 km in 1:42:00 at 5:40 /km on Sunday morning. Average heart rate 148 bpm, max 166 bpm, with 142 m of climbing.",
+    "whatItMeans": "148 bpm at 5:40 /km for 1:42:00 is an aerobic effort. The pace held steady for the whole run, which is what a long run is for.",
+    "nextStep": "Make the next run easy, 30 to 40 minutes, then follow the plan.",
+    "caution": "easy_next"
+  }
+}

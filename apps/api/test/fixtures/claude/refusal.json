@@ -1,0 +1,13 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "refusal",
+        "stop_details": { "type": "refusal", "category": null, "explanation": null },
+        "content": [],
+        "usage": { "input_tokens": 1180, "output_tokens": 0 }
+      }
+    }
+  ]
+}
