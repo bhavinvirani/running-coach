@@ -17,7 +17,7 @@ Status: the bootstrap is done (#21): every skill points at a tested reference im
 | `packages/engine`    | Training rules: pure TypeScript, no I/O, test-first                                                                                                 | `engine.md`         |
 | `packages/shared`    | zod contracts, error codes, units: the only source of types                                                                                         | `contracts.md`      |
 
-Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md` names the reference implementation to copy from.
+Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md` names the reference implementation to copy from, except `neon-postgres`: Neon's own skill (Apache-2.0, pinned in `skills-lock.json`) for connection strings, branching and diagnostics. Neon is only our Postgres host, through one direct (non-pooler) URL because of advisory locks; where any skill disagrees with SPEC.md, SPEC.md wins.
 
 ## Commands (root `package.json`)
 
