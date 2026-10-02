@@ -31,8 +31,13 @@ export function TodayScreen() {
   }
 
   const syncNow = <SyncNowButton syncing={screen.syncing} onSync={screen.syncNow} />;
-  const syncFailed = screen.syncError ? (
+  // A sync that found nothing new says so; otherwise "it worked" looks like "nothing happened".
+  const syncOutcome = screen.syncError ? (
     <RetryAlert error={screen.syncError} onRetry={screen.syncNow} />
+  ) : screen.nothingNew ? (
+    <p role="status" className="text-caption text-ink-2">
+      No new runs on Garmin.
+    </p>
   ) : null;
   const refetchFailed = screen.refetchError ? (
     <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
@@ -47,14 +52,14 @@ export function TodayScreen() {
           <p className="text-body text-ink-2">Sync now to bring in your latest run from Garmin.</p>
           {syncNow}
         </div>
-        {syncFailed}
+        {syncOutcome}
       </TodayLayout>
     );
   }
 
   return (
     <TodayLayout action={syncNow}>
-      {syncFailed}
+      {syncOutcome}
       {refetchFailed}
       <LatestRun activity={data} units={units} />
     </TodayLayout>

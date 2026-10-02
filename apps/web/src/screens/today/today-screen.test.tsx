@@ -19,8 +19,11 @@ type FakeTodayApi = {
   latest?: Activity | null;
   /** The run a successful sync stores as the latest. */
   synced?: Activity;
-  /** Called with 1 for the first sync, 2 for the next. */
-  sync?: (attempt: number) => SyncAnswer;
+  /**
+   * Called with 1 for the first sync, 2 for the next. `store` stores the synced run without answering,
+   * for a sync that fails after some chunks were committed.
+   */
+  sync?: (attempt: number, store: () => void) => SyncAnswer;
 };
 
 /** /api/me, GET /api/activities/latest and POST /api/sync, in memory. */
@@ -37,7 +40,9 @@ function fakeTodayApi({
     if (method === "GET" && path === "/api/activities/latest") return json({ activity: current });
     if (method === "POST" && path === "/api/sync") {
       syncs += 1;
-      const answer = sync(syncs);
+      const answer = sync(syncs, () => {
+        current = synced;
+      });
       if (answer !== "stored") return answer;
       current = synced;
       return json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 1 });
@@ -63,6 +68,8 @@ const newerRun = activityFixture({
   distanceM: 18_000,
   durationS: 5_580,
 });
+
+const noNewRuns = "No new runs on Garmin.";
 
 describe("TodayScreen", () => {
   it("shows a skeleton in the final layout while loading", () => {
@@ -205,6 +212,8 @@ describe("TodayScreen", () => {
     expect(await screen.findByRole("button", { name: "Sync now" })).toBeEnabled();
     const latestReads = calls.filter((call) => call.path === "/api/activities/latest");
     expect(latestReads).toHaveLength(2);
+    // The sync wrote a run, so it needs no word of its own.
+    expect(screen.queryByText(noNewRuns)).not.toBeInTheDocument();
   });
 
   it("reads Syncing…, disabled and busy while Sync now runs, and keeps the run on screen (pending)", async () => {
@@ -271,5 +280,104 @@ describe("TodayScreen", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Sync now" })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+  it("shows the runs a sync stored before it failed next to its error (partial sync)", async () => {
+    const calls = fakeTodayApi({
+      synced: newerRun,
+      sync: (_attempt, store) => {
+        store();
+        return problem(429, ErrorCode.garminRateLimited, { retryAfterSeconds: 3600 });
+      },
+    });
+    renderToday();
+    expect(await screen.findByText("Sun 27 Sep, 07:12")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sync now" }));
+
+    // Both at once: the sync settles only after the reload, so the old run never sits beside the alert.
+    expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.garmin_rate_limited);
+    expect(screen.getByText("Mon 28 Sep, 06:30")).toBeInTheDocument();
+    expect(figure("Distance")).toHaveTextContent(/^Distance18\.0km$/);
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+    expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(2);
+  });
+
+  it("still reads Syncing…, disabled, after leaving Today mid-sync and coming back (navigation)", async () => {
+    const calls = fakeTodayApi({ sync: () => never() });
+    const { router } = renderToday();
+    await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+
+    await act(() => router.navigate("/settings"));
+    expect(screen.getByText("Route not under test")).toBeInTheDocument();
+    await act(() => router.navigate("/"));
+
+    const button = await screen.findByRole("button", { name: "Syncing…" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(1);
+  });
+
+  it("shows the error of a sync that failed while Today was away, and Retry syncs again (navigation)", async () => {
+    let answerFirst!: (response: Response) => void;
+    const calls = fakeTodayApi({
+      synced: newerRun,
+      sync: (attempt) =>
+        attempt === 1 ? new Promise<Response>((resolve) => (answerFirst = resolve)) : "stored",
+    });
+    const { router, queryClient } = renderToday();
+    await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+
+    await act(() => router.navigate("/settings"));
+    answerFirst(problem(502, ErrorCode.garminUnavailable));
+    await vi.waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    await act(() => router.navigate("/"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.garmin_unavailable);
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Mon 28 Sep, 06:30")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(2);
+  });
+
+  it("says there are no new runs after a sync that wrote none, until the next sync starts (nothing new)", async () => {
+    fakeTodayApi({
+      sync: (attempt) =>
+        attempt === 1
+          ? json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0 })
+          : never(),
+    });
+    renderToday();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+
+    const line = await screen.findByText(noNewRuns);
+    expect(line).toHaveClass("text-caption", "text-ink-2");
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+    expect(figure("Distance")).toHaveTextContent(/^Distance10\.0km$/);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sync now" }));
+
+    expect(await screen.findByRole("button", { name: "Syncing…" })).toBeDisabled();
+    expect(screen.queryByText(noNewRuns)).not.toBeInTheDocument();
+  });
+
+  it("says there are no new runs from the empty state too, under the sentence (nothing new)", async () => {
+    fakeTodayApi({
+      latest: null,
+      sync: () => json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0 }),
+    });
+    renderToday();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+
+    expect(await screen.findByText(noNewRuns)).toBeInTheDocument();
+    expect(
+      screen.getByText("Sync now to bring in your latest run from Garmin."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 });

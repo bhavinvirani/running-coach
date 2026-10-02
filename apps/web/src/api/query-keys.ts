@@ -18,3 +18,13 @@ export function listKey<R extends Resource, Ids extends Id[]>(resource: R, ...id
 export function detailKey<R extends Resource, Ids extends Id[]>(resource: R, ...ids: Ids) {
   return [resource, "detail", ...ids] as const;
 }
+
+/**
+ * Mutations that a screen reads from the mutation cache rather than from its own useMutation, because the
+ * screen may unmount and remount while one runs, are keyed `[action]`.
+ */
+export type Action = "sync";
+
+export function actionKey<A extends Action>(action: A) {
+  return [action] as const;
+}
