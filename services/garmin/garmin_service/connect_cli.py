@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 import certifi
 from garminconnect import Garmin
 
-from garmin_service.errors import from_garmin_exception
+from garmin_service.errors import from_login_exception
 from garmin_service.models.problem import ErrorCode
 
 USAGE = "Usage: pnpm garmin:connect https://<name>.onrender.com"
@@ -63,7 +63,8 @@ NO_REUSABLE_LOGIN = (
     "Wait a few minutes, then run pnpm garmin:connect again."
 )
 UPLOAD_LOST = "Lost the connection to {app} during the upload. Run pnpm garmin:connect again."
-# Keyed by the API's codes (packages/shared/src/error-codes.ts), a superset of this service's.
+# Keyed by the API's codes (packages/shared/src/error-codes.ts), a superset of this service's
+# ErrorCode; tests check every key against the exported list.
 UPLOAD_FAILURES: dict[str, str] = {
     "garmin_auth_expired": (
         "Garmin did not accept the new login from the server. Run pnpm garmin:connect again."
@@ -251,10 +252,9 @@ def _has_tokens(bundle: str) -> bool:
 
 def _garmin_failure(exc: Exception) -> StepError | None:
     """The runner's sentence for a failed Garmin login, by errors.py's cause-chain mapping."""
-    error = from_garmin_exception(exc)
+    error = from_login_exception(exc)
     if error is None:
-        # resume_login can let a requests network error out unwrapped; those derive from OSError.
-        return StepError(GARMIN_DOWN) if isinstance(exc, OSError) else None
+        return None
     if error.code is ErrorCode.GARMIN_RATE_LIMITED:
         return StepError(GARMIN_LIMITED)
     if error.code is ErrorCode.GARMIN_AUTH_EXPIRED:
@@ -264,7 +264,7 @@ def _garmin_failure(exc: Exception) -> StepError | None:
 
 def _code_rejected(garmin: PasswordLogin, exc: Exception) -> bool:
     """Garmin refused the code itself, so the pending MFA session can take another one."""
-    error = from_garmin_exception(exc)
+    error = from_login_exception(exc)
     if error is None or error.code is not ErrorCode.GARMIN_AUTH_EXPIRED:
         return False
     # Garmin.resume_login loads the profile after the code is accepted and the MFA session is

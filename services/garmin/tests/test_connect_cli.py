@@ -53,7 +53,7 @@ from garmin_service.connect_cli import (
     run,
 )
 from garmin_service.fake_client import FakeTokenStore
-from tests.helpers import assert_valid
+from tests.helpers import JSON_SCHEMA_DIR, assert_valid
 
 APP_EMAIL = "runner@example.com"
 APP_PASSWORD = "app-password-not-real"
@@ -409,6 +409,7 @@ def test_an_empty_2fa_code_asks_again_without_calling_garmin(fake_app: FakeApp) 
             GARMIN_DOWN,
             id="network error while verifying the code",
         ),
+        pytest.param(TimeoutError("timed out"), GARMIN_DOWN, id="timeout while verifying the code"),
     ],
 )
 def test_a_429_or_network_error_on_the_2fa_code_exits_1_without_asking_again(
@@ -634,6 +635,12 @@ def test_a_failed_upload_exits_1_with_one_sentence_per_code_and_signs_out(
 
     assert capsys.readouterr().err.strip() == message
     assert fake_app.paths()[-1] == SIGN_OUT
+
+
+def test_every_upload_failure_is_keyed_by_a_shared_error_code() -> None:
+    schema = json.loads((JSON_SCHEMA_DIR / "error-code.json").read_text(encoding="utf-8"))
+
+    assert set(UPLOAD_FAILURES) <= set(schema["enum"])
 
 
 def test_sends_the_origin_header_and_session_cookie_on_the_upload(fake_app: FakeApp) -> None:
