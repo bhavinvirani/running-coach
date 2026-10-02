@@ -92,6 +92,17 @@
         },
         "isManual": {
           "type": "boolean"
+        },
+        "eventType": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -108,7 +119,8 @@
         "calories",
         "elevationGainM",
         "isIndoor",
-        "isManual"
+        "isManual",
+        "eventType"
       ],
       "additionalProperties": false
     },

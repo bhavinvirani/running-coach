@@ -21,9 +21,18 @@ export const activitySchema = z
     elevationGainM: z.number().nullable(),
     isIndoor: z.boolean(),
     isManual: z.boolean(),
+    /**
+     * Garmin's eventType.typeKey as the runner set it in Garmin Connect: race, training, recreation,
+     * uncategorized, ... The app reads "race"; null when Garmin sends none. A plan's session type is a
+     * separate field once a plan links runs to sessions.
+     */
+    eventType: z.string().min(1).nullable(),
   })
   .strict();
 export type Activity = z.infer<typeof activitySchema>;
+
+/** The one event type the app shows today. */
+export const RACE_EVENT_TYPE = "race";
 
 /** One lap as the watch recorded it, in SI; on an auto-lap watch these are the per-km splits. */
 export const activityLapSchema = z
