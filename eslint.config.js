@@ -7,6 +7,7 @@ import checkFile from "eslint-plugin-check-file";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import globals from "globals";
+import path from "node:path";
 import tseslint from "typescript-eslint";
 
 const ioModules = [
@@ -217,7 +218,13 @@ export default tseslint.config(
   {
     files: ["apps/web/src/**/*.{ts,tsx}"],
     plugins: { "better-tailwindcss": betterTailwindcss },
-    settings: { "better-tailwindcss": { entryPoint: "apps/web/src/styles/globals.css" } },
+    settings: {
+      // Absolute paths so the rules resolve Tailwind from apps/web whether ESLint runs from the root or the package.
+      "better-tailwindcss": {
+        cwd: path.join(import.meta.dirname, "apps/web"),
+        entryPoint: path.join(import.meta.dirname, "apps/web/src/styles/globals.css"),
+      },
+    },
     rules: {
       "better-tailwindcss/no-unknown-classes": "error",
       "better-tailwindcss/no-conflicting-classes": "error",

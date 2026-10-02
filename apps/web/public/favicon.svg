@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- A running track in accent on surface-0 (src/styles/tokens.css). Source of every app icon. -->
+  <rect width="512" height="512" fill="#181b22"/>
+  <rect x="112" y="184" width="288" height="144" rx="72" fill="none" stroke="#34ccb5" stroke-width="40"/>
+</svg>

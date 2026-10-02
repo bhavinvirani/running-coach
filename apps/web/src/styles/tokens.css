@@ -9,7 +9,7 @@
   --font-*: initial;
   --shadow-*: initial;
 
-  --font-sans: "Manrope", system-ui, sans-serif;
+  --font-sans: "Manrope Variable", system-ui, sans-serif;
   --spacing: 4px;
 
   /* shadcn copies reference these two */

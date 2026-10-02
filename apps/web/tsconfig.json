@@ -3,7 +3,10 @@
   "compilerOptions": {
     "lib": ["es2024", "dom", "dom.iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client", "vite-plugin-pwa/client"]
+    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src", "e2e", "*.config.ts"]
 }

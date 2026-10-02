@@ -1,0 +1,29 @@
+/* Tailwind entry point, also read by ESLint (better-tailwindcss) to know which classes exist.
+   Tokens live in tokens.css; this file adds the self-hosted font, base styles and safe-area utilities. */
+@import "@fontsource-variable/manrope";
+@import "./tokens.css";
+
+/* iOS standalone mode draws under the status bar and home indicator (viewport-fit=cover). */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    @apply bg-surface-0;
+  }
+
+  body {
+    @apply bg-surface-0 font-sans text-body text-ink antialiased;
+    font-variant-numeric: tabular-nums;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}
