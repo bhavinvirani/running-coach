@@ -19,6 +19,12 @@ export const progressCopy = {
   indoor: "Indoor",
   manual: "Manual",
   weekRuns: "Runs",
+  personalBests: "Personal bests",
+  loadingPersonalBests: "Loading personal bests",
+  /** A distance no run has covered yet in one continuous stretch. */
+  noRunYet: "No run yet",
+  /** On a best set within the last week. */
+  newBest: "New",
 } as const;
 
 /** The button each import status offers, named for what it does; none while the import moves by itself. */
@@ -63,4 +69,14 @@ export function importLine(progress: ImportProgress, timeZone: string): string {
         ? `${runs(progress.runsStored)} · history imported`
         : `${runs(progress.runsStored)} · history imported ${formatDate(progress.finishedAt, timeZone)}`;
   }
+}
+
+/** Under Personal bests while the best-efforts job works through runs: "Checking 340 runs for best efforts". */
+export function checkingRunsLine(pendingRuns: number): string {
+  return `Checking ${runs(pendingRuns)} for best efforts`;
+}
+
+/** Garmin's own record for a distance, already formatted, beside the app's: "Garmin 27:05". */
+export function garminRecordLine(time: string): string {
+  return `Garmin ${time}`;
 }

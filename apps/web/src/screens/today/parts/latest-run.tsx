@@ -2,12 +2,15 @@ import {
   distanceInUnits,
   paceSecondsPerUnit,
   type Activity,
+  type DistanceKey,
   type Units,
 } from "@running-coach/shared";
 import { Link } from "react-router";
 import { DotLine } from "@/components/dot-line";
+import { PbChip } from "@/components/pb-chip";
 import { RunTypeChip } from "@/components/run-type-chip";
 import { Stat } from "@/components/stat";
+import { personalBestName } from "@/lib/distance-labels";
 import {
   MISSING,
   formatDistanceValue,
@@ -22,15 +25,17 @@ import { runTypeName } from "@/lib/run-type";
 type LatestRunProps = {
   activity: Activity;
   units: Units;
+  /** The distances the run holds as current bests, shortest first; empty when it holds none. */
+  bests: readonly DistanceKey[];
 };
 
 /**
- * The newest run: its local start with the Race chip and Indoor when they apply, distance as the one hero
- * number on Today, then time, pace and avg HR.
+ * The newest run: its local start with the Race chip, the PB chip and Indoor when they apply, distance as
+ * the one hero number on Today, then time, pace and avg HR.
  * Pace is derived here from distance and time; an indoor run without a footpod has neither distance nor pace.
  * The whole card opens the run.
  */
-export function LatestRun({ activity, units }: LatestRunProps) {
+export function LatestRun({ activity, units, bests }: LatestRunProps) {
   const distance =
     activity.distanceM > 0
       ? formatDistanceValue(distanceInUnits(activity.distanceM, units))
@@ -38,11 +43,13 @@ export function LatestRun({ activity, units }: LatestRunProps) {
   const pace = formatPaceValue(paceSecondsPerUnit(activity.distanceM, activity.durationS, units));
   const avgHr = formatHeartRate(activity.avgHr);
   const typeName = runTypeName(activity.eventType);
+  const bestName = personalBestName(bests);
   // Named in words: read from the figures, a screen reader would run "10.0km" into "52:18".
   const name = [
     "Open the latest run",
     formatLocalDateTime(activity.startLocal),
     typeName,
+    bestName,
     distance === MISSING ? null : `${distance} ${units}`,
     formatDuration(activity.durationS),
   ]
@@ -57,10 +64,11 @@ export function LatestRun({ activity, units }: LatestRunProps) {
         className="flex flex-col gap-4 rounded-sm active:bg-surface-1"
       >
         <div className="flex items-baseline justify-between gap-4">
-          <h2 className="text-body font-semibold text-ink">Latest run</h2>
+          <h2 className="shrink-0 text-body font-semibold text-ink">Latest run</h2>
           <DotLine className="justify-end text-body text-ink-2">
             <time dateTime={activity.startLocal}>{formatLocalDateTime(activity.startLocal)}</time>
             {typeName ? <RunTypeChip eventType={activity.eventType} /> : null}
+            {bestName ? <PbChip distances={bests} /> : null}
             {activity.isIndoor ? "Indoor" : null}
           </DotLine>
         </div>

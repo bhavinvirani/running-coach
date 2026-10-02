@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { NO_BESTS } from "@/api/personal-bests";
 import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
@@ -61,7 +62,7 @@ export function TodayScreen() {
     <TodayLayout action={syncNow}>
       {syncOutcome}
       {refetchFailed}
-      <LatestRun activity={data} units={units} />
+      <LatestRun activity={data} units={units} bests={screen.runBests.get(data.id) ?? NO_BESTS} />
     </TodayLayout>
   );
 }

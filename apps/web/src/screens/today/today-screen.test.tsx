@@ -1,13 +1,19 @@
-import type { Activity, MeResponse } from "@running-coach/shared";
+import type { Activity, MeResponse, PersonalBestsResponse } from "@running-coach/shared";
 import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { personalBestsKey } from "@/api/personal-bests";
 import { detailKey } from "@/api/query-keys";
 import { errorMessages } from "@/lib/errors";
 import { MISSING } from "@/lib/format";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
-import { activityFixture, meFixture } from "@/test/fixtures";
+import {
+  activityFixture,
+  meFixture,
+  personalBestFixture,
+  personalBestsFixture,
+} from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { TodayScreen } from "./today-screen";
 
@@ -24,27 +30,39 @@ type FakeTodayApi = {
    * for a sync that fails after some chunks were committed.
    */
   sync?: (attempt: number, store: () => void) => SyncAnswer;
+  /** GET /api/personal-bests: none found unless a test says otherwise. */
+  bests?: PersonalBestsResponse | (() => Response | Promise<Response>);
+  /** The bests once a sync has stored its run and the best-efforts job has checked it. */
+  bestsAfterSync?: PersonalBestsResponse;
 };
 
-/** /api/me, GET /api/activities/latest and POST /api/sync, in memory. */
+/** /api/me, GET /api/activities/latest, GET /api/personal-bests and POST /api/sync, in memory. */
 function fakeTodayApi({
   me = meFixture(),
   latest = activityFixture(),
   synced = activityFixture(),
   sync = () => "stored",
+  bests = personalBestsFixture(),
+  bestsAfterSync,
 }: FakeTodayApi = {}) {
   let current = latest;
+  let currentBests = bests;
   let syncs = 0;
+  const store = () => {
+    current = synced;
+    currentBests = bestsAfterSync ?? currentBests;
+  };
   return stubFetch(({ method, path }) => {
     if (method === "GET" && path === "/api/me") return json(me);
     if (method === "GET" && path === "/api/activities/latest") return json({ activity: current });
+    if (method === "GET" && path === "/api/personal-bests") {
+      return typeof currentBests === "function" ? currentBests() : json(currentBests);
+    }
     if (method === "POST" && path === "/api/sync") {
       syncs += 1;
-      const answer = sync(syncs, () => {
-        current = synced;
-      });
+      const answer = sync(syncs, store);
       if (answer !== "stored") return answer;
-      current = synced;
+      store();
       return json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 1 });
     }
     return notFound();
@@ -84,6 +102,7 @@ describe("TodayScreen", () => {
     let attempts = 0;
     stubFetch(({ path }) => {
       if (path === "/api/me") return json(meFixture());
+      if (path === "/api/personal-bests") return json(personalBestsFixture());
       attempts += 1;
       return attempts === 1
         ? problem(500, ErrorCode.internal)
@@ -102,6 +121,7 @@ describe("TodayScreen", () => {
     let failing = false;
     stubFetch(({ path }) => {
       if (path === "/api/me") return json(meFixture());
+      if (path === "/api/personal-bests") return json(personalBestsFixture());
       return failing ? problem(503, ErrorCode.internal) : json({ activity: activityFixture() });
     });
     const { queryClient } = renderToday();
@@ -197,6 +217,98 @@ describe("TodayScreen", () => {
     expect(within(run).getByRole("link")).toHaveAccessibleName(
       "Open the latest run, Sun 27 Sep, 07:12, 10.0 km, 52:18",
     );
+  });
+
+  it("marks the latest run with a PB chip naming the distances it holds as bests", async () => {
+    fakeTodayApi({
+      bests: personalBestsFixture({
+        bests: [
+          personalBestFixture({ distanceKey: "10k", timeS: 3281.4 }),
+          personalBestFixture({ distanceKey: "5k", timeS: 1625.87 }),
+        ],
+      }),
+    });
+    renderToday();
+
+    const run = await screen.findByRole("region", { name: "Latest run" });
+    const chip = await within(run).findByText("PB 5K, 10K");
+    expect(chip.querySelector(".bg-pb")).toHaveAttribute("aria-hidden", "true");
+    expect(chip.parentElement).toHaveTextContent(/^Sun 27 Sep, 07:12·PB 5K, 10K$/);
+    expect(within(run).getByRole("link")).toHaveAccessibleName(
+      "Open the latest run, Sun 27 Sep, 07:12, PB 5K, 10K, 10.0 km, 52:18",
+    );
+  });
+
+  it("puts the PB chip after the Race chip on a race that set a best", async () => {
+    fakeTodayApi({
+      latest: activityFixture({ eventType: RACE_EVENT_TYPE }),
+      bests: personalBestsFixture({ bests: [personalBestFixture({ distanceKey: "5k" })] }),
+    });
+    renderToday();
+
+    const chip = await screen.findByText("PB 5K");
+    expect(chip.parentElement).toHaveTextContent(/^Sun 27 Sep, 07:12·Race·PB 5K$/);
+  });
+
+  it("shows no PB chip when the latest run holds no best", async () => {
+    fakeTodayApi({
+      bests: personalBestsFixture({
+        bests: [personalBestFixture({ activityId: newerRun.id, distanceKey: "5k" })],
+      }),
+    });
+    const { queryClient } = renderToday();
+
+    const run = await screen.findByRole("region", { name: "Latest run" });
+    await vi.waitFor(() =>
+      expect(queryClient.getQueryState(personalBestsKey)?.status).toBe("success"),
+    );
+    expect(within(run).queryByText(/PB/)).not.toBeInTheDocument();
+    expect(within(run).getByRole("link")).toHaveAccessibleName(
+      "Open the latest run, Sun 27 Sep, 07:12, 10.0 km, 52:18",
+    );
+  });
+
+  it.each([
+    { state: "still loading", bests: () => never() },
+    { state: "failed", bests: () => problem(500, ErrorCode.internal) },
+  ])(
+    "shows the latest run without a PB chip or an alert while the bests are $state",
+    async ({ bests }) => {
+      fakeTodayApi({ bests });
+      renderToday();
+
+      const run = await screen.findByRole("region", { name: "Latest run" });
+      expect(figure("Distance")).toHaveTextContent(/^Distance10\.0km$/);
+      expect(within(run).queryByText(/PB/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+    },
+  );
+
+  it("flags the new run with a PB chip after Sync now once its best efforts are in (flag after sync)", async () => {
+    const calls = fakeTodayApi({
+      synced: newerRun,
+      bestsAfterSync: personalBestsFixture({
+        bests: [
+          personalBestFixture({
+            distanceKey: "half",
+            timeS: 6972.6,
+            activityId: newerRun.id,
+            startUtc: newerRun.startUtc,
+            startLocal: newerRun.startLocal,
+          }),
+        ],
+      }),
+    });
+    renderToday();
+    expect(await screen.findByText("Sun 27 Sep, 07:12")).toBeInTheDocument();
+    expect(screen.queryByText(/PB/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sync now" }));
+
+    expect(await screen.findByText("PB Half")).toBeInTheDocument();
+    expect(screen.getByText("Mon 28 Sep, 06:30")).toBeInTheDocument();
+    expect(calls.filter((call) => call.path === "/api/personal-bests")).toHaveLength(2);
   });
 
   it("converts distance and pace to mi when the runner uses miles", async () => {

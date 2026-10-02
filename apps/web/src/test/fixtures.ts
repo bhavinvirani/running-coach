@@ -4,11 +4,15 @@ import {
   activityWeekSchema,
   importProgressSchema,
   meResponseSchema,
+  personalBestSchema,
+  personalBestsResponseSchema,
   type Activity,
   type ActivityDetail,
   type ActivityWeek,
   type ImportProgress,
   type MeResponse,
+  type PersonalBest,
+  type PersonalBestsResponse,
 } from "@running-coach/shared";
 
 const RUNNER_ID = "5b1f0c9e-3d2a-4f6b-8c7d-9e0a1b2c3d4e";
@@ -126,6 +130,30 @@ export function importProgressFixture(overrides: Partial<ImportProgress> = {}): 
     finishedAt: null,
     resumeAt: null,
     errorCode: null,
+    ...overrides,
+  });
+}
+
+/** A best at one distance from activityFixture's run (Sun 27 Sep 2026, 07:12 in London). */
+export function personalBestFixture(overrides: Partial<PersonalBest> = {}): PersonalBest {
+  return personalBestSchema.parse({
+    distanceKey: "5k",
+    timeS: 1625.87,
+    activityId: activityFixture().id,
+    startUtc: "2026-09-27T06:12:00Z",
+    startLocal: "2026-09-27T07:12:00",
+    ...overrides,
+  });
+}
+
+/** GET /api/personal-bests before any best: nothing found, nothing from Garmin, nothing pending. */
+export function personalBestsFixture(
+  overrides: Partial<PersonalBestsResponse> = {},
+): PersonalBestsResponse {
+  return personalBestsResponseSchema.parse({
+    bests: [],
+    garmin: null,
+    pendingRuns: 0,
     ...overrides,
   });
 }

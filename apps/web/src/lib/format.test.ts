@@ -16,6 +16,7 @@ import {
   formatLapDistance,
   formatLapDistanceValue,
   formatLocalDateTime,
+  formatLocalDate,
   formatLocalDay,
   formatLocalTime,
   formatMonthYear,
@@ -23,6 +24,7 @@ import {
   formatPaceDelta,
   formatPaceValue,
   formatPercent,
+  formatRecordTime,
   formatTime,
   formatWeekRange,
 } from "./format";
@@ -414,5 +416,52 @@ describe("formatLocalTime", () => {
     expect(formatLocalTime(null)).toBe(MISSING);
     expect(formatLocalTime("2026-09-27")).toBe(MISSING);
     expect(formatLocalTime("2026-02-30T07:12:00")).toBe(MISSING);
+  });
+});
+
+describe("formatRecordTime", () => {
+  it("cuts a record to the whole second the way Garmin shows it, never rounding up", () => {
+    // The owner's PBs as Garmin lists them: 1625.87 s is 27:05, not 27:06.
+    expect(formatRecordTime(1625.87)).toBe("27:05");
+    expect(formatRecordTime(3281.4)).toBe("54:41");
+    expect(formatRecordTime(5306.9)).toBe("1:28:26");
+    expect(formatRecordTime(6972.6)).toBe("1:56:12");
+  });
+
+  it("reads m:ss under an hour and h:mm:ss from the hour (boundaries 59.99 s, 3599.9 s, 3600 s)", () => {
+    expect(formatRecordTime(59.99)).toBe("0:59");
+    expect(formatRecordTime(60)).toBe("1:00");
+    expect(formatRecordTime(3599.9)).toBe("59:59");
+    expect(formatRecordTime(3600)).toBe("1:00:00");
+    expect(formatRecordTime(15_201.3)).toBe("4:13:21");
+  });
+
+  it("keeps a whole second that float sums left a hair short of it", () => {
+    expect(formatRecordTime(1625.9999999999998)).toBe("27:06");
+  });
+
+  it("shows the missing mark for null, zero, negative and non-finite times", () => {
+    expect(formatRecordTime(null)).toBe(MISSING);
+    expect(formatRecordTime(undefined)).toBe(MISSING);
+    expect(formatRecordTime(0)).toBe(MISSING);
+    expect(formatRecordTime(-3)).toBe(MISSING);
+    expect(formatRecordTime(Number.POSITIVE_INFINITY)).toBe(MISSING);
+  });
+});
+
+describe("formatLocalDate", () => {
+  it("shows the calendar date of the run's own start, with its year", () => {
+    expect(formatLocalDate("2026-09-27T07:12:00")).toBe("27 Sep 2026");
+    expect(formatLocalDate("2019-04-07T23:55:00")).toBe("7 Apr 2019");
+  });
+
+  it("keeps the local day of a start in an hour that a DST change skips (time zones and DST)", () => {
+    expect(formatLocalDate("2026-03-29T01:30:00")).toBe("29 Mar 2026");
+  });
+
+  it("shows the missing mark for null and malformed values", () => {
+    expect(formatLocalDate(null)).toBe(MISSING);
+    expect(formatLocalDate("27/09/2026")).toBe(MISSING);
+    expect(formatLocalDate("2026-02-30T07:12:00")).toBe(MISSING);
   });
 });
