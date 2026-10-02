@@ -6,3 +6,5 @@ export * from "./coach-message";
 export * from "./import-progress";
 export * from "./activity-detail";
 export * from "./best-effort";
+export * from "./goal";
+export * from "./plan";
