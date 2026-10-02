@@ -1,10 +1,10 @@
 import type { WorkOptions } from "pg-boss";
 import * as bestEfforts from "./best-efforts";
-import { getBoss, startBoss, stopBoss } from "./boss";
+import { startBoss, stopBoss } from "./boss";
 import * as importHistory from "./import-history";
 import * as syncGarmin from "./sync-garmin";
 
-// Registers every queue and worker. Routes and the cron endpoint enqueue through the functions below.
+// Registers every queue and worker. Services enqueue through the functions re-exported below.
 
 export interface StartJobsOptions {
   /** Seconds between polls for new jobs; tests shorten it. */
@@ -56,14 +56,10 @@ export async function stopJobs(): Promise<void> {
 }
 
 /**
- * Queues a sync of the user's runs. The cron passes the user's local date and runs once per user and date;
- * app open passes trigger "user" and always queues one, unless a sync is already queued for the user,
- * which then covers it. Null when nothing new was queued. Sync now does not queue (POST /api/sync).
+ * Queues the daily cron's sync of a user for the fire's UTC date, once per user and date
+ * (sync-garmin-queue.ts). App open and Sync now do not queue: POST /api/sync syncs in the request.
  */
-export async function enqueueSyncGarmin(data: syncGarmin.SyncGarminData): Promise<string | null> {
-  const job = syncGarmin.data.parse(data);
-  return getBoss().send(syncGarmin.name, job, syncGarmin.sendOptions(job));
-}
+export { enqueueSyncGarmin } from "./sync-garmin-queue";
 
 /** Queues a page of the user's history import at its stored cursor (import-history-queue.ts). */
 export { enqueueImportHistory } from "./import-history-queue";

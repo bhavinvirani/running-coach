@@ -1,13 +1,18 @@
+import { ErrorCode } from "@running-coach/shared";
 import type { ReactNode } from "react";
 import { NO_BESTS } from "@/api/personal-bests";
 import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
-import { errorMessage } from "@/lib/errors";
+import { errorCodeMessage, errorMessage } from "@/lib/errors";
 import { LatestRun } from "./parts/latest-run";
+import { ReconnectGarminLink } from "./parts/reconnect-garmin-link";
 import { SyncNowButton } from "./parts/sync-now-button";
 import { useTodayScreen } from "./use-today";
 
-/** Today tab: Sync now and the latest run. Empty until the first sync stores a run. */
+/**
+ * Today tab: Sync now, or Reconnect Garmin once the login expired, and the latest run. Empty until the
+ * first sync stores a run.
+ */
 export function TodayScreen() {
   const screen = useTodayScreen();
   const { data, status, error, refetch, units } = screen;
@@ -31,9 +36,20 @@ export function TodayScreen() {
     );
   }
 
-  const syncNow = <SyncNowButton syncing={screen.syncing} onSync={screen.syncNow} />;
+  // Expired: Sync now would only fail again, so Reconnect Garmin and one line saying why take its place,
+  // and any outcome of an earlier sync goes, Retry included.
+  const expiredLine = screen.garminExpired ? (
+    <p role="alert" className="text-body text-ink">
+      {errorCodeMessage(ErrorCode.garminAuthExpired)}
+    </p>
+  ) : null;
+  const action = screen.garminExpired ? (
+    <ReconnectGarminLink />
+  ) : (
+    <SyncNowButton syncing={screen.syncing} onSync={screen.syncNow} />
+  );
   // A sync that found nothing new says so; otherwise "it worked" looks like "nothing happened".
-  const syncOutcome = screen.syncError ? (
+  const syncOutcome = screen.garminExpired ? null : screen.syncError ? (
     <RetryAlert error={screen.syncError} onRetry={screen.syncNow} />
   ) : screen.nothingNew ? (
     <p role="status" className="text-caption text-ink-2">
@@ -44,14 +60,18 @@ export function TodayScreen() {
     <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
   ) : null;
 
-  // Empty: the sentence carries the one Sync now, so the header leaves it out.
+  // Empty: the sentence carries the one action, so the header leaves it out.
   if (data === null) {
     return (
       <TodayLayout>
         {refetchFailed}
         <div className="flex flex-col items-start gap-4">
-          <p className="text-body text-ink-2">Sync now to bring in your latest run from Garmin.</p>
-          {syncNow}
+          {expiredLine ?? (
+            <p className="text-body text-ink-2">
+              Sync now to bring in your latest run from Garmin.
+            </p>
+          )}
+          {action}
         </div>
         {syncOutcome}
       </TodayLayout>
@@ -59,7 +79,8 @@ export function TodayScreen() {
   }
 
   return (
-    <TodayLayout action={syncNow}>
+    <TodayLayout action={action}>
+      {expiredLine}
       {syncOutcome}
       {refetchFailed}
       <LatestRun activity={data} units={units} bests={screen.runBests.get(data.id) ?? NO_BESTS} />

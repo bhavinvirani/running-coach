@@ -1,0 +1,60 @@
+# The daily sync (SPEC, Scheduler): one POST to the secret-protected cron endpoint, which queues a
+# background sync per user with a working Garmin login, keyed on the fire's UTC date
+# (services/daily-sync.ts), so a second fire or a retry on the same UTC day queues nothing. Needs the
+# repository secrets APP_URL (the Render origin) and CRON_SECRET (the value Render holds), issue #20.
+# A failed run emails whoever last edited the schedule.
+name: Daily sync
+
+on:
+  schedule:
+    # Off the hour: GitHub delays or drops top-of-the-hour schedules most.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: daily-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # Forks have neither the secrets nor the service.
+    if: github.repository == 'bhavinvirani/running-coach'
+    runs-on: ubuntu-latest
+    # Covers the wake loop's worst case (8 tries of up to 105 s) plus the POST and its retries.
+    timeout-minutes: 20
+    steps:
+      - name: Queue the daily sync
+        shell: bash
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set the repository secrets APP_URL and CRON_SECRET (issue #20)."
+            exit 1
+          fi
+          base="${APP_URL%/}"
+
+          # The free service sleeps after 15 minutes idle and takes about a minute to wake: wait for
+          # /health before sending the cron, so a cold start is not mistaken for a failure.
+          awake=false
+          for _ in $(seq 1 8); do
+            if curl -fsS -o /dev/null --max-time 90 "$base/health"; then
+              awake=true
+              break
+            fi
+            sleep 15
+          done
+          if [ "$awake" != true ]; then
+            echo "::error::$base/health did not answer 200 within the wake window."
+            exit 1
+          fi
+
+          # The header goes through stdin, so the secret never sits in a process's arguments. Retrying
+          # the POST is safe: the job ids make a repeat a no-op. A wrong secret answers 401 and fails here.
+          printf 'Authorization: Bearer %s\n' "$CRON_SECRET" |
+            curl -fsS --max-time 60 --retry 2 --retry-delay 15 -X POST -H @- "$base/api/cron/sync"
+          echo

@@ -1,9 +1,17 @@
 import { ErrorCode } from "@running-coach/shared";
 import type { RequestHandler } from "express";
+import { config } from "./config";
 import { DomainError } from "./errors";
 
 // In-memory limits for the per-user routes that log in to Garmin. One process serves the app (SPEC), so
 // memory is enough; a second instance would need the limits in Postgres.
+
+/**
+ * Each route that logs in to Garmin (Sync now, connect, import, a run's detail): six a minute per user by
+ * default, far above a runner's taps, since every request is a Garmin login. config.GARMIN_ROUTE_LIMIT
+ * raises it for e2e only.
+ */
+export const garminRouteLimit = { limit: config.GARMIN_ROUTE_LIMIT, windowMs: 60_000 } as const;
 
 export interface RateLimitOptions {
   /** Requests allowed per key within any window. */

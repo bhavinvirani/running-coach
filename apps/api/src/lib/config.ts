@@ -48,6 +48,11 @@ const configObject = z.object({
     .enum(["0", "1"])
     .default("0")
     .transform((value) => value === "1"),
+  // Requests a minute per user on each route that logs in to Garmin (garminRouteLimit in lib/rate-limit.ts).
+  // Only e2e raises it: every e2e test is the one seeded runner, so six a minute would fail a test for what
+  // the tests before it sent. Integration tests keep the default and cover the limit.
+  GARMIN_ROUTE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(6),
+  // The daily cron's bearer token (POST /api/cron/sync); required in production (configSchema).
   CRON_SECRET: optional(z.string().min(16)),
   OWNER_EMAIL: optional(z.email()),
   OWNER_PASSWORD: optional(z.string().min(8).max(128)),
@@ -63,6 +68,10 @@ const configObject = z.object({
 
 const configSchema = configObject.superRefine((value, ctx) => {
   if (value.NODE_ENV !== "production") return;
+  // Without it the cron endpoint refuses every call and no daily sync ever runs, silently.
+  if (value.CRON_SECRET === undefined) {
+    ctx.addIssue({ code: "custom", path: ["CRON_SECRET"], message: "is required in production" });
+  }
   for (const key of SECRETS) {
     const secret = value[key];
     if (secret !== undefined && isPublishedSecret(secret)) {

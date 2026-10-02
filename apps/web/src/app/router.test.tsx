@@ -1,10 +1,10 @@
-import { ErrorCode } from "@running-coach/shared";
+import { ErrorCode, type MeResponse } from "@running-coach/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorMessages } from "@/lib/errors";
 import { json, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
 import {
@@ -17,6 +17,7 @@ import {
 } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
+import { backgroundAndReturn } from "@/test/lifecycle";
 
 function renderApp(path: string) {
   const queryClient = testQueryClient();
@@ -29,9 +30,14 @@ function renderApp(path: string) {
   return router;
 }
 
-/** The API for a signed-in runner with one stored run and a finished import. */
+/**
+ * The API for a signed-in runner with one stored run and a finished import, who synced a moment ago, so
+ * opening the app sends no sync: that has its own test below.
+ */
 function signedIn({ path }: FakeRequest): Response {
-  if (path === "/api/me") return json(meFixture());
+  if (path === "/api/me") {
+    return json(meFixture({ garmin: { status: "ok", lastSyncAt: new Date().toISOString() } }));
+  }
   if (path === "/api/activities/latest") return json({ activity: activityFixture() });
   if (path === `/api/activities/${activityFixture().id}`) {
     return json(activityResponseFixture({ detail: activityDetailFixture() }));
@@ -53,6 +59,11 @@ function retryWithoutWaiting() {
 }
 
 describe("app routes", () => {
+  beforeEach(() => {
+    // The sync on open records this device's attempt there.
+    localStorage.clear();
+  });
+
   it("sends a visitor without a session to the login screen without retrying the 401", async () => {
     const calls = stubFetch(() => problem(401, ErrorCode.unauthorized));
     const router = renderApp("/settings");
@@ -161,4 +172,71 @@ describe("app routes", () => {
     expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(6);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("syncs once when the app opens on any tab, and not again on a tab change (sync on open)", async () => {
+    const calls = stubFetch((request) => {
+      if (request.path === "/api/me") {
+        const anHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+        return json(meFixture({ garmin: { status: "ok", lastSyncAt: anHourAgo } }));
+      }
+      if (request.method === "POST" && request.path === "/api/sync") {
+        return json({ lastSyncAt: new Date().toISOString(), activitiesWritten: 0 });
+      }
+      return signedIn(request);
+    });
+    const syncs = () => calls.filter((call) => call.path === "/api/sync");
+    renderApp("/settings");
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    await vi.waitFor(() => expect(syncs()).toHaveLength(1));
+    expect(syncs()[0]).toMatchObject({ method: "POST", body: undefined });
+
+    await userEvent.click(screen.getByRole("link", { name: "Today" }));
+    expect(await screen.findByText("No new runs on Garmin.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Progress" }));
+    expect(await screen.findByRole("heading", { name: "Progress" })).toBeInTheDocument();
+
+    expect(syncs()).toHaveLength(1);
+  });
+
+  it.each([
+    { corner: "on Today", leaveToday: false },
+    { corner: "Today left for Settings and back", leaveToday: true },
+  ])(
+    "shows Sync now and no stale login error after a reconnect, once the open sync's rejection marked the login expired (expired login, reconnected, $corner)",
+    async ({ leaveToday }) => {
+      const anHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+      let garmin: MeResponse["garmin"] = { status: "ok", lastSyncAt: anHourAgo };
+      const calls = stubFetch((request) => {
+        if (request.path === "/api/me") return json(meFixture({ garmin }));
+        if (request.method === "POST" && request.path === "/api/sync") {
+          // The second rejection in a row: the API marks the login expired.
+          garmin = { status: "expired", lastSyncAt: anHourAgo };
+          return problem(409, ErrorCode.garminAuthExpired);
+        }
+        return signedIn(request);
+      });
+      renderApp("/");
+      const reconnect = await screen.findByRole("link", { name: "Reconnect Garmin" });
+      if (leaveToday) {
+        await userEvent.click(reconnect);
+        expect(await screen.findByText("Login expired")).toBeInTheDocument();
+      }
+
+      // Reconnected from the laptop; back in the foreground the app reads /api/me again.
+      garmin = { status: "ok", lastSyncAt: anHourAgo };
+      backgroundAndReturn();
+      if (leaveToday) {
+        expect(await screen.findByText("Connected")).toBeInTheDocument();
+        await userEvent.click(screen.getByRole("link", { name: "Today" }));
+      }
+
+      expect(await screen.findByRole("button", { name: "Sync now" })).toBeEnabled();
+      await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+      expect(screen.queryByText(errorMessages.garmin_auth_expired)).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Reconnect Garmin" })).not.toBeInTheDocument();
+      // The open sync's attempt is under 10 minutes old, so the foreground only reads /api/me.
+      expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(1);
+    },
+  );
 });

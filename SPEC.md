@@ -11,7 +11,7 @@ A mobile-first PWA that replaces a Runna subscription for one runner first, more
 3. `services/garmin`: FastAPI wrapping `garminconnect`, spawned by the API on 127.0.0.1 and called with a shared-secret header. Stateless: token bundle in, refreshed bundle out, coarse operations (sync since date, push workout). Every Garmin call for a user runs under one per-user lock in the API.
 4. `packages/engine`: pure TypeScript training rules, no I/O, test-first. `packages/shared`: zod contracts, error codes, units.
 5. Claude: the API calls the Claude API with the user's key, versioned prompt files, structured JSON output validated with zod, fallback card when invalid.
-6. Scheduler: a GitHub Actions cron calls a secret-protected endpoint daily; sync also runs on app open and on a Sync button. Jobs have deterministic ids so double fires are no-ops.
+6. Scheduler: a GitHub Actions cron calls a secret-protected endpoint daily, which queues one job per working login keyed on the fire's UTC date, so double fires are no-ops. Sync also runs in the request on app open (at most every 10 min) and on a Sync button; a sync asked for while one runs joins it.
 7. One Docker image on a Render free web service; migrations run at process start; `/health`; request id flows web to API to Garmin service; problem+json errors everywhere.
 
 ## Core tables

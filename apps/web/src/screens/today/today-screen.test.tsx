@@ -1,10 +1,12 @@
 import type { Activity, MeResponse, PersonalBestsResponse } from "@running-coach/shared";
 import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Outlet } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { personalBestsKey } from "@/api/personal-bests";
 import { detailKey } from "@/api/query-keys";
+import { useForgetSyncOutcomeOnReconnect } from "@/api/sync";
 import { errorMessages } from "@/lib/errors";
 import { MISSING } from "@/lib/format";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
@@ -21,7 +23,8 @@ import { TodayScreen } from "./today-screen";
 type SyncAnswer = "stored" | Response | Promise<Response>;
 
 type FakeTodayApi = {
-  me?: MeResponse;
+  /** GET /api/me: the runner, or an answer that can change mid-test (the API marks the login, a reconnect). */
+  me?: MeResponse | (() => Response | Promise<Response>);
   latest?: Activity | null;
   /** The run a successful sync stores as the latest. */
   synced?: Activity;
@@ -34,6 +37,8 @@ type FakeTodayApi = {
   bests?: PersonalBestsResponse | (() => Response | Promise<Response>);
   /** The bests once a sync has stored its run and the best-efforts job has checked it. */
   bestsAfterSync?: PersonalBestsResponse;
+  /** /api/me once a sync has answered: the API marks the login expired when Garmin refuses it. */
+  meAfterSync?: MeResponse;
 };
 
 /** /api/me, GET /api/activities/latest, GET /api/personal-bests and POST /api/sync, in memory. */
@@ -44,7 +49,9 @@ function fakeTodayApi({
   sync = () => "stored",
   bests = personalBestsFixture(),
   bestsAfterSync,
+  meAfterSync,
 }: FakeTodayApi = {}) {
+  let currentMe = me;
   let current = latest;
   let currentBests = bests;
   let syncs = 0;
@@ -53,13 +60,16 @@ function fakeTodayApi({
     currentBests = bestsAfterSync ?? currentBests;
   };
   return stubFetch(({ method, path }) => {
-    if (method === "GET" && path === "/api/me") return json(me);
+    if (method === "GET" && path === "/api/me") {
+      return typeof currentMe === "function" ? currentMe() : json(currentMe);
+    }
     if (method === "GET" && path === "/api/activities/latest") return json({ activity: current });
     if (method === "GET" && path === "/api/personal-bests") {
       return typeof currentBests === "function" ? currentBests() : json(currentBests);
     }
     if (method === "POST" && path === "/api/sync") {
       syncs += 1;
+      currentMe = meAfterSync ?? currentMe;
       const answer = sync(syncs, store);
       if (answer !== "stored") return answer;
       store();
@@ -69,8 +79,14 @@ function fakeTodayApi({
   });
 }
 
+/** What the tab shell runs around Today, but the sync on open: forgetting a sync's outcome on a reconnect. */
+function Shell() {
+  useForgetSyncOutcomeOnReconnect();
+  return <Outlet />;
+}
+
 function renderToday() {
-  return renderScreen(<TodayScreen />, { path: "/" });
+  return renderScreen(<TodayScreen />, { path: "/", layout: <Shell /> });
 }
 
 /** A Stat or the hero: the label and its figure are siblings, so their parent reads "Time52:18". */
@@ -88,6 +104,15 @@ const newerRun = activityFixture({
 });
 
 const noNewRuns = "No new runs on Garmin.";
+
+const expiredMe = meFixture({ garmin: { status: "expired", lastSyncAt: "2026-09-27T06:12:00Z" } });
+
+const notConnectedMe = meFixture({ garmin: { status: "not_connected", lastSyncAt: null } });
+
+/** The header beside the Today title, which holds Sync now or Reconnect Garmin on a loaded screen. */
+function header() {
+  return screen.getByRole("heading", { name: "Today" }).closest("header");
+}
 
 describe("TodayScreen", () => {
   it("shows a skeleton in the final layout while loading", () => {
@@ -417,7 +442,8 @@ describe("TodayScreen", () => {
 
   it.each([
     {
-      corner: "expired Garmin login",
+      // The API marks the login expired on the second rejection in a row; /api/me says ok until then.
+      corner: "expired Garmin login, first rejection with /api/me still ok",
       answer: () => problem(409, ErrorCode.garminAuthExpired),
       message: "Garmin login expired. Reconnect in Settings.",
     },
@@ -455,7 +481,11 @@ describe("TodayScreen", () => {
   );
 
   it("explains a failed sync from the empty state and keeps the sentence (Garmin not connected)", async () => {
-    fakeTodayApi({ latest: null, sync: () => problem(409, ErrorCode.garminNotConnected) });
+    fakeTodayApi({
+      latest: null,
+      sync: () => problem(409, ErrorCode.garminNotConnected),
+      meAfterSync: notConnectedMe,
+    });
     renderToday();
 
     await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
@@ -566,5 +596,172 @@ describe("TodayScreen", () => {
       screen.getByText("Sync now to bring in your latest run from Garmin."),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("puts Reconnect Garmin in the header and the expired line above the run in place of Sync now (expired login)", async () => {
+    fakeTodayApi({ me: expiredMe });
+    renderToday();
+
+    const run = await screen.findByRole("region", { name: "Latest run" });
+    const line = screen.getByRole("alert");
+    expect(line.textContent).toBe(errorMessages.garmin_auth_expired);
+    expect(line).toHaveClass("text-body", "text-ink");
+    expect(line.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const reconnect = screen.getByRole("link", { name: "Reconnect Garmin" });
+    expect(reconnect).toHaveAttribute("href", "/settings");
+    expect(reconnect).toHaveAttribute("data-variant", "secondary");
+    expect(header()).toContainElement(reconnect);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(figure("Distance")).toHaveTextContent(/^Distance10\.0km$/);
+  });
+
+  it("asks to reconnect from the empty state with the expired line and Reconnect Garmin, not Sync now (expired login)", async () => {
+    fakeTodayApi({ me: expiredMe, latest: null });
+    renderToday();
+
+    expect((await screen.findByRole("alert")).textContent).toBe(errorMessages.garmin_auth_expired);
+    const reconnect = screen.getByRole("link", { name: "Reconnect Garmin" });
+    expect(reconnect).toHaveAttribute("href", "/settings");
+    // The sentence carries the one action, so the header leaves it out.
+    expect(header()).not.toContainElement(reconnect);
+    expect(
+      screen.queryByText("Sync now to bring in your latest run from Garmin."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("opens Settings from Reconnect Garmin (expired login)", async () => {
+    fakeTodayApi({ me: expiredMe });
+    const { router } = renderToday();
+
+    await userEvent.click(await screen.findByRole("link", { name: "Reconnect Garmin" }));
+
+    expect(await screen.findByText("Route not under test")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/settings");
+  });
+
+  it("turns Sync now into Reconnect Garmin once a sync finds the login expired, with the line once and no Retry (expired login)", async () => {
+    const calls = fakeTodayApi({
+      sync: () => problem(409, ErrorCode.garminAuthExpired),
+      meAfterSync: expiredMe,
+    });
+    renderToday();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+
+    expect(await screen.findByRole("link", { name: "Reconnect Garmin" })).toBeInTheDocument();
+    expect(screen.getAllByText(errorMessages.garmin_auth_expired)).toHaveLength(1);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(figure("Distance")).toHaveTextContent(/^Distance10\.0km$/);
+    expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      corner: "expired login, reconnected",
+      start: meFixture(),
+      code: ErrorCode.garminAuthExpired,
+      // The second rejection in a row: the API marks the login expired.
+      afterSync: expiredMe,
+    },
+    {
+      corner: "not connected, first connect",
+      start: notConnectedMe,
+      code: ErrorCode.garminNotConnected,
+      afterSync: notConnectedMe,
+    },
+  ])(
+    "forgets an earlier sync's login error and shows Sync now once /api/me moves to ok ($corner)",
+    async ({ start, code, afterSync }) => {
+      let me = start;
+      const calls = fakeTodayApi({
+        me: () => json(me),
+        sync: () => {
+          me = afterSync;
+          return problem(409, code);
+        },
+      });
+      const { queryClient } = renderToday();
+      await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages[code]);
+
+      // Connected from the laptop; /api/me is read again back in the foreground, or by Settings.
+      me = meFixture();
+      await act(() => queryClient.refetchQueries({ queryKey: detailKey("me") }));
+
+      await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+      expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+      expect(screen.queryByText(errorMessages[code])).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Reconnect Garmin" })).not.toBeInTheDocument();
+      expect(figure("Distance")).toHaveTextContent(/^Distance10\.0km$/);
+      expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(1);
+    },
+  );
+
+  it("shows Sync now and no stale alert back on Today when the reconnect was read while Today was left for Settings (expired login, reconnected)", async () => {
+    let me = meFixture();
+    fakeTodayApi({
+      me: () => json(me),
+      sync: () => {
+        me = expiredMe;
+        return problem(409, ErrorCode.garminAuthExpired);
+      },
+    });
+    const { router, queryClient } = renderToday();
+    await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+    await userEvent.click(await screen.findByRole("link", { name: "Reconnect Garmin" }));
+    expect(await screen.findByText("Route not under test")).toBeInTheDocument();
+
+    // Reconnected from the laptop; Settings, or the foreground, reads /api/me again while Today is away.
+    me = meFixture();
+    await act(() => queryClient.refetchQueries({ queryKey: detailKey("me") }));
+    await act(() => router.navigate("/"));
+
+    expect(await screen.findByRole("button", { name: "Sync now" })).toBeEnabled();
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.queryByText(errorMessages.garmin_auth_expired)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Reconnect Garmin" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      corner: "Garmin outage",
+      answer: () => problem(502, ErrorCode.garminUnavailable),
+      message: errorMessages.garmin_unavailable,
+    },
+    {
+      corner: "expired login, first rejection with /api/me still ok",
+      answer: () => problem(409, ErrorCode.garminAuthExpired),
+      message: errorMessages.garmin_auth_expired,
+    },
+  ])(
+    "keeps an earlier sync's error and Retry after /api/me is read again still ok, which is no reconnect ($corner)",
+    async ({ answer, message }) => {
+      fakeTodayApi({ sync: answer });
+      const { queryClient } = renderToday();
+      await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+
+      await act(() => queryClient.refetchQueries({ queryKey: detailKey("me") }));
+
+      expect(screen.getByRole("alert")).toHaveTextContent(message);
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+    },
+  );
+
+  it("keeps the Sync now sentence and button when Garmin is not connected (not connected)", async () => {
+    fakeTodayApi({
+      me: notConnectedMe,
+      latest: null,
+    });
+    renderToday();
+
+    expect(
+      await screen.findByText("Sync now to bring in your latest run from Garmin."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
+    expect(screen.queryByRole("link", { name: "Reconnect Garmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
