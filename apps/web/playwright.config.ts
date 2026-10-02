@@ -20,7 +20,7 @@ const flows: Project = {
 const screens: Project = {
   name: "screens",
   testMatch: "screens/*.screen.spec.ts",
-  // The browser always runs in the same Linux image, so baselines carry no platform or project suffix
+  // The browser always runs in the same linux/amd64 image, so baselines carry no platform or project suffix
   // and a macOS laptop and CI compare against the same file.
   snapshotPathTemplate: "{testDir}/{testFileDir}/{testFileName}-snapshots/{arg}{ext}",
   use: {

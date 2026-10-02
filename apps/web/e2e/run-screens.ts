@@ -1,6 +1,8 @@
 // `pnpm test:screens [--update] [playwright test options]`: runs the screens project against the Chromium
-// inside the official Playwright image, so a macOS laptop and CI render the same pixels. Starts a
-// run-server container on a free port, waits for it, runs the tests, and always removes the container.
+// inside the official Playwright image, so host fonts never reach a baseline. The image always runs as
+// linux/amd64, what CI's runners are: CI's render is the reference, and an arm64 laptop emulates it rather
+// than rendering its own pixels. Starts a run-server container on a free port, waits for it, runs the tests,
+// and always removes the container.
 // Runs on Node's type stripping: no relative imports, no TypeScript-only runtime syntax.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -22,6 +24,7 @@ const coreDir = path.dirname(
 // The image's browsers must be the build the installed Playwright expects, so its tag follows the lockfile.
 const { version } = JSON.parse(readFileSync(testPackageJson, "utf8")) as { version: string };
 const image = `mcr.microsoft.com/playwright:v${version}-noble`;
+const PLATFORM = "linux/amd64";
 
 const READY_TIMEOUT_MS = 60_000;
 
@@ -115,11 +118,16 @@ function runScreens(port: number, args: string[]): Promise<number> {
 async function main(): Promise<number> {
   const args = process.argv
     .slice(2)
-    .map((arg) => (arg === "--update" ? "--update-snapshots" : arg));
+    // "all", not Playwright's "changed": a change under the comparison threshold (a text color one step
+    // lighter) would otherwise leave the old pixels in the baseline.
+    .map((arg) => (arg === "--update" ? "--update-snapshots=all" : arg));
 
-  // Pull in the foreground the first time, so a 2 GB download shows progress instead of a silent wait.
-  if (docker(["image", "inspect", image]).status !== 0) {
-    if (docker(["pull", image], "show").status !== 0) throw new Error(`Could not pull ${image}`);
+  // Pull in the foreground the first time, so a 2 GB download shows progress instead of a silent wait. The
+  // inspect fails when only another platform's build is present (for example arm64 from an earlier run).
+  if (docker(["image", "inspect", "--platform", PLATFORM, image]).status !== 0) {
+    if (docker(["pull", "--platform", PLATFORM, image], "show").status !== 0) {
+      throw new Error(`Could not pull ${image} for ${PLATFORM}`);
+    }
   }
 
   const port = await freePort();
@@ -127,6 +135,8 @@ async function main(): Promise<number> {
   container = name;
   const started = docker([
     "run",
+    "--platform",
+    PLATFORM,
     "--detach",
     "--init",
     // Chromium needs more shared memory than Docker's 64 MB default.

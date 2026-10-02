@@ -22,7 +22,7 @@ export function TabShell() {
                 className={({ isActive }) =>
                   cn(
                     "flex min-h-14 flex-col items-center justify-center gap-1 text-caption font-medium",
-                    isActive ? "text-accent" : "text-ink-3",
+                    isActive ? "text-accent" : "text-ink-2",
                   )
                 }
               >

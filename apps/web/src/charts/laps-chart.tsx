@@ -1,24 +1,11 @@
-import {
-  GPS_GLITCH_PACE_S_PER_KM,
-  METERS_PER_KM,
-  metersPerUnit,
-  type Units,
-} from "@running-coach/shared";
+import type { Units } from "@running-coach/shared";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { downsample } from "@/lib/downsample";
 import { formatDistance, formatPaceValue, paceUnitLabel } from "@/lib/format";
-
-/** One lap, already converted to the user's unit by the caller. */
-export type LapPoint = {
-  /** Lap number as the watch shows it, starting at 1. */
-  index: number;
-  /** Null when the lap has no distance (treadmill without a footpod). */
-  paceSecondsPerUnit: number | null;
-  distanceInUnit: number;
-};
+import type { LapPoint } from "./lap-point";
 
 export type PaceTarget = {
   paceSecondsPerUnit: number;
@@ -37,11 +24,6 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 type Row = { index: number; pace: number; bar: [number, number] };
-
-/** Paces below this (2:00/km in the user's unit) are GPS jumps, not running. */
-function glitchThreshold(unit: Units): number {
-  return (GPS_GLITCH_PACE_S_PER_KM * metersPerUnit(unit)) / METERS_PER_KM;
-}
 
 const PACE_STEPS = [15, 30, 60, 120, 300];
 const MAX_PACE_INTERVALS = 4;
@@ -82,12 +64,9 @@ export function LapsChart({ laps, unit, target }: LapsChartProps) {
     return <p className="text-body text-ink-2">No laps recorded for this run.</p>;
   }
 
-  const threshold = glitchThreshold(unit);
-  const isGlitch = (lap: LapPoint) =>
-    lap.paceSecondsPerUnit !== null && lap.paceSecondsPerUnit < threshold;
-  const glitches = laps.filter(isGlitch).length;
+  const glitches = laps.filter((lap) => lap.gpsGlitch).length;
   const charted = downsample(
-    laps.filter((lap) => lap.paceSecondsPerUnit !== null && !isGlitch(lap)),
+    laps.filter((lap) => lap.paceSecondsPerUnit !== null && !lap.gpsGlitch),
     (lap) => lap.paceSecondsPerUnit ?? 0,
   );
   const caption = glitchCaption(glitches);
@@ -95,7 +74,7 @@ export function LapsChart({ laps, unit, target }: LapsChartProps) {
   return (
     <div className="flex flex-col gap-2">
       {showTable ? (
-        <LapsTable laps={laps} unit={unit} isGlitch={isGlitch} />
+        <LapsTable laps={laps} unit={unit} />
       ) : charted.length === 0 ? (
         <p className="text-body text-ink-2">No lap has a pace to chart.</p>
       ) : (
@@ -173,15 +152,7 @@ function PaceBars({ laps, target }: { laps: LapPoint[]; target: PaceTarget | und
   );
 }
 
-function LapsTable({
-  laps,
-  unit,
-  isGlitch,
-}: {
-  laps: readonly LapPoint[];
-  unit: Units;
-  isGlitch: (lap: LapPoint) => boolean;
-}) {
+function LapsTable({ laps, unit }: { laps: readonly LapPoint[]; unit: Units }) {
   return (
     <table className="w-full text-body">
       <caption className="sr-only">Laps</caption>
@@ -204,7 +175,7 @@ function LapsTable({
             <td className="py-2 text-ink-2">{lap.index}</td>
             <td className="py-2 text-right">{formatDistance(lap.distanceInUnit, unit)}</td>
             <td className="py-2 text-right">
-              {isGlitch(lap) ? "GPS glitch" : formatPaceValue(lap.paceSecondsPerUnit)}
+              {lap.gpsGlitch ? "GPS glitch" : formatPaceValue(lap.paceSecondsPerUnit)}
             </td>
           </tr>
         ))}

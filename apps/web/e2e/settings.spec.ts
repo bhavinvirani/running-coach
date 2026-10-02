@@ -50,8 +50,9 @@ test("says what failed and recovers with Retry when settings do not load", async
   );
 
   await page.goto("/settings");
-  // Server errors are retried three times with jittered backoff (at most 2 + 4 + 8 s) before the
-  // screen gives up, so this wait covers the whole backoff rather than the default 5 s.
+  // /api/me is preloaded by the authenticated route's loader, so this exercises the loader and
+  // ScreenErrorBoundary, not the screen's own error state. The loader's query retries server errors three
+  // times with jittered backoff (at most 2 + 4 + 8 s), so the wait covers that instead of the default 5 s.
   await expect(page.getByRole("alert")).toHaveText(errorMessages.internal, { timeout: 20_000 });
 
   await page.unroute("**/api/me");

@@ -8,10 +8,7 @@ import { Section } from "./parts/section";
 import { UnitsField } from "./parts/units-field";
 import { useSettingsScreen } from "./use-settings";
 
-/**
- * Settings tab. No empty state: the API creates default settings on first read, and the Garmin
- * section's "Not connected." line is the empty state of the only part that can be empty.
- */
+/** Settings tab. No empty state: every account gets its settings row when it is created (auth.ts). */
 export function SettingsScreen() {
   const screen = useSettingsScreen();
   const { data, status, error, refetch } = screen;
@@ -39,6 +36,9 @@ export function SettingsScreen() {
 
   return (
     <SettingsLayout>
+      {screen.refetchError ? (
+        <RefetchFailed error={screen.refetchError} onRetry={() => void refetch()} />
+      ) : null}
       <Section>
         <UnitsField value={settings.units} onChange={(units) => screen.updateSettings({ units })} />
         <CoachDetailField
@@ -47,7 +47,7 @@ export function SettingsScreen() {
         />
       </Section>
       {screen.updateError ? (
-        <p role="alert" className="text-body text-bad">
+        <p role="alert" className="text-body text-ink">
           {errorMessage(screen.updateError)}
         </p>
       ) : null}
@@ -59,6 +59,20 @@ export function SettingsScreen() {
         logOutError={screen.logOutError}
       />
     </SettingsLayout>
+  );
+}
+
+/** A reload in the background failed: keep what was loaded and offer a quiet Retry above it. */
+function RefetchFailed({ error, onRetry }: { error: Error; onRetry: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p role="alert" className="text-body text-ink">
+        {errorMessage(error)}
+      </p>
+      <Button variant="ghost" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
   );
 }
 

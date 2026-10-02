@@ -1,10 +1,10 @@
-import { QueryCache, QueryClient } from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { isApiError, isClientError } from "@/api/client";
 
 const MAX_RETRIES = 3;
 
 type Options = {
-  /** Called when any query gets a 401: the session expired while the app was open. */
+  /** Called when any query or mutation gets a 401: the session expired while the app was open. */
   onUnauthorized?: () => void;
 };
 
@@ -14,12 +14,12 @@ export function retryDelay(attempt: number): number {
 }
 
 export function createQueryClient({ onUnauthorized }: Options = {}): QueryClient {
+  const onError = (error: unknown) => {
+    if (isApiError(error) && error.status === 401) onUnauthorized?.();
+  };
   return new QueryClient({
-    queryCache: new QueryCache({
-      onError: (error) => {
-        if (isApiError(error) && error.status === 401) onUnauthorized?.();
-      },
-    }),
+    queryCache: new QueryCache({ onError }),
+    mutationCache: new MutationCache({ onError }),
     defaultOptions: {
       queries: {
         // A 4xx will fail the same way again; only network and server errors are worth retrying.

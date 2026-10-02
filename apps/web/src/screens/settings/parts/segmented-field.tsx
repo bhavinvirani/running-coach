@@ -46,7 +46,7 @@ export function SegmentedField<T extends string>({
           ))}
         </div>
         {description ? (
-          <p id={descriptionId} className="mt-2 text-caption text-ink-3">
+          <p id={descriptionId} className="mt-2 text-caption text-ink-2">
             {description}
           </p>
         ) : null}

@@ -1,8 +1,9 @@
 import type { MeResponse, UpdateSettingsRequest } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { detailKey } from "@/api/query-keys";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
@@ -51,6 +52,25 @@ describe("SettingsScreen", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("keeps the loaded settings and offers Retry when a background reload fails", async () => {
+    let failing = false;
+    stubFetch(() => (failing ? problem(503, ErrorCode.internal) : json(meFixture())));
+    const { queryClient } = renderSettings();
+    expect(await screen.findByRole("radio", { name: "km" })).toBeChecked();
+
+    failing = true;
+    await act(() => queryClient.refetchQueries({ queryKey: detailKey("me") }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(screen.getByRole("radio", { name: "km" })).toBeChecked();
+    expect(screen.getByRole("region", { name: "Account" })).toBeInTheDocument();
+
+    failing = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.getByRole("radio", { name: "km" })).toBeChecked();
+  });
+
   it("shows units, coach detail, Garmin and the account", async () => {
     fakeMeApi(meFixture());
     renderSettings();
@@ -85,15 +105,19 @@ describe("SettingsScreen", () => {
     expect(within(garmin).getByText("Login expired")).toBeInTheDocument();
   });
 
-  it("saves a new unit with PATCH and shows it", async () => {
+  it("saves a new unit with one PATCH, shows it and does not load /api/me again", async () => {
     const calls = fakeMeApi(meFixture());
-    renderSettings();
+    const { queryClient } = renderSettings();
 
     await userEvent.click(await screen.findByRole("radio", { name: "mi" }));
 
     expect(await screen.findByRole("radio", { name: "mi" })).toBeChecked();
-    const patch = calls.find((call) => call.method === "PATCH");
-    expect(patch).toMatchObject({ path: "/api/me/settings", body: { units: "mi" } });
+    await vi.waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+      "GET /api/me",
+      "PATCH /api/me/settings",
+    ]);
+    expect(calls[1]?.body).toEqual({ units: "mi" });
     expect(screen.getByRole("radio", { name: "km" })).not.toBeChecked();
   });
 

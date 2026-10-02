@@ -43,7 +43,7 @@ export function LoginScreen() {
           onChange={(event) => setPassword(event.target.value)}
         />
         {logIn.error ? (
-          <p role="alert" className="text-body text-bad">
+          <p role="alert" className="text-body text-ink">
             {logInErrorMessage(logIn.error)}
           </p>
         ) : null}
@@ -58,7 +58,7 @@ export function LoginScreen() {
 function TextField({ label, ...input }: { label: string } & ComponentProps<"input">) {
   return (
     <label className="flex flex-col gap-2">
-      <span className="text-caption text-ink-2">{label}</span>
+      <span className="text-body text-ink-2">{label}</span>
       <input
         className="h-12 w-full rounded-sm border border-line bg-surface-1 px-3 text-body text-ink"
         {...input}

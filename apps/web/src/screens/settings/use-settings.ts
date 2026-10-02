@@ -1,20 +1,8 @@
-import type { MeResponse, UpdateSettingsRequest } from "@running-coach/shared";
-import type { UseQueryResult } from "@tanstack/react-query";
+import type { UpdateSettingsRequest } from "@running-coach/shared";
 import { useNavigate } from "react-router";
 import { useMe, useUpdateSettings } from "@/api/me";
+import { screenState } from "@/api/screen-state";
 import { useLogOut } from "@/api/session";
-
-/** The query reduced to what a screen renders from, kept as a union so `status` narrows `data`. */
-function screenState(me: UseQueryResult<MeResponse>) {
-  switch (me.status) {
-    case "pending":
-      return { status: me.status, data: undefined, error: null, refetch: me.refetch } as const;
-    case "error":
-      return { status: me.status, data: me.data, error: me.error, refetch: me.refetch } as const;
-    case "success":
-      return { status: me.status, data: me.data, error: null, refetch: me.refetch } as const;
-  }
-}
 
 /**
  * Everything the Settings screen reads and does. Named useSettingsScreen so it never clashes with

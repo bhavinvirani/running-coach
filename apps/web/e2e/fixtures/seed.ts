@@ -18,7 +18,7 @@ export const runner = {
 
 export type Runner = typeof runner;
 
-/** What a new account starts with (the API's first read creates these); every test starts from them. */
+/** What a new account starts with (created with the account); every test starts from them. */
 export const defaultSettings = {
   units: "km",
   timezone: "UTC",

@@ -1,21 +1,15 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LapsChart, type LapPoint } from "./laps-chart";
+import { toLapPoint, type LapPoint } from "./lap-point";
+import { LapsChart } from "./laps-chart";
 
-// Shaped like the seed runner's tempo session: 2 km easy, 6 km at 4:55, 2 km easy.
-const tempoLaps: LapPoint[] = [
-  { index: 1, paceSecondsPerUnit: 348, distanceInUnit: 1 },
-  { index: 2, paceSecondsPerUnit: 341, distanceInUnit: 1 },
-  { index: 3, paceSecondsPerUnit: 298, distanceInUnit: 1 },
-  { index: 4, paceSecondsPerUnit: 292, distanceInUnit: 1 },
-  { index: 5, paceSecondsPerUnit: 296, distanceInUnit: 1 },
-  { index: 6, paceSecondsPerUnit: 291, distanceInUnit: 1 },
-  { index: 7, paceSecondsPerUnit: 301, distanceInUnit: 1 },
-  { index: 8, paceSecondsPerUnit: 297, distanceInUnit: 1 },
-  { index: 9, paceSecondsPerUnit: 344, distanceInUnit: 1 },
-  { index: 10, paceSecondsPerUnit: 339, distanceInUnit: 1.02 },
-];
+// Shaped like the seed runner's tempo session: 2 km easy, 6 km at 4:55, 2 km easy. Built from meters and
+// seconds the way a screen builds them from the API.
+const tempoLaps: LapPoint[] = [348, 341, 298, 292, 296, 291, 301, 297, 344]
+  .map((durationS, position) => ({ index: position + 1, distanceM: 1000, durationS }))
+  .concat({ index: 10, distanceM: 1020, durationS: 346 })
+  .map((lap) => toLapPoint(lap, "km"));
 
 function bars(container: HTMLElement) {
   return container.querySelectorAll(".recharts-bar-rectangle");
@@ -62,7 +56,7 @@ describe("LapsChart", () => {
   });
 
   it("leaves out a 1:50/km lap as a GPS glitch and says so", async () => {
-    const laps = [...tempoLaps, { index: 11, paceSecondsPerUnit: 110, distanceInUnit: 1 }];
+    const laps = [...tempoLaps, toLapPoint({ index: 11, distanceM: 1000, durationS: 110 }, "km")];
     const { container } = render(<LapsChart laps={laps} unit="km" />);
     expect(bars(container)).toHaveLength(10);
     expect(screen.getByText("1 lap left out as a GPS glitch.")).toBeInTheDocument();
@@ -72,13 +66,14 @@ describe("LapsChart", () => {
     expect(within(glitchRow).getByText("GPS glitch")).toBeInTheDocument();
   });
 
-  it("converts the glitch threshold to miles", () => {
+  it("finds the same GPS glitch in miles", () => {
     // 3:00/mi is 1:52/km: a glitch. 6:00/mi is a real sprint.
-    const laps: LapPoint[] = [
-      { index: 1, paceSecondsPerUnit: 180, distanceInUnit: 1 },
-      { index: 2, paceSecondsPerUnit: 360, distanceInUnit: 1 },
-      { index: 3, paceSecondsPerUnit: 480, distanceInUnit: 1 },
-    ];
+    const laps = [
+      { index: 1, distanceM: 1609.344, durationS: 180 },
+      { index: 2, distanceM: 1609.344, durationS: 360 },
+      { index: 3, distanceM: 1609.344, durationS: 480 },
+    ].map((lap) => toLapPoint(lap, "mi"));
+    expect(laps.map((lap) => lap.paceSecondsPerUnit)).toEqual([180, 360, 480]);
     const { container } = render(<LapsChart laps={laps} unit="mi" />);
     expect(bars(container)).toHaveLength(2);
     expect(screen.getByText("1 lap left out as a GPS glitch.")).toBeInTheDocument();
@@ -96,5 +91,15 @@ describe("LapsChart", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Show chart" }));
     expect(screen.getByRole("img", { name: "Lap pace chart" })).toBeInTheDocument();
+  });
+
+  it("converts a treadmill lap without distance to no pace, never a glitch", () => {
+    const lap = toLapPoint({ index: 1, distanceM: 0, durationS: 300 }, "km");
+    expect(lap).toEqual({
+      index: 1,
+      paceSecondsPerUnit: null,
+      distanceInUnit: 0,
+      gpsGlitch: false,
+    });
   });
 });

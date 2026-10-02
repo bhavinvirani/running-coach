@@ -15,7 +15,7 @@ export function AccountSection({ email, onLogOut, loggingOut, logOutError }: Acc
       <Row label="Email">{email}</Row>
       <div className="flex flex-col items-start gap-3 py-4">
         {logOutError ? (
-          <p role="alert" className="text-body text-bad">
+          <p role="alert" className="text-body text-ink">
             {errorMessage(logOutError)}
           </p>
         ) : null}
