@@ -6,9 +6,10 @@ import { DEFAULT_RETRY_AFTER_S, type GarminCallOptions } from "../garmin/client"
 import { decrypt, encrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
 
-// A user's Garmin login as every service that calls Garmin for them uses it (sync, history import): the
-// gates that keep a dead or rate-limited login away from Garmin, the write-back of a rotated bundle, and the
-// failure and success bookkeeping on garmin_connection. Callers hold withUserLock(userId) around all of it.
+// A user's Garmin login as every service that calls Garmin for them uses it (sync, history import, best
+// efforts): the gates that keep a dead or rate-limited login away from Garmin, the write-back of a rotated
+// bundle, and the failure and success bookkeeping on garmin_connection. Callers hold withUserLock(userId)
+// around all of it.
 
 export function garminNotConnected(): DomainError {
   return new DomainError(ErrorCode.garminNotConnected, 409, "Connect Garmin first.");

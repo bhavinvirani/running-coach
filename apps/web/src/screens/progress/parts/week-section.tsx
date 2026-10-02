@@ -1,4 +1,5 @@
 import { distanceInUnits, type ActivityWeek, type Units } from "@running-coach/shared";
+import { NO_BESTS, type RunBests } from "@/api/personal-bests";
 import { MISSING, formatDistanceValue, formatDuration } from "@/lib/format";
 import { progressCopy } from "../progress-copy";
 import { RunRow } from "./run-row";
@@ -8,10 +9,12 @@ type WeekSectionProps = {
   /** The week's range, already formatted: "21–27 Sep". */
   label: string;
   units: Units;
+  /** The distances each run holds as bests, for the rows' PB chips. */
+  runBests: RunBests;
 };
 
 /** One Monday-to-Sunday week: its range, total distance as the figure with total time beside it, its runs. */
-export function WeekSection({ week, label, units }: WeekSectionProps) {
+export function WeekSection({ week, label, units, runBests }: WeekSectionProps) {
   const distance =
     week.distanceM > 0 ? formatDistanceValue(distanceInUnits(week.distanceM, units)) : MISSING;
   const time = week.durationS > 0 ? formatDuration(week.durationS) : MISSING;
@@ -30,7 +33,7 @@ export function WeekSection({ week, label, units }: WeekSectionProps) {
       </p>
       <ul aria-label={progressCopy.weekRuns} className="flex flex-col divide-y divide-line">
         {week.runs.map((run) => (
-          <RunRow key={run.id} run={run} units={units} />
+          <RunRow key={run.id} run={run} units={units} bests={runBests.get(run.id) ?? NO_BESTS} />
         ))}
       </ul>
     </section>

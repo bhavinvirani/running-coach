@@ -1,6 +1,6 @@
-import { garminStatusSchema } from "@running-coach/shared";
+import { type GarminRecord, garminStatusSchema } from "@running-coach/shared";
 import { sql } from "drizzle-orm";
-import { check, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { id, inList, timestamps } from "./columns";
 
@@ -25,6 +25,10 @@ export const garminConnection = pgTable(
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
     // An error code from the shared list, never upstream text.
     lastError: text("last_error"),
+    // Garmin's own running records, shown beside the app's bests; written by the best-efforts batch that
+    // empties the pending list. Null until then.
+    garminRecords: jsonb("garmin_records").$type<GarminRecord[]>(),
+    garminRecordsAt: timestamp("garmin_records_at", { withTimezone: true }),
     ...timestamps(),
   },
   (table) => [

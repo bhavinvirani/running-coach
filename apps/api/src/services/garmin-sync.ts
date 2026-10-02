@@ -8,6 +8,7 @@ import { config } from "../lib/config";
 import { addDays, dateChunks, daysBetween, localDateOf, noonUtc } from "../lib/local-date";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
+import { queueBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
 
 const log = logger.child({ module: "garmin-sync" });
@@ -64,9 +65,18 @@ const SYNCED_KEYS = [
 ] as const;
 const syncedColumns = SYNCED_KEYS.map((key) => activity[key]);
 
+// A run edited on Garmin (cropped, corrected) has another series, so its stored best efforts are hidden
+// and recomputed (services/best-efforts.ts); any other change keeps them.
+const seriesColumns = [activity.distanceM, activity.durationS];
+const seriesChanged = sql`(${sql.join(seriesColumns.map(current), sql`, `)}) is distinct from (${sql.join(
+  seriesColumns.map(excluded),
+  sql`, `,
+)})`;
+
 /**
  * Inserts new runs and updates changed ones on (user_id, garmin_activity_id). An unchanged run is not
- * rewritten, so a repeated sync writes nothing. Returns the number of rows inserted or changed.
+ * rewritten, so a repeated sync writes nothing. A changed distance or time also clears the run's
+ * best-efforts version, failed attempts and last failure. Returns the number of rows inserted or changed.
  */
 export async function upsertActivities(
   userId: string,
@@ -101,6 +111,10 @@ export async function upsertActivities(
       set: {
         ...Object.fromEntries(SYNCED_KEYS.map((key) => [key, excluded(activity[key])])),
         tz: sql`coalesce(${excluded(activity.tz)}, ${current(activity.tz)})`,
+        bestEffortsVersion: sql`case when ${seriesChanged} then null else ${current(activity.bestEffortsVersion)} end`,
+        // A new series earns fresh tries at once, also for a run given up on after failed reads.
+        bestEffortsAttempts: sql`case when ${seriesChanged} then 0 else ${current(activity.bestEffortsAttempts)} end`,
+        bestEffortsFailedAt: sql`case when ${seriesChanged} then null else ${current(activity.bestEffortsFailedAt)} end`,
         updatedAt: sql`now()`,
       },
       setWhere: sql`(${sql.join(syncedColumns.map(current), sql`, `)}) is distinct from (${sql.join(
@@ -142,14 +156,15 @@ async function saveChunk(
  * syncs for one user never overlap. Each chunk commits on its own connection (not the lock's
  * transaction): a kill or an error keeps the finished chunks and the cursor, and the next run resumes
  * there. A bundle Garmin rotated is written back the moment the client hands it over, before the call
- * returns or throws, because the old refresh token no longer works.
+ * returns or throws, because the old refresh token no longer works. A finished sync then queues the
+ * user's best efforts when runs are pending, outside the lock the batch also takes.
  */
 export async function syncGarmin({
   userId,
   now,
   signal,
 }: SyncGarminInput): Promise<SyncGarminResult> {
-  return withUserLock(userId, async () => {
+  const synced = await withUserLock(userId, async () => {
     const account = await openGarminAccount(userId);
     const timeZone = account.connection.timezone;
     const today = localDateOf(now ?? new Date(), timeZone);
@@ -187,6 +202,10 @@ export async function syncGarmin({
     log.info({ userId, ...result }, "garmin sync finished");
     return result;
   });
+  // Also when this sync wrote nothing: runs left pending by an earlier stop (an expired login since
+  // reconnected, a rule version bump) start again here.
+  await queueBestEfforts(userId);
+  return synced;
 }
 
 /**

@@ -111,9 +111,10 @@ test("Sync now brings in the 18 km fixture run and stores it", async ({ page }) 
   const card = page.getByRole("region", { name: "Latest run" });
   await expectLongRun(card);
   await expect(card).not.toContainText("Indoor");
-  // Garmin has the fixture's long run uncategorized: the card names no type.
+  // Garmin has the fixture's long run uncategorized: the card names no type. The sync also queues the
+  // run's best efforts, so the PB chip joins the name whenever that job lands (personal-bests.spec.ts).
   await expect(card.getByRole("link")).toHaveAccessibleName(
-    "Open the latest run, Sun 27 Sep, 08:00, 18.0 km, 1:42:00",
+    /^Open the latest run, Sun 27 Sep, 08:00, (8 PBs, )?18\.0 km, 1:42:00$/,
   );
   await expect(card.getByText("Race", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sync now" })).toBeEnabled();

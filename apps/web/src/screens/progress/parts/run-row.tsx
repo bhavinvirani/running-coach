@@ -2,11 +2,14 @@ import {
   distanceInUnits,
   paceSecondsPerUnit,
   type Activity,
+  type DistanceKey,
   type Units,
 } from "@running-coach/shared";
 import { Link } from "react-router";
 import { DotLine } from "@/components/dot-line";
+import { PbChip } from "@/components/pb-chip";
 import { RunTypeChip } from "@/components/run-type-chip";
+import { personalBestName } from "@/lib/distance-labels";
 import { MISSING, formatDistance, formatDuration, formatLocalDay, formatPace } from "@/lib/format";
 import { runTypeName } from "@/lib/run-type";
 import { progressCopy } from "../progress-copy";
@@ -14,22 +17,26 @@ import { progressCopy } from "../progress-copy";
 type RunRowProps = {
   run: Activity;
   units: Units;
+  /** The distances this run holds as current bests, shortest first; empty for most runs. */
+  bests: readonly DistanceKey[];
 };
 
 /**
  * One run: its local day, distance, time and pace in fixed columns so figures line up down the week, and
- * under the day the Race chip, Indoor or Manual, so a race reads at a glance.
+ * under the day the Race chip, the PB chip, Indoor or Manual, so a race or a best reads at a glance.
  * Pace is derived from distance and time; a run without distance (treadmill, manual) shows the dash for
  * both rather than 0 or a pace from nothing. The whole row opens the run, so it needs no icon.
  */
-export function RunRow({ run, units }: RunRowProps) {
+export function RunRow({ run, units, bests }: RunRowProps) {
   const distance =
     run.distanceM > 0 ? formatDistance(distanceInUnits(run.distanceM, units), units) : MISSING;
   const duration = run.durationS > 0 ? formatDuration(run.durationS) : MISSING;
   const pace = formatPace(paceSecondsPerUnit(run.distanceM, run.durationS, units), units);
   const typeName = runTypeName(run.eventType);
+  const bestName = personalBestName(bests);
   const flags = [
     typeName,
+    bestName,
     run.isIndoor ? progressCopy.indoor : null,
     run.isManual ? progressCopy.manual : null,
   ]
@@ -54,6 +61,7 @@ export function RunRow({ run, units }: RunRowProps) {
           {flags ? (
             <DotLine className="text-caption text-ink-2">
               {typeName ? <RunTypeChip eventType={run.eventType} /> : null}
+              {bestName ? <PbChip distances={bests} /> : null}
               {run.isIndoor ? progressCopy.indoor : null}
               {run.isManual ? progressCopy.manual : null}
             </DotLine>

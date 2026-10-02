@@ -33,12 +33,15 @@ export function useSyncNow() {
     },
     mutationFn: () => apiFetch("/api/sync", { method: "POST", schema: syncResponseSchema }),
     // Also after a failure: a 429 or 502 partway through has already stored the chunks before it. A failed
-    // sync can also mark the Garmin login expired, which Settings should show without a reload. Returned,
-    // so the sync stays pending until the new run is on screen: no flash of the old one.
+    // sync can also mark the Garmin login expired, which Settings should show without a reload. The bests
+    // learn of the best-efforts job the sync queued, which starts their poll, and a run already checked
+    // gets its PB chip. Returned, so the sync stays pending until the new run is on screen: no
+    // flash of the old one.
     onSettled: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: resourceKey("activities") }),
         queryClient.invalidateQueries({ queryKey: resourceKey("me") }),
+        queryClient.invalidateQueries({ queryKey: resourceKey("personal-bests") }),
       ]),
   });
 }

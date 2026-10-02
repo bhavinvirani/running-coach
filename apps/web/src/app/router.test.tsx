@@ -10,6 +10,7 @@ import { json, notFound, problem, stubFetch, type FakeRequest } from "@/test/fak
 import {
   activityDetailFixture,
   activityFixture,
+  activityResponseFixture,
   importProgressFixture,
   meFixture,
   weekFixture,
@@ -33,7 +34,7 @@ function signedIn({ path }: FakeRequest): Response {
   if (path === "/api/me") return json(meFixture());
   if (path === "/api/activities/latest") return json({ activity: activityFixture() });
   if (path === `/api/activities/${activityFixture().id}`) {
-    return json({ activity: activityFixture(), detail: activityDetailFixture() });
+    return json(activityResponseFixture({ detail: activityDetailFixture() }));
   }
   if (path === "/api/activities") {
     return json({ weeks: [weekFixture("2026-09-21", [activityFixture()])], nextBefore: null });

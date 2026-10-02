@@ -1,5 +1,6 @@
 /* Tailwind entry point, also read by ESLint (better-tailwindcss) to know which classes exist.
-   Tokens live in tokens.css; this file adds the self-hosted font, base styles and safe-area utilities. */
+   Tokens live in tokens.css; this file adds the self-hosted font, base styles, the safe-area utilities
+   and scrollbar-none. */
 @import "@fontsource-variable/manrope";
 @import "./tokens.css";
 
@@ -9,6 +10,14 @@
 }
 @utility pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* A sideways row of tiles scrolls by swipe, trackpad and keys; a bar under it would only add a line. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @layer base {

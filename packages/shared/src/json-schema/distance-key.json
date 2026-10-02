@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "1k",
+    "1mi",
+    "2mi",
+    "5k",
+    "5mi",
+    "10k",
+    "15k",
+    "10mi",
+    "20k",
+    "half",
+    "marathon"
+  ]
+}

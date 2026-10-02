@@ -4,11 +4,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { json, notFound, stubFetch } from "@/test/fake-api";
-import { importProgressFixture } from "@/test/fixtures";
+import { importProgressFixture, personalBestsFixture } from "@/test/fixtures";
 import { holdPolls } from "@/test/held-polls";
 import { testQueryClient } from "@/test/render";
 import { useActivityWeeks } from "./activities";
 import { useImportProgress, useStartImport } from "./import";
+import { personalBestsKey } from "./personal-bests";
 import { detailKey } from "./query-keys";
 
 const polls = holdPolls();
@@ -92,10 +93,11 @@ describe("useImportProgress", () => {
     },
   );
 
-  it("refreshes the runs, Today's latest among them, only when a poll finds more runs stored", async () => {
+  it("refreshes the runs, Today's latest among them, and the bests only when a poll finds more runs stored", async () => {
     const { api, count } = fakeImportApi(importAt("running", 10));
     const { result, queryClient } = renderImportHooks();
     queryClient.setQueryData(detailKey("activities", "latest"), { activity: null });
+    queryClient.setQueryData(personalBestsKey, personalBestsFixture());
     await waitFor(() => expect(result.current.weeks.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.progress.isSuccess).toBe(true));
     expect(count("GET", "/api/activities")).toBe(1);
@@ -106,6 +108,7 @@ describe("useImportProgress", () => {
     await waitFor(() => expect(result.current.progress.isFetching).toBe(false));
     expect(count("GET", "/api/activities")).toBe(1);
     expect(queryClient.getQueryState(detailKey("activities", "latest"))?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(personalBestsKey)?.isInvalidated).toBe(false);
 
     api.progress = importAt("running", 25);
     act(() => polls.fire());
@@ -113,6 +116,8 @@ describe("useImportProgress", () => {
     await waitFor(() => expect(result.current.progress.data?.runsStored).toBe(25));
     await waitFor(() => expect(count("GET", "/api/activities")).toBe(2));
     expect(queryClient.getQueryState(detailKey("activities", "latest"))?.isInvalidated).toBe(true);
+    // The page stored runs that now wait for their best efforts; the next read of the bests says so.
+    expect(queryClient.getQueryState(personalBestsKey)?.isInvalidated).toBe(true);
   });
 
   it("refreshes the runs when the import finishes, even when its last page stored none", async () => {

@@ -1,7 +1,7 @@
 import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ErrorCode } from "@running-coach/shared";
+import { ErrorCode, GARMIN_SERIES_BATCH_MAX } from "@running-coach/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createGarminClient, type GarminCallOptions, garminClient } from "../../src/garmin/client";
 import { config } from "../../src/lib/config";
@@ -363,6 +363,184 @@ describe("garminClient", () => {
           garminClient.activityDetail(id, { tokenBundle: garminBundle() }, writeBack()),
         ).rejects.toThrow();
       }
+      expect(calls()).toBe(0);
+    });
+  });
+
+  describe("series", () => {
+    const LONG_RUN = 10_000_000_007;
+    const RACE = 10_000_000_002;
+    const UNKNOWN = 123;
+    // FAKE_UNAVAILABLE_ACTIVITY_IDS in services/garmin fake_client.py: Garmin down for these runs alone.
+    const UNREADABLE = 9_000_000_503;
+    const UNREADABLE_TOO = 9_000_000_504;
+
+    it("returns one row-aligned series per id in request order, without records unless asked (best efforts)", async () => {
+      const options = writeBack();
+      const spy = vi.spyOn(globalThis, "fetch");
+
+      const response = await withRequestId("req-series-1", () =>
+        garminClient.series(
+          {
+            tokenBundle: garminBundle(),
+            garminActivityIds: [RACE, LONG_RUN],
+            includeRecords: false,
+          },
+          options,
+        ),
+      );
+
+      expect(response.series.map((series) => series.garminActivityId)).toEqual([RACE, LONG_RUN]);
+      for (const series of response.series) {
+        expect(series.elapsedS.length).toBeGreaterThan(500);
+        expect(series.distanceM).toHaveLength(series.elapsedS.length);
+      }
+      expect(response.records).toBeNull();
+      expect(options.saved).toEqual([]);
+      expect(spy.mock.calls[0]?.[0]).toEqual(expect.stringMatching(/\/activities\/series$/));
+      expect(new Headers(spy.mock.calls[0]?.[1]?.headers).get("x-request-id")).toBe("req-series-1");
+    });
+
+    it("answers a run Garmin no longer has as gone with empty samples, and the batch goes on (deleted run)", async () => {
+      const response = await garminClient.series(
+        {
+          tokenBundle: garminBundle(),
+          garminActivityIds: [UNKNOWN, LONG_RUN],
+          includeRecords: false,
+        },
+        writeBack(),
+      );
+
+      expect(response.series[0]).toEqual({
+        garminActivityId: UNKNOWN,
+        outcome: "gone",
+        elapsedS: [],
+        distanceM: [],
+      });
+      expect(response.series[1]?.outcome).toBe("ok");
+      expect(response.series[1]?.elapsedS.length).toBeGreaterThan(500);
+    });
+
+    it("answers a run Garmin could not read as failed, and the batch goes on (one run failing)", async () => {
+      const response = await garminClient.series(
+        {
+          tokenBundle: garminBundle(),
+          garminActivityIds: [UNREADABLE, LONG_RUN],
+          includeRecords: true,
+        },
+        writeBack(),
+      );
+
+      expect(response.series[0]).toEqual({
+        garminActivityId: UNREADABLE,
+        outcome: "failed",
+        elapsedS: [],
+        distanceM: [],
+      });
+      expect(response.series[1]?.outcome).toBe("ok");
+      expect(response.records).toHaveLength(5);
+    });
+
+    it("answers the runs after two failures in a row as skipped, never asked about, with no records (Garmin outage)", async () => {
+      const response = await garminClient.series(
+        {
+          tokenBundle: garminBundle(),
+          garminActivityIds: [LONG_RUN, UNREADABLE, UNREADABLE_TOO, RACE],
+          includeRecords: true,
+        },
+        writeBack(),
+      );
+
+      expect(response.series.map((series) => series.outcome)).toEqual([
+        "ok",
+        "failed",
+        "failed",
+        "skipped",
+      ]);
+      expect(response.series[3]).toEqual({
+        garminActivityId: RACE,
+        outcome: "skipped",
+        elapsedS: [],
+        distanceM: [],
+      });
+      expect(response.records).toBeNull();
+    });
+
+    it("returns Garmin's records at the app's distances, shortest first, when asked", async () => {
+      const response = await garminClient.series(
+        { tokenBundle: garminBundle(), garminActivityIds: [], includeRecords: true },
+        writeBack(),
+      );
+
+      expect(response.series).toEqual([]);
+      expect(response.records?.map((record) => record.distanceKey)).toEqual([
+        "1k",
+        "1mi",
+        "5k",
+        "10k",
+        "half",
+      ]);
+    });
+
+    it("hands over the bundle Garmin rotated (rotated token)", async () => {
+      const options = writeBack();
+
+      const response = await garminClient.series(
+        {
+          tokenBundle: garminBundle("rotate"),
+          garminActivityIds: [LONG_RUN],
+          includeRecords: false,
+        },
+        options,
+      );
+
+      expect(fixtureOf(response.tokenBundle)).toBe("rotated");
+      expect(options.saved).toEqual([response.tokenBundle]);
+    });
+
+    it("does not retry a 429 and carries retryAfterSeconds (Garmin 429)", async () => {
+      const calls = countServiceCalls("/activities/series");
+
+      const error = await rejection(
+        garminClient.series(
+          {
+            tokenBundle: garminBundle("rate_limited"),
+            garminActivityIds: [LONG_RUN],
+            includeRecords: false,
+          },
+          writeBack(),
+        ),
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.garminRateLimited, retryAfterSeconds: 3600 });
+      expect(calls()).toBe(1);
+    });
+
+    it("throws garmin_auth_expired (409) when Garmin rejects the bundle (token expiry)", async () => {
+      const error = await rejection(
+        garminClient.series(
+          {
+            tokenBundle: garminBundle("expired"),
+            garminActivityIds: [LONG_RUN],
+            includeRecords: false,
+          },
+          writeBack(),
+        ),
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.garminAuthExpired, status: 409 });
+    });
+
+    it("rejects a batch over the contract's limit before calling the service", async () => {
+      const calls = countServiceCalls("/activities/series");
+      const ids = Array.from({ length: GARMIN_SERIES_BATCH_MAX + 1 }, (_, index) => index + 1);
+
+      await expect(
+        garminClient.series(
+          { tokenBundle: garminBundle(), garminActivityIds: ids, includeRecords: false },
+          writeBack(),
+        ),
+      ).rejects.toThrow();
       expect(calls()).toBe(0);
     });
   });

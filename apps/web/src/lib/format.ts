@@ -54,6 +54,31 @@ export function formatDuration(seconds: number | null | undefined): string {
   return hours > 0 ? `${hours}:${pad2(minutes)}:${pad2(rest)}` : `${pad2(minutes)}:${pad2(rest)}`;
 }
 
+// Below a millionth of a second short of a whole second is float noise from summing samples, not time.
+const RECORD_TIME_TOLERANCE_S = 1e-6;
+
+/**
+ * A best effort's or record's time in the whole seconds the runner sees (formatRecordTime cuts them), for
+ * a figure derived from it: a 1K in 290.5 s shows 4:50, so its pace must be 4:50 /km, not a rounded 4:51.
+ */
+export function recordSeconds(seconds: number): number {
+  return Math.floor(seconds + RECORD_TIME_TOLERANCE_S);
+}
+
+/**
+ * A best effort or record, cut to the whole second rather than rounded, because Garmin shows its records
+ * that way and the runner knows them in that form: 1625.87 → "27:05", 6972.6 → "1:56:12". m:ss under an
+ * hour, h:mm:ss from the hour on.
+ */
+export function formatRecordTime(seconds: number | null | undefined): string {
+  if (!isFiniteNumber(seconds) || seconds <= 0) return MISSING;
+  const total = recordSeconds(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  return hours > 0 ? `${hours}:${pad2(minutes)}:${pad2(rest)}` : `${minutes}:${pad2(rest)}`;
+}
+
 /** Distance already converted to the user's unit, for a figure that draws the unit itself: 10.04 → "10.0". */
 export function formatDistanceValue(distanceInUnit: number | null | undefined): string {
   if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
@@ -190,6 +215,12 @@ export function formatLocalDateTime(local: string | null | undefined): string {
 export function formatLocalDay(local: string | null | undefined): string {
   const day = calendarDay(local);
   return day ? `${weekdayOf(day)} ${day.day} ${monthOf(day)}` : MISSING;
+}
+
+/** The date of a run's local start with its year, for a best that may be years old: "27 Sep 2026". */
+export function formatLocalDate(local: string | null | undefined): string {
+  const day = calendarDay(local);
+  return day ? `${day.day} ${monthOf(day)} ${day.year}` : MISSING;
 }
 
 /** A calendar date as month and year, "2021-03-14" → "Mar 2021". */

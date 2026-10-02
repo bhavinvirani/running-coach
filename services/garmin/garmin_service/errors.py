@@ -270,14 +270,15 @@ def internal_error_response(exc: BaseException) -> JSONResponse:
     return problem_response(make_problem(500, ErrorCode.INTERNAL, "Unexpected error."))
 
 
-def _error_names(exc: BaseException) -> list[str]:
+def error_names(exc: BaseException) -> list[str]:
+    """The classes of the cause chain, outermost first: safe to log, unlike messages."""
     return [type(e).__name__ for e in _chain(exc)]
 
 
 async def _service_error_handler(_request: Request, exc: Exception) -> Response:
     if not isinstance(exc, ServiceError):  # pragma: no cover - registered for ServiceError only
         raise exc
-    log.warning("request failed", extra={"code": exc.code.value, "error_chain": _error_names(exc)})
+    log.warning("request failed", extra={"code": exc.code.value, "error_chain": error_names(exc)})
     return error_response(exc)
 
 
@@ -291,7 +292,7 @@ async def _garmin_error_handler(_request: Request, exc: Exception) -> Response:
         extra={
             "code": error.code.value,
             "garmin_status": statuses,
-            "error_chain": _error_names(exc),
+            "error_chain": error_names(exc),
         },
     )
     return error_response(error)

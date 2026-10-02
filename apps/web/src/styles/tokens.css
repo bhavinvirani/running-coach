@@ -45,6 +45,9 @@
   --color-type-strength: #a9b1be;
   --color-type-rest: #7a828e;
 
+  /* personal bests, only as the dot beside one: 6.5:1 on surface-2, 10.9:1 on surface-0 */
+  --color-pb: #f2c94c;
+
   /* HR zones, only in the zones chart */
   --color-zone-1: #6b7280;
   --color-zone-2: #4b8bf5;

@@ -5,14 +5,16 @@ import { errorMessage } from "@/lib/errors";
 import { formatWeekRange } from "@/lib/format";
 import { EarlierWeeks } from "./parts/earlier-weeks";
 import { ImportStatus, StartImportError } from "./parts/import-status";
+import { PersonalBestsSection, PersonalBestsSkeleton } from "./parts/personal-bests-section";
 import { WeekSection } from "./parts/week-section";
 import { WeekSkeleton } from "./parts/week-skeleton";
 import { progressCopy } from "./progress-copy";
 import { useProgressScreen } from "./use-progress";
 
 /**
- * Progress tab: the history import's line, then runs by week, newest first. Empty until a sync or the
- * import stores a run.
+ * Progress tab: the history import's line, the personal bests, then runs by week, newest first. Empty
+ * until a sync or the import stores a run; with no run there is no best either, so the bests show only
+ * beside runs.
  */
 export function ProgressScreen() {
   const screen = useProgressScreen();
@@ -104,12 +106,14 @@ export function ProgressScreen() {
     <ProgressLayout>
       {backgroundFailed}
       {importStatus}
+      <PersonalBestsSection state={screen.personalBests} checkedAt={screen.bestsCheckedAt} />
       {data.map((week) => (
         <WeekSection
           key={week.weekStart}
           week={week}
           label={formatWeekRange(week.weekStart, newestWeekStart)}
           units={settings.units}
+          runBests={screen.runBests}
         />
       ))}
       {showEnd ? (
@@ -134,12 +138,21 @@ function ProgressLayout({ children, busy }: { children: ReactNode; busy?: boolea
   );
 }
 
-/** The import line and two weeks at their loaded heights, so nothing jumps when the runs arrive. */
+/**
+ * The import line, the personal bests and two weeks at their loaded heights, so nothing jumps when the
+ * runs arrive.
+ */
 function ProgressSkeleton() {
   return (
     <div role="status" aria-label={progressCopy.loading} className="flex flex-col gap-4">
       <div className="flex h-5.5 items-center">
         <div className="h-4 w-64 rounded-sm bg-surface-2" />
+      </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex h-5.5 items-center">
+          <div className="h-4 w-28 rounded-sm bg-surface-2" />
+        </div>
+        <PersonalBestsSkeleton />
       </div>
       <WeekSkeleton />
       <WeekSkeleton />

@@ -1,4 +1,4 @@
-import type { ImportProgress, ImportStatus } from "@running-coach/shared";
+import type { ImportProgress, ImportStatus, PersonalBestsResponse } from "@running-coach/shared";
 import { errorCodeMessage } from "@/lib/errors";
 import { formatCount, formatDate, formatMonthYear, formatTime } from "@/lib/format";
 
@@ -19,6 +19,12 @@ export const progressCopy = {
   indoor: "Indoor",
   manual: "Manual",
   weekRuns: "Runs",
+  personalBests: "Personal bests",
+  loadingPersonalBests: "Loading personal bests",
+  /** A distance no run has covered yet in one continuous stretch. */
+  noRunYet: "No run yet",
+  /** On a best set within the last week. */
+  newBest: "New",
 } as const;
 
 /** The button each import status offers, named for what it does; none while the import moves by itself. */
@@ -63,4 +69,30 @@ export function importLine(progress: ImportProgress, timeZone: string): string {
         ? `${runs(progress.runsStored)} · history imported`
         : `${runs(progress.runsStored)} · history imported ${formatDate(progress.finishedAt, timeZone)}`;
   }
+}
+
+/**
+ * The line under Personal bests; `stopped` (no run is being checked right now, for a known reason) makes it
+ * an error sentence rather than a caption.
+ */
+export type PendingBestsLine = { text: string; stopped: boolean };
+
+/**
+ * The line under Personal bests while runs wait for their best efforts, null once none do. A known reason
+ * none are being checked comes first, in the words the import line uses for a failed import, which name
+ * what to do ("Reconnect in Settings"): with no job it is why the check stopped, and with a job held back
+ * (a 429's hour, a retry's backoff) the failure that holds it, so the line never counts runs that nothing
+ * checks for an hour. Otherwise a job counts them as it checks, or, with no job and no reason known, the
+ * line only says they are still to check: a later sync queues them, but a run that just failed waits up
+ * to 6 h first, so the line promises no time.
+ */
+export function pendingBestsLine({
+  pendingRuns,
+  checking,
+  errorCode,
+}: Pick<PersonalBestsResponse, "pendingRuns" | "checking" | "errorCode">): PendingBestsLine | null {
+  if (pendingRuns === 0) return null;
+  if (errorCode !== null) return { text: errorCodeMessage(errorCode), stopped: true };
+  if (checking) return { text: `Checking ${runs(pendingRuns)} for best efforts`, stopped: false };
+  return { text: `${runs(pendingRuns)} still to check for best efforts.`, stopped: false };
 }

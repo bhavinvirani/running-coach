@@ -1,0 +1,1 @@
+ALTER TABLE "activity" ADD COLUMN "best_efforts_attempts" smallint DEFAULT 0 NOT NULL;

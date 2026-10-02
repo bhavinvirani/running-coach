@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { activityDetailSchema } from "./activity";
+import { garminRecordSchema } from "./personal-bests";
 import { problemSchema } from "./problem";
 
 /**
@@ -125,3 +126,65 @@ export const garminActivityDetailResponseSchema = z
   })
   .strict();
 export type GarminActivityDetailResponse = z.infer<typeof garminActivityDetailResponseSchema>;
+
+/** Runs per POST /activities/series: one login and one paced call per run stay inside the 60 s timeout. */
+export const GARMIN_SERIES_BATCH_MAX = 10;
+
+/**
+ * POST /activities/series: the timer and distance samples of up to GARMIN_SERIES_BATCH_MAX runs, one
+ * get_activity_details call each at Garmin's full rate (about one row a second), all under one login, so
+ * best efforts can be found in any stretch of a run. With `includeRecords`, Garmin's own running records
+ * (get_personal_record) come back too, for comparison.
+ */
+export const garminSeriesRequestSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    garminActivityIds: z.array(z.number().int().positive()).max(GARMIN_SERIES_BATCH_MAX),
+    includeRecords: z.boolean(),
+  })
+  .strict();
+export type GarminSeriesRequest = z.infer<typeof garminSeriesRequestSchema>;
+
+/**
+ * What became of one run in a series batch. "ok": Garmin answered, with samples or with none (a run it
+ * holds no detail for); "gone": Garmin no longer knows the run (404, deleted on Garmin); "failed": Garmin
+ * was asked and this run could not be read (an error or an unreadable answer), so the API counts an
+ * attempt; "skipped": never asked, because the service stopped early (failures in a row or its time
+ * budget, so an outage fits the API's timeout), so the API leaves it pending without counting. A 429 or a
+ * dead login fails the whole request instead.
+ */
+export const garminSeriesOutcomeSchema = z.enum(["ok", "gone", "failed", "skipped"]);
+export type GarminSeriesOutcome = z.infer<typeof garminSeriesOutcomeSchema>;
+
+/** One run's samples, row-aligned; both arrays are empty unless the outcome is "ok". */
+export const garminActivitySeriesSchema = z
+  .object({
+    garminActivityId: z.number().int().positive(),
+    outcome: garminSeriesOutcomeSchema,
+    /** Timer seconds from the start in Garmin's row order; the engine cuts wherever they go backwards. */
+    elapsedS: z.array(z.number().nonnegative()),
+    distanceM: z.array(z.number().nonnegative()),
+  })
+  .strict()
+  .refine((series) => series.distanceM.length === series.elapsedS.length, {
+    message: "distanceM must have the length of elapsedS",
+  })
+  .refine((series) => series.outcome === "ok" || series.elapsedS.length === 0, {
+    message: "only an ok run carries samples",
+  });
+export type GarminActivitySeries = z.infer<typeof garminActivitySeriesSchema>;
+
+export const garminSeriesResponseSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    /** One entry per requested id, in request order. */
+    series: z.array(garminActivitySeriesSchema),
+    /**
+     * Garmin's running records at the distances the app knows; null unless `includeRecords` was set, and
+     * null when the records call failed or answered in a shape the service cannot read: they are only a
+     * comparison, so they never fail the series.
+     */
+    records: z.array(garminRecordSchema).nullable(),
+  })
+  .strict();
+export type GarminSeriesResponse = z.infer<typeof garminSeriesResponseSchema>;

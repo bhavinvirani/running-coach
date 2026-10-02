@@ -12,6 +12,7 @@ const TABLES = [
   "activity",
   "activity_lap",
   "activity_stream",
+  "best_effort",
   "coach_message",
   "garmin_connection",
   "import_progress",

@@ -6,6 +6,7 @@ import { garminRouter } from "./garmin";
 import { healthRouter } from "./health";
 import { importRouter } from "./import";
 import { meRouter } from "./me";
+import { personalBestsRouter } from "./personal-bests";
 import { syncRouter } from "./sync";
 
 /**
@@ -22,6 +23,7 @@ export function registerRoutes(app: Express): void {
   api.use(syncRouter);
   api.use(activitiesRouter);
   api.use(importRouter);
+  api.use(personalBestsRouter);
   api.use(notFoundHandler);
   app.use("/api", api);
 }

@@ -5,14 +5,14 @@ import {
   type ImportStatus,
 } from "@running-coach/shared";
 import { and, count, eq, inArray, sql } from "drizzle-orm";
-import type { JobWithMetadata } from "pg-boss";
 import { db } from "../db/client";
 import { activity, type ImportProgressRow, importProgress } from "../db/schema";
 import { garminClient } from "../garmin/client";
-import { getBoss } from "../jobs/boss";
+import { hasPendingJob } from "../jobs/boss";
 import * as importQueue from "../jobs/import-history-queue";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
+import { queueBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess, requireGarminConnection } from "./garmin-account";
 import { upsertActivities } from "./garmin-sync";
 
@@ -29,19 +29,10 @@ export const HISTORY_PAGE_SIZE = 100;
  * upsert makes the re-read free.
  */
 export const HISTORY_PAGE_OVERLAP = 5;
-// A page job in one of these states is still pg-boss's to run: waiting, deferred, between retries, or
-// running (a killed one stays active until its expiry, then retries or fails).
-const PENDING_JOB_STATES: ReadonlySet<JobWithMetadata["state"]> = new Set([
-  "created",
-  "retry",
-  "active",
-]);
 
 /** Whether pg-boss holds a page of the user's import that it can still run. */
-async function pagePending(userId: string): Promise<boolean> {
-  // Without `queued`, findJobs returns every state; `queued` alone would leave out the active page.
-  const jobs = await getBoss().findJobs(importQueue.name, { key: userId });
-  return jobs.some((job) => PENDING_JOB_STATES.has(job.state));
+function pagePending(userId: string): Promise<boolean> {
+  return hasPendingJob(importQueue.name, userId);
 }
 
 /**
@@ -180,7 +171,9 @@ export type ImportHistoryPageResult = { status: "skipped" } | ImportedPage;
  * missing or expired login and during the hour after a 429; a paused import that passes those gates is
  * running again before Garmin is called. Rethrows a failed Garmin call after recording it on the
  * connection; the job decides what each error means for the import. On success the runs, the cursor and
- * the connection's ok status commit in one transaction. Garmin's short page ends the import.
+ * the connection's ok status commit in one transaction. Garmin's short page ends the import. Inside that
+ * transaction, before its commit, the page also queues the user's best efforts when runs are due, so no
+ * reader sees the import done before the batch is pending.
  */
 export async function importHistoryPage({
   userId,
@@ -192,7 +185,7 @@ export async function importHistoryPage({
     throw new RangeError(`pageSize must exceed the overlap of ${HISTORY_PAGE_OVERLAP}`);
   }
 
-  return withUserLock(userId, async () => {
+  return withUserLock(userId, async (): Promise<ImportHistoryPageResult> => {
     const progress = await readProgress(userId);
     if (!progress || progress.status === "done" || progress.status === "failed") {
       return { status: "skipped" } as const;
@@ -222,6 +215,10 @@ export async function importHistoryPage({
 
     const written = await db.transaction(async (tx) => {
       const rows = await upsertActivities(userId, page.activities, tx);
+      // Before the commit: a reader that sees the import done must also see the batch for its runs. The
+      // batch waits on the user lock this page holds, so it reads the runs once they are committed; one
+      // queued for a page that then rolls back finds nothing new and calls no one.
+      await queueBestEfforts(userId, tx);
       await tx
         .update(importProgress)
         .set({
