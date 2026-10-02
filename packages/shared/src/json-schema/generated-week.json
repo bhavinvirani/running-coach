@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "startDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "base",
+        "build",
+        "peak",
+        "taper",
+        "race"
+      ]
+    },
+    "distanceM": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "easy",
+              "intervals",
+              "tempo",
+              "long",
+              "race_practice",
+              "race",
+              "strength",
+              "rest"
+            ]
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "distanceM": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "durationS": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "zone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "easy",
+                      "marathon",
+                      "threshold",
+                      "interval",
+                      "repetition",
+                      "race"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "distanceM",
+              "durationS",
+              "zone"
+            ],
+            "additionalProperties": false
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "warmup",
+                        "run",
+                        "work",
+                        "recovery",
+                        "cooldown"
+                      ]
+                    },
+                    "zone": {
+                      "type": "string",
+                      "enum": [
+                        "easy",
+                        "marathon",
+                        "threshold",
+                        "interval",
+                        "repetition",
+                        "race"
+                      ]
+                    },
+                    "distanceM": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "durationS": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "zone",
+                    "distanceM",
+                    "durationS"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "repeat": {
+                      "type": "integer",
+                      "minimum": 2,
+                      "maximum": 9007199254740991
+                    },
+                    "steps": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "warmup",
+                              "run",
+                              "work",
+                              "recovery",
+                              "cooldown"
+                            ]
+                          },
+                          "zone": {
+                            "type": "string",
+                            "enum": [
+                              "easy",
+                              "marathon",
+                              "threshold",
+                              "interval",
+                              "repetition",
+                              "race"
+                            ]
+                          },
+                          "distanceM": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "durationS": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "zone",
+                          "distanceM",
+                          "durationS"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "repeat",
+                    "steps"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "date",
+          "type",
+          "target",
+          "steps"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "number",
+    "startDate",
+    "phase",
+    "distanceM",
+    "sessions"
+  ],
+  "additionalProperties": false
+}
