@@ -1,0 +1,82 @@
+/* Design tokens. Runna-like surfaces and text on a cool slate base, teal accent, cards.
+   The only place colors, type sizes, spacing and radii are defined. Tailwind exposes exactly these. */
+@import "tailwindcss";
+
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --font-*: initial;
+  --shadow-*: initial;
+
+  --font-sans: "Manrope", system-ui, sans-serif;
+  --spacing: 4px;
+
+  /* shadcn copies reference these two */
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  /* surfaces, from the page up */
+  --color-surface-0: #181b22;
+  --color-surface-1: #242b35;
+  --color-surface-2: #37414d;
+  --color-line: #2f3843;
+  --color-line-selected: #e3eaf2;
+
+  /* text */
+  --color-ink: #f4f6f9;
+  --color-ink-2: #a9b1be;
+  --color-ink-3: #7a828e;
+
+  /* the one accent: actions, selection, focus, chart target, race-practice sessions */
+  --color-accent: #34ccb5;
+  --color-on-accent: #06241f;
+
+  /* deltas and status, always with a sign or a word */
+  --color-good: #3ddc84;
+  --color-bad: #ff6259;
+
+  /* workout types, always beside the type name */
+  --color-type-easy: #c9e04a;
+  --color-type-intervals: #e2529b;
+  --color-type-tempo: #ff8b00;
+  --color-type-long: #8e7cf5;
+  --color-type-race: #34ccb5;
+  --color-type-strength: #a9b1be;
+  --color-type-rest: #7a828e;
+
+  /* HR zones, only in the zones chart */
+  --color-zone-1: #6b7280;
+  --color-zone-2: #4b8bf5;
+  --color-zone-3: #34ec7d;
+  --color-zone-4: #ff8b00;
+  --color-zone-5: #e8453c;
+
+  /* charts */
+  --color-chart-series: #e1e8f0;
+  --color-chart-series-2: #a9b1be;
+  --color-chart-grid: #2a313b;
+  --color-chart-target: #34ccb5;
+
+  /* type scale: two or three sizes per screen */
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+  --text-title: 17px;
+  --text-title--line-height: 24px;
+  --text-title--font-weight: 700;
+  --text-figure: 30px;
+  --text-figure--line-height: 34px;
+  --text-figure--font-weight: 700;
+  --text-figure--letter-spacing: -0.02em;
+  --text-figure-lg: 44px;
+  --text-figure-lg--line-height: 48px;
+  --text-figure-lg--font-weight: 700;
+  --text-figure-lg--letter-spacing: -0.03em;
+
+  /* radii */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-full: 9999px;
+}

@@ -8,7 +8,7 @@ Data first: big tabular figures, small sentence-case labels. Dark only. Strava a
 
 ## Tokens
 - Every color, type size, spacing step and radius comes from `src/styles/tokens.css`. Tailwind exposes only token utilities (`bg-surface-1`, `text-ink-2`, `border-line`, `text-figure`, `rounded-md`); `bg-red-500`, `text-sm`, `p-[13px]`, hex values and inline `style` with raw values fail lint.
-- `accent` is the only chromatic chrome color: primary action, selected tab, focus ring, the target line in charts, and the race-practice workout type. `type-*` colors appear only beside a workout type's name. `zone-*` only in HR zones. `good`/`bad` only for deltas and status, always with a sign or word.
+- `accent` is the only chromatic chrome color: primary action, selected tab, focus ring, the target line in charts, and the race-practice workout type. A selected or current card gets `border-line-selected`, nothing else. `type-*` colors appear only as the bar or dot beside a workout type's name. `zone-*` only in HR zones. `good`/`bad` only for deltas and status, always with a sign or word.
 - Two or three type sizes per screen: `text-figure` for the numbers that matter, `text-body` for text and table cells, `text-caption` for labels and axes. `text-title` only for the screen title; `text-figure-lg` only for one hero number on Today.
 - `font-variant-numeric: tabular-nums` is set on `body`; keep it. Pace `m:ss /km`, duration `h:mm:ss` or `mm:ss`, distance one decimal plus unit, all through `src/lib/format.ts`; never format a number inline.
 
