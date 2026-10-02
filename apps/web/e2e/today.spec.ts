@@ -2,12 +2,12 @@ import {
   ErrorCode,
   latestActivityResponseSchema,
   meResponseSchema,
-  type Problem,
   type SyncResponse,
 } from "@running-coach/shared";
 import type { Locator, Page, Route } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
 import { connectGarmin, seedLongRun } from "./fixtures/seed";
+import { garminRateLimited, garminUnavailable, skipSyncOnOpen, syncProblem } from "./fixtures/sync";
 import { expect, test } from "./fixtures/login";
 
 const emptySentence = "Sync now to bring in your latest run from Garmin.";
@@ -35,16 +35,6 @@ function isSyncNow(route: Route): boolean {
   return route.request().method() === "POST";
 }
 
-/** A problem+json answer for POST /api/sync, as the API's error middleware writes it. */
-function syncProblem(problem: Problem, headers: Record<string, string> = {}) {
-  return {
-    status: problem.status,
-    contentType: "application/problem+json",
-    headers,
-    body: JSON.stringify(problem),
-  };
-}
-
 const authExpired = syncProblem({
   type: "about:blank",
   title: "Conflict",
@@ -52,26 +42,6 @@ const authExpired = syncProblem({
   code: ErrorCode.garminAuthExpired,
   detail: "Garmin rejected the saved login. Connect Garmin again.",
   requestId: "e2e-sync-auth-expired",
-});
-
-const rateLimited = syncProblem(
-  {
-    type: "about:blank",
-    title: "Too Many Requests",
-    status: 429,
-    code: ErrorCode.garminRateLimited,
-    retryAfterSeconds: 3600,
-    requestId: "e2e-sync-rate-limited",
-  },
-  { "retry-after": "3600" },
-);
-
-const unavailable = syncProblem({
-  type: "about:blank",
-  title: "Bad Gateway",
-  status: 502,
-  code: ErrorCode.garminUnavailable,
-  requestId: "e2e-sync-unavailable",
 });
 
 test("says to sync when no run is stored yet", async ({ page }) => {
@@ -86,6 +56,8 @@ test("says to sync when no run is stored yet", async ({ page }) => {
 
 test("Sync now brings in the 18 km fixture run and stores it", async ({ page }) => {
   await connectGarmin(page.request);
+  // The tap is under test, so the app opens without its own sync (sync.spec.ts covers that one).
+  await skipSyncOnOpen(page);
   // The sync is held until the busy button has been seen, then goes through to the API unchanged: the
   // fixture sync answers too fast to catch "Syncing…" otherwise.
   let release!: () => void;
@@ -206,7 +178,7 @@ test("says the Garmin login expired, keeps the run, and Retry syncs again", asyn
 test("says Garmin is limiting requests, with Retry, and keeps the run", async ({ page }) => {
   await seedLongRun();
   await page.route("**/api/sync", (route) =>
-    isSyncNow(route) ? route.fulfill(rateLimited) : route.continue(),
+    isSyncNow(route) ? route.fulfill(garminRateLimited) : route.continue(),
   );
 
   await page.goto("/");
@@ -221,7 +193,7 @@ test("says Garmin is limiting requests, with Retry, and keeps the run", async ({
 
 test("says Garmin is not responding, with Retry, and keeps the empty state", async ({ page }) => {
   await page.route("**/api/sync", (route) =>
-    isSyncNow(route) ? route.fulfill(unavailable) : route.continue(),
+    isSyncNow(route) ? route.fulfill(garminUnavailable) : route.continue(),
   );
 
   await page.goto("/");

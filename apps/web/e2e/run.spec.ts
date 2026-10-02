@@ -218,8 +218,8 @@ test("opens a stored race from Progress with its stats, splits, charts and route
   await expect(page).toHaveURL(/\/progress$/);
 });
 
-// One test for the failure and the fetch that follows: each Garmin connect counts against the API's six a
-// minute, which the whole suite shares.
+// One test for the failure and the fetch that follows: each sync counts against the API's six a minute,
+// which the whole suite shares.
 test("the first open fetches the detail from Garmin: a failure keeps the stats, and Retry stores it", async ({
   page,
 }) => {
@@ -300,7 +300,7 @@ test("the first open fetches the detail from Garmin: a failure keeps the stats, 
   expect(detailPosts).toHaveLength(2);
 });
 
-// One sync for the three runs: each Garmin connect counts against the API's six a minute.
+// One sync for the three runs: each sync counts against the API's six a minute.
 test("a treadmill run has no route or elevation, a run without heart rate has no zones, and a race says so", async ({
   page,
 }) => {

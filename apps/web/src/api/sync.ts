@@ -74,7 +74,8 @@ export function useLatestSync() {
  */
 export const SYNC_ON_OPEN_INTERVAL_MS = 10 * 60_000;
 
-function attemptStorageKey(userId: string): string {
+/** Where this device keeps its last app-open attempt; exported so e2e can open the app without a sync. */
+export function attemptStorageKey(userId: string): string {
   return `running-coach:sync-on-open:${userId}`;
 }
 

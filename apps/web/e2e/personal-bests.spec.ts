@@ -19,6 +19,7 @@ import {
   seedRunHistory,
   seedTreadmillRun,
 } from "./fixtures/seed";
+import { skipSyncOnOpen } from "./fixtures/sync";
 import { expect, test } from "./fixtures/login";
 
 /** The badges of historyBestEfforts (seed.ts), longest first, named as a screen reader reads them. */
@@ -293,6 +294,8 @@ test("Sync now flags the run that set new bests: its PB chip on Today, then its 
   // job it queues fetches that run's samples and Garmin's records from the fixture service. The tiles show
   // the app's bests only: Garmin's records stay in the API's answer (checked below) and off the screen.
   await connectGarmin(page.request);
+  // The tap is under test, so the app opens without its own sync (sync.spec.ts covers that one).
+  await skipSyncOnOpen(page);
   await page.goto("/");
   await expect(
     page.getByText("Sync now to bring in your latest run from Garmin.", { exact: true }),

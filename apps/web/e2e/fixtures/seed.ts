@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext } from "@playwright/test";
 import {
+  ErrorCode,
   RACE_EVENT_TYPE,
   connectGarminResponseSchema,
   meResponseSchema,
@@ -128,31 +129,73 @@ export async function resetRunner(request: APIRequestContext): Promise<MeRespons
 }
 
 /**
- * Connects the fixture Garmin account through the API, as `pnpm garmin:connect` does, then pins the sync
- * cursor (pinnedLastSyncAt unless the test names another) with the one statement no route offers. One
- * Garmin login: the API allows six connects a minute per user, so a test connects at most once.
+ * The fixture login as the API stored it on this worker's first connect: encrypted with the e2e MASTER_KEY
+ * for the runner, whose id stays the same for the whole run. The fixture Garmin never rotates the plain
+ * bundle, so the value stays good for every later sync.
+ */
+let storedFixtureLogin: string | undefined;
+
+/**
+ * Connects the fixture Garmin account, then pins the sync cursor (pinnedLastSyncAt unless the test names
+ * another) with the one statement no route offers. The worker's first connect goes through the API, as
+ * `pnpm garmin:connect` does; every later one writes back the row that connect stored (storedFixtureLogin),
+ * as a reconnect leaves it: status ok, no last error. The API allows six connects a minute per user and the
+ * suite connects more often than that, so it spends one connect in all.
  */
 export async function connectGarmin(
   request: APIRequestContext,
   lastSyncAt: string = pinnedLastSyncAt,
 ): Promise<void> {
-  const response = await request.put("/api/garmin/connection", {
-    data: { tokenBundle: fixtureTokenBundle },
-  });
-  if (!response.ok()) {
-    throw new Error(`Connecting the fixture Garmin account failed with ${response.status()}`);
+  if (storedFixtureLogin === undefined) {
+    const response = await request.put("/api/garmin/connection", {
+      data: { tokenBundle: fixtureTokenBundle },
+    });
+    if (!response.ok()) {
+      throw new Error(`Connecting the fixture Garmin account failed with ${response.status()}`);
+    }
+    connectGarminResponseSchema.parse(await response.json());
   }
-  connectGarminResponseSchema.parse(await response.json());
 
-  const pinned = await withDatabase((db) =>
-    db.query(`update garmin_connection set last_sync_at = $2 where user_id = ${runnerId}`, [
-      runner.email,
-      lastSyncAt,
-    ]),
+  await withDatabase(async (db) => {
+    if (storedFixtureLogin === undefined) {
+      const { rows } = await db.query<{ token_bundle_enc: string }>(
+        `select token_bundle_enc from garmin_connection where user_id = ${runnerId}`,
+        [runner.email],
+      );
+      storedFixtureLogin = rows[0]?.token_bundle_enc;
+      if (storedFixtureLogin === undefined) {
+        throw new Error("The API answered the connect but stored no Garmin connection");
+      }
+    } else {
+      await db.query(
+        `insert into garmin_connection (user_id, token_bundle_enc, status) values (${runnerId}, $2, 'ok')`,
+        [runner.email, storedFixtureLogin],
+      );
+    }
+    const pinned = await db.query(
+      `update garmin_connection set last_sync_at = $2 where user_id = ${runnerId}`,
+      [runner.email, lastSyncAt],
+    );
+    if (pinned.rowCount !== 1) {
+      throw new Error("Pinning the sync cursor found no Garmin connection for the runner");
+    }
+  });
+}
+
+/**
+ * A Garmin login that has expired, as a sync leaves it once Garmin rejects the saved login: status expired,
+ * last error garmin_auth_expired, the cursor at pinnedLastSyncAt (Sat 26 Sep 2026, 12:00 UTC). Written
+ * directly, so it spends no Garmin login. The token bundle is a stand-in that never decrypts: the API
+ * refuses an expired login before it opens the bundle (requireGarminConnection), and nothing else reads it.
+ */
+export async function seedExpiredGarminLogin(): Promise<void> {
+  await withDatabase((db) =>
+    db.query(
+      `insert into garmin_connection (user_id, token_bundle_enc, status, last_sync_at, last_error)
+       values (${runnerId}, 'v1:e2e-expired-login-never-decrypted', 'expired', $2, $3)`,
+      [runner.email, pinnedLastSyncAt, ErrorCode.garminAuthExpired],
+    ),
   );
-  if (pinned.rowCount !== 1) {
-    throw new Error("Pinning the sync cursor found no Garmin connection for the runner");
-  }
 }
 
 /**

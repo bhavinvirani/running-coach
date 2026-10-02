@@ -8,6 +8,7 @@ import {
   seedImportProgress,
   seedRunHistory,
 } from "./fixtures/seed";
+import { skipSyncOnOpen } from "./fixtures/sync";
 import { expect, test } from "./fixtures/login";
 
 const emptySentence = "Import your Garmin history to see your runs by week.";
@@ -78,6 +79,8 @@ const isActivityWeeks = (url: URL) => url.pathname === "/api/activities";
 
 test("Import history brings in the fixture account's runs by week", async ({ page }) => {
   await connectGarmin(page.request);
+  // The import is under test: an app-open sync would store the newest run before it starts.
+  await skipSyncOnOpen(page);
   // Polls of GET /api/import after the tap are held until the running line has been seen, then go
   // through to the API unchanged: the fixture import is one page, often done before the first poll.
   let holdPolls = false;
@@ -261,6 +264,8 @@ test("says when a paused import continues, in the runner's time zone", async ({ 
 
 test("Resume import finishes an import whose job chain died", async ({ page }) => {
   await connectGarmin(page.request);
+  // The import is under test: an app-open sync would store the newest run before it resumes.
+  await skipSyncOnOpen(page);
   await seedImportProgress(importStalled);
 
   await openProgress(page);
