@@ -146,8 +146,7 @@ export async function startImport(userId: string): Promise<ImportProgress> {
   });
 
   if (queuePage) {
-    const job = { userId };
-    await getBoss().send(importQueue.name, job, importQueue.sendOptions(job));
+    await importQueue.enqueueImportHistory({ userId });
     log.info({ userId }, "history import queued");
   }
   return getImportProgress(userId);

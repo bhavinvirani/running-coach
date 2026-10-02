@@ -50,3 +50,6 @@ export async function enqueueSyncGarmin(data: syncGarmin.SyncGarminData): Promis
   const job = syncGarmin.data.parse(data);
   return getBoss().send(syncGarmin.name, job, syncGarmin.sendOptions(job));
 }
+
+/** Queues a page of the user's history import at its stored cursor (import-history-queue.ts). */
+export { enqueueImportHistory } from "./import-history-queue";

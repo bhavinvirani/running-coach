@@ -1,6 +1,6 @@
 import type { SendOptions } from "pg-boss";
 import { z } from "zod";
-import { deterministicJobId } from "./boss";
+import { deterministicJobId, getBoss } from "./boss";
 
 // The import-history queue without its handler (import-history.ts): POST /api/import queues the first page
 // through these from services/history-import.ts, which the handler imports, so they cannot live beside it.
@@ -39,4 +39,13 @@ export function pageJobId(userId: string, startedAt: Date, nextOffset: number): 
 
 export function sendOptions(job: ImportHistoryData, id?: string): SendOptions {
   return { ...jobOptions, singletonKey: job.userId, ...(id ? { id } : {}) };
+}
+
+/**
+ * Queues a page of the user's import at its stored cursor, without an id: the stately queue folds it into a
+ * page already waiting. Null when one was waiting. POST /api/import starts and resumes imports through this.
+ */
+export async function enqueueImportHistory(job: ImportHistoryData): Promise<string | null> {
+  const parsed = data.parse(job);
+  return getBoss().send(name, parsed, sendOptions(parsed));
 }
