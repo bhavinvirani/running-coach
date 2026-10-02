@@ -8,3 +8,4 @@ dist/
 dev-dist/
 playwright-report/
 test-results/
+.claude/skills/neon-postgres/
