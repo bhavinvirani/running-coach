@@ -12,6 +12,7 @@ import {
   INTERVAL_RECOVERY_S,
   INTERVAL_REP_M,
   MIN_REPS_FOR_LONGER,
+  ONE_QUALITY_ROTATION,
   RACE_PRACTICE_RECOVERY_S,
   RACE_PRACTICE_REP_M,
   REPETITION_RECOVERY_S,
@@ -61,8 +62,11 @@ export function qualityCount({
 }
 
 /**
- * Each session's zone, first session first. The first alternates intervals (odd weeks) and repetitions
- * (even weeks) in base and build, and is race practice from the peak on; the second is always tempo.
+ * Each session's zone, first session first. With two, the first alternates intervals (odd weeks) and
+ * repetitions (even weeks) in base and build and is race practice in the peak; the second is always
+ * tempo. With one, base and build cycle tempo, intervals, tempo, repetitions by week, the peak
+ * alternates race practice (odd weeks) and tempo (even weeks), and taper and race weeks run race
+ * practice: a runner on one session a week still meets tempo.
  */
 export function qualityZones({
   phase,
@@ -73,13 +77,13 @@ export function qualityZones({
   weekNumber: number;
   daysPerWeek: number;
 }): WorkZone[] {
-  const first: WorkZone =
-    phase === "base" || phase === "build"
-      ? weekNumber % 2 === 1
-        ? "interval"
-        : "repetition"
-      : "race";
-  return qualityCount({ phase, daysPerWeek }) === 2 ? [first, "threshold"] : [first];
+  const odd = weekNumber % 2 === 1;
+  const early = phase === "base" || phase === "build";
+  if (qualityCount({ phase, daysPerWeek }) === 2) {
+    return [early ? (odd ? "interval" : "repetition") : "race", "threshold"];
+  }
+  if (early) return [ONE_QUALITY_ROTATION[(weekNumber - 1) % ONE_QUALITY_ROTATION.length]!];
+  return [phase === "peak" && !odd ? "threshold" : "race"];
 }
 
 /** The most work one session may hold, as a share of the week's distance, in whole meters. */

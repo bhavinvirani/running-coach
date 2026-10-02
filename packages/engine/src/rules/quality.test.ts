@@ -38,9 +38,33 @@ describe("quality", () => {
     expect(qualityCount({ phase: "peak", daysPerWeek: 6 })).toBe(2);
   });
 
-  it("alternates intervals and repetitions by week in base and build, tempo second", () => {
-    expect(qualityZones({ phase: "base", weekNumber: 1, daysPerWeek: 4 })).toEqual(["interval"]);
-    expect(qualityZones({ phase: "base", weekNumber: 2, daysPerWeek: 4 })).toEqual(["repetition"]);
+  it("with one session in base, cycles tempo, intervals, tempo, repetitions by week, then repeats", () => {
+    const base = (weekNumber: number) =>
+      qualityZones({ phase: "base", weekNumber, daysPerWeek: 4 });
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map(base)).toEqual(
+      [
+        "threshold",
+        "interval",
+        "threshold",
+        "repetition",
+        "threshold",
+        "interval",
+        "threshold",
+        "repetition",
+      ].map((zone) => [zone]),
+    );
+  });
+
+  it("with one session in build at 3 days a week, keeps the same 4-week cycle, so tempo comes every other week", () => {
+    const build = (weekNumber: number) =>
+      qualityZones({ phase: "build", weekNumber, daysPerWeek: 3 });
+    expect(build(5)).toEqual(["threshold"]);
+    expect(build(6)).toEqual(["interval"]);
+    expect(build(7)).toEqual(["threshold"]);
+    expect(build(8)).toEqual(["repetition"]);
+  });
+
+  it("with two sessions in build, alternates intervals and repetitions by week, tempo second", () => {
     expect(qualityZones({ phase: "build", weekNumber: 5, daysPerWeek: 4 })).toEqual([
       "interval",
       "threshold",
@@ -49,17 +73,32 @@ describe("quality", () => {
       "repetition",
       "threshold",
     ]);
-    expect(qualityZones({ phase: "build", weekNumber: 6, daysPerWeek: 3 })).toEqual(["repetition"]);
   });
 
-  it("turns the first session into race practice in peak, taper and race weeks", () => {
+  it("with one session in peak, alternates race practice (odd weeks) and tempo (even weeks)", () => {
+    expect(qualityZones({ phase: "peak", weekNumber: 9, daysPerWeek: 3 })).toEqual(["race"]);
+    expect(qualityZones({ phase: "peak", weekNumber: 10, daysPerWeek: 3 })).toEqual(["threshold"]);
+    expect(qualityZones({ phase: "peak", weekNumber: 11, daysPerWeek: 3 })).toEqual(["race"]);
+  });
+
+  it("with two sessions in peak, runs race practice first and tempo second every week", () => {
     expect(qualityZones({ phase: "peak", weekNumber: 9, daysPerWeek: 4 })).toEqual([
       "race",
       "threshold",
     ]);
-    expect(qualityZones({ phase: "peak", weekNumber: 10, daysPerWeek: 3 })).toEqual(["race"]);
-    expect(qualityZones({ phase: "taper", weekNumber: 11, daysPerWeek: 6 })).toEqual(["race"]);
-    expect(qualityZones({ phase: "race", weekNumber: 12, daysPerWeek: 6 })).toEqual(["race"]);
+    expect(qualityZones({ phase: "peak", weekNumber: 10, daysPerWeek: 6 })).toEqual([
+      "race",
+      "threshold",
+    ]);
+  });
+
+  it("keeps the one session of taper and race weeks race practice, odd and even weeks", () => {
+    for (const daysPerWeek of [3, 6]) {
+      expect(qualityZones({ phase: "taper", weekNumber: 11, daysPerWeek })).toEqual(["race"]);
+      expect(qualityZones({ phase: "taper", weekNumber: 12, daysPerWeek })).toEqual(["race"]);
+      expect(qualityZones({ phase: "race", weekNumber: 12, daysPerWeek })).toEqual(["race"]);
+      expect(qualityZones({ phase: "race", weekNumber: 13, daysPerWeek })).toEqual(["race"]);
+    }
   });
 
   it("types threshold work tempo, interval and repetition work intervals, race pace race practice", () => {
@@ -204,6 +243,21 @@ describe("quality", () => {
           expect(Number.isInteger(work.repM) && work.repM > 0 && work.reps >= 1).toBe(true);
           expect(work.repM * work.reps).toBeLessThanOrEqual(capM);
           expect(work.zone).toBe(zone);
+        },
+      ),
+    );
+  });
+
+  it("with one session in base or build, runs tempo at least every other week", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom("base" as const, "build" as const),
+        fc.integer({ min: 1, max: 40 }),
+        (phase, weekNumber) => {
+          const zones = [weekNumber, weekNumber + 1].flatMap((week) =>
+            qualityZones({ phase, weekNumber: week, daysPerWeek: 3 }),
+          );
+          expect(zones).toContain("threshold");
         },
       ),
     );

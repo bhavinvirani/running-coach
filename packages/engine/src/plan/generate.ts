@@ -171,6 +171,7 @@ export function generatePlan(rawInput: PlanGenerationInput): PlanGenerationResul
       paces,
       easyPaceSPerKm,
       minRunM,
+      baselineLongestM: baseline.longestRunM,
     },
     {
       phases: length.phases,

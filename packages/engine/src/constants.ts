@@ -103,13 +103,15 @@ export const PEAK_VOLUME_M: Readonly<Record<RaceDistanceKey, number>> = {
 export const DOWN_WEEK_EVERY = 4;
 export const DOWN_WEEK_FACTOR = 0.8;
 
-// SPEC taper cuts volume 40 to 60%: weeks step down to half the peak, the race week excluding the race.
+// SPEC taper cuts volume 40 to 60%: the race week runs 40% of the peak, the race excluded, the full
+// 60% cut, so the legs are fresh on race day.
 export const TAPER_FRACTIONS: Readonly<Record<number, readonly number[]>> = {
-  2: [0.7, 0.5],
-  3: [0.8, 0.65, 0.5],
+  2: [0.65, 0.4],
+  3: [0.8, 0.6, 0.4],
 };
 
-// SPEC "Plan engine": long run at most 30% of weekly volume or 150 min.
+// SPEC "Plan engine": long run at most 30% of weekly volume or 150 min. The share keeps the long run
+// from growing past it; it does not shrink the longest run the runner already runs (long-run.ts).
 export const LONG_RUN_SHARE = 0.3;
 export const LONG_RUN_MAX_S = 9000;
 
@@ -131,12 +133,14 @@ export const MIN_DAYS_PER_WEEK: Readonly<Record<RaceDistanceKey, number>> = {
   marathon: 4,
 };
 
-// Peak long run each distance usually asks for, in minutes at easy pace (Daniels, Pfitzinger).
+// Peak long run each distance asks for, in minutes at easy pace. Daniels caps the long run at the
+// lesser of 25 to 30% of the week and 150 min, so at these peaks the usual ask is 2 h for the
+// marathon and 90 min for the half.
 export const REQUIRED_LONG_RUN_MIN: Readonly<Record<RaceDistanceKey, number>> = {
   "5k": 60,
   "10k": 75,
-  half: 105,
-  marathon: 150,
+  half: 90,
+  marathon: 120,
 };
 
 // SPEC "Plan engine": work per session at most T 10%, I 8%, R 5% of the week's distance; race pace as T.
@@ -146,6 +150,10 @@ export const WORK_CAP_SHARE = {
   repetition: 0.05,
   race: 0.1,
 } as const;
+
+// A week with one quality session in base or build: tempo every other week, intervals and repetitions
+// in turn between, so a 3-day runner meets all three of Daniels' T, I and R in every 4 weeks.
+export const ONE_QUALITY_ROTATION = ["threshold", "interval", "threshold", "repetition"] as const;
 
 // Daniels' menus, longest rep first: the longer rep when at least MIN_REPS_FOR_LONGER of it fit.
 export const INTERVAL_REP_M: readonly [number, number] = [1000, 800];

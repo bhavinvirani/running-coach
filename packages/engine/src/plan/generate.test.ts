@@ -4,6 +4,7 @@ import {
   raceDistanceKeySchema,
   weekdaySchema,
   type GeneratedPlan,
+  type GeneratedSession,
   type PlanGenerationInput,
   type PlanPaces,
   type RaceDistanceKey,
@@ -14,6 +15,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { addDays, daysBetween, weekdayOf } from "../dates";
 import { vdotFromPerformance } from "../rules/vdot";
+import { fillWeek } from "../rules/week-fill";
 import { generatePlan } from "./generate";
 
 const START = "2026-10-05"; // a Monday
@@ -90,6 +92,46 @@ function stepSeconds(step: Step, paces: PlanPaces): number {
 
 function stepMeters(step: Step, paces: PlanPaces): number {
   return step.distanceM ?? Math.round((step.durationS! * 1000) / midpoint(paces, step.zone));
+}
+
+/** A quality session's meters before fillWeek padded its warmup. */
+function unpaddedM(session: GeneratedSession, paces: PlanPaces): number {
+  const warmup = session.steps[0] as Step;
+  const padM =
+    warmup.distanceM === null
+      ? 0
+      : warmup.distanceM - Math.round((900 * 1000) / midpoint(paces, "easy"));
+  return session.target.distanceM - padM;
+}
+
+/**
+ * Whether a week of `weekM` holds the baseline's longest run as its long run: 20 min on every other
+ * day, and every meter placed beside it by fillWeek's rules with this week's quality sessions.
+ */
+function holdsLongRun({
+  weekM,
+  longM,
+  qualityM,
+  daysPerWeek,
+  minRunM,
+}: {
+  weekM: number;
+  longM: number;
+  qualityM: readonly number[];
+  daysPerWeek: number;
+  minRunM: number;
+}): boolean {
+  if (weekM - (daysPerWeek - 1) * minRunM < longM) return false;
+  const restM = weekM - longM;
+  const fill = fillWeek({
+    restM,
+    capM: longM,
+    qualityM,
+    easySlots: daysPerWeek - 1 - qualityM.length,
+    minRunM,
+  });
+  const sum = (values: readonly number[]) => values.reduce((total, value) => total + value, 0);
+  return sum(qualityM) + sum(fill.qualityPadM) + sum(fill.easyRunsM) === restM;
 }
 
 function numbersIn(value: unknown, path = ""): [string, number][] {
@@ -179,6 +221,8 @@ function assertPlanKeepsEveryRule(
   const { paces, weeks } = result.plan;
   const share = goal.daysPerWeek === 3 ? 0.4 : 0.3;
   const distanceKey: RaceDistanceKey = goal.distanceKey ?? "10k";
+  const minRunM = Math.ceil((1200 * 1000) / midpoint(paces, "easy"));
+  const longRunMaxM = Math.floor((9000 * 1000) / midpoint(paces, "easy"));
 
   numbersIn(result.plan)
     .filter(([path]) => path !== ".vdot")
@@ -261,9 +305,30 @@ function assertPlanKeepsEveryRule(
       const dayBeforeRace = goal.raceDate !== null && addDays(goal.raceDate, -1) === longDate;
       expect(longs.map((session) => session.date)).toEqual(dayBeforeRace ? [] : [longDate]);
     }
+    // The share keeps the long run from growing past it; it never cuts the baseline's longest run in
+    // base, build and peak weeks that can hold it (150 min and 110% of the recent longest allowing).
     for (const long of longs) {
-      expect(long.target.distanceM).toBeLessThanOrEqual(share * week.distanceM + EPS);
+      expect(long.target.distanceM).toBeLessThanOrEqual(
+        isPreTaper
+          ? Math.max(share * week.distanceM, baseline.longestRunM) + EPS
+          : share * week.distanceM + EPS,
+      );
       expect(long.target.durationS).toBeLessThanOrEqual(9000);
+      const canHoldBaselineLongest =
+        longRunMaxM >= baseline.longestRunM &&
+        Math.floor(longestRecent * 1.1) >= baseline.longestRunM &&
+        holdsLongRun({
+          weekM: week.distanceM,
+          longM: baseline.longestRunM,
+          qualityM: week.sessions
+            .filter((session) => QUALITY_TYPES.has(session.type))
+            .map((session) => unpaddedM(session, paces)),
+          daysPerWeek: goal.daysPerWeek,
+          minRunM,
+        });
+      if (isPreTaper && canHoldBaselineLongest) {
+        expect(long.target.distanceM).toBeGreaterThanOrEqual(baseline.longestRunM);
+      }
     }
 
     // At least 80% of the week's time easy.
@@ -448,14 +513,119 @@ describe("generate plan", () => {
     expect(fresh.weeks[0]!.distanceM).toBeLessThanOrEqual(20_000);
   });
 
-  it("warns long_run_short when the caps keep a marathon's long run under 150 min", () => {
+  it("warns long_run_short when the caps keep a marathon's long run under 120 min", () => {
+    // A 20:00 5K runs easy at 320 s/km, so 120 min is 22.5 km; 30% of the 72 km peak is 21.6 km.
     const marathon = plan(
       input({
         goal: { distanceKey: "marathon", raceDate: addDays(START, 7 * 18 - 1) },
         baseline: { weeklyVolumesM: [30_000, 30_000, 30_000, 30_000], longestRunM: 10_000 },
+        vdotSource: {
+          origin: "entered",
+          distanceM: 5000,
+          timeS: 1200,
+          activityId: null,
+          date: null,
+        },
       }),
     );
-    expect(marathon.warnings).toContainEqual(expect.objectContaining({ code: "long_run_short" }));
+    expect(marathon.warnings).toContainEqual({
+      code: "long_run_short",
+      peakLongRunM: 21_600,
+      requiredLongRunM: 22_500,
+    });
+  });
+
+  it("does not warn long_run_short for a half whose 16.8 km peak long run passes 90 min", () => {
+    // A 22:30 5K runs easy at 357 s/km: 90 min is 15.1 km, where 105 min would be 17.6 km.
+    const half = plan(
+      input({
+        goal: { distanceKey: "half", raceDate: addDays(START, 7 * 20 - 1) },
+        baseline: { weeklyVolumesM: [25_000, 28_000, 22_000, 30_000], longestRunM: 15_000 },
+        vdotSource: {
+          origin: "entered",
+          distanceM: 5000,
+          timeS: 1350,
+          activityId: null,
+          date: null,
+        },
+      }),
+    );
+    expect(half.warnings.map((warning) => warning.code)).not.toContain("long_run_short");
+  });
+
+  it("never cuts an established long run: a 15 km longest on 26 km weeks runs 15 km in week 1 of a half", () => {
+    const half = plan(
+      input({
+        goal: { distanceKey: "half", raceDate: addDays(START, 7 * 20 - 1), daysPerWeek: 4 },
+        baseline: { weeklyVolumesM: [25_000, 28_000, 22_000, 30_000], longestRunM: 15_000 },
+      }),
+    );
+    const weekOneLong = half.weeks[0]!.sessions.find((session) => session.type === "long");
+    expect(weekOneLong?.target.distanceM).toBe(15_000);
+  });
+
+  it("gives up only the meters a 3-day week cannot hold from a 6136 m longest beside a 5.8 km tempo", () => {
+    // Base week 1 of 15 km: 6136 m and a 5798 m tempo leave 3066 m, 2 m under the 3068 m (half the long
+    // run) the last easy run needs. 6135 m holds the whole week: the long run gives up 1 m, not 2.7 km
+    // of the week or the 742 m its share of the shorter week would.
+    const fitness: PlanGenerationInput = {
+      goal: {
+        kind: "fitness",
+        distanceKey: "5k",
+        raceDate: null,
+        targetTimeS: null,
+        daysPerWeek: 3,
+        longRunDay: "mon",
+        recentTime: null,
+      },
+      startDate: "2025-01-06",
+      baseline: { weeklyVolumesM: [0, 0, 0, 0], longestRunM: 6136, daysSinceLastRun: null },
+      vdotSource: { origin: "entered", distanceM: 5000, timeS: 1317, activityId: null, date: null },
+    };
+    const result = generatePlan(fitness);
+    assertPlanKeepsEveryRule(fitness, result);
+    const weekOne = plan(fitness).weeks[0]!;
+    expect(weekOne.distanceM).toBe(15_000);
+    expect(weekOne.sessions.map((session) => [session.type, session.target.distanceM])).toEqual([
+      ["long", 6135],
+      ["tempo", 5798],
+      ["easy", 3067],
+    ]);
+  });
+
+  it("cuts a half's race week to 40% of the peak-phase week, the race excluded, short easy runs before it", () => {
+    const half = plan(
+      input({
+        goal: { distanceKey: "half", raceDate: addDays(START, 7 * 20 - 1), daysPerWeek: 4 },
+        baseline: { weeklyVolumesM: [25_000, 28_000, 22_000, 30_000], longestRunM: 15_000 },
+      }),
+    );
+    const peakM = Math.max(
+      ...half.weeks.filter((week) => week.phase === "peak").map((week) => week.distanceM),
+    );
+    const raceWeek = half.weeks.at(-1)!;
+    const running = raceWeek.sessions.filter((session) => session.type !== "race");
+    expect(running.reduce((sum, session) => sum + session.target.distanceM, 0)).toBe(
+      Math.ceil(0.4 * peakM),
+    );
+    for (const session of running) {
+      expect(session.target.distanceM).toBeLessThan(0.2 * peakM);
+    }
+  });
+
+  it("gives a 3-day runner tempo sessions in base and build weeks", () => {
+    const half = plan(
+      input({
+        goal: { distanceKey: "half", daysPerWeek: 3, raceDate: addDays(START, 7 * 14 - 1) },
+      }),
+    );
+    for (const phase of ["base", "build"] as const) {
+      const types = half.weeks
+        .filter((week) => week.phase === phase)
+        .flatMap((week) => week.sessions.map((session) => session.type));
+      expect(types).toContain("tempo");
+      expect(types).toContain("intervals");
+    }
   });
 
   it("makes a fitness goal a 12-week plan with no race, shaped like a 10K without a distance", () => {

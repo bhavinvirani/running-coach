@@ -16,14 +16,15 @@ export interface PeakPhaseVolumeInput {
 
 /**
  * Each taper week's volume as a fixed share of the peak, the race week's excluding the race. A short
- * plan keeps the last shares, so its race week is still at half the peak.
+ * plan keeps the last shares, so its race week is still at 40% of the peak. Whole meters rounded up,
+ * so no week falls under its share and the race week never cuts more than the SPEC's 60%.
  */
 export function taperVolumesM({ distanceKey, peakVolumeM, weeks }: TaperVolumesInput): number[] {
   const fractions = TAPER_FRACTIONS[TAPER_WEEKS[distanceKey]]!;
   if (!Number.isInteger(weeks) || weeks < 1 || weeks > fractions.length) {
     throw new RangeError(`A ${distanceKey} taper has 1 to ${fractions.length} weeks, got ${weeks}`);
   }
-  return fractions.slice(-weeks).map((fraction) => Math.floor(peakVolumeM * fraction));
+  return fractions.slice(-weeks).map((fraction) => Math.ceil(peakVolumeM * fraction));
 }
 
 /**

@@ -20,6 +20,13 @@ export interface LongRunInput {
   maxRunM: number;
 }
 
+export interface LongRunFloorInput extends LongRunInput {
+  /** The baseline's longest run of the last 30 days; 0 with none. */
+  baselineLongestM: number;
+  /** 20 min at the easy midpoint: what each of the week's other runs needs at least. */
+  minRunM: number;
+}
+
 export interface LongestInWindowInput {
   /** The longest run of each plan week built so far, week 1 first. */
   longestByWeekM: readonly number[];
@@ -43,6 +50,32 @@ export function longRunM({
       longRunShare(daysPerWeek) * weekVolumeM,
       distanceForDurationM(LONG_RUN_MAX_S, easyPaceSPerKm),
       maxRunM,
+    ),
+  );
+}
+
+/**
+ * What a base, build or peak week's long run never drops under: the runner's own longest recent run,
+ * as far as 150 min easy, 110% of the recent longest and the week less 20 min on every other day
+ * allow; 0 with no runs. The share cap keeps the long run from growing past its share of the week; it
+ * does not shrink what the runner already runs, which would be a regression no runner would accept.
+ * Taper and race weeks do not use it: there the share cap is the point.
+ */
+export function longRunFloorM({
+  baselineLongestM,
+  weekVolumeM,
+  daysPerWeek,
+  easyPaceSPerKm,
+  maxRunM,
+  minRunM,
+}: LongRunFloorInput): number {
+  return Math.max(
+    0,
+    Math.min(
+      baselineLongestM,
+      distanceForDurationM(LONG_RUN_MAX_S, easyPaceSPerKm),
+      maxRunM,
+      weekVolumeM - (daysPerWeek - 1) * minRunM,
     ),
   );
 }

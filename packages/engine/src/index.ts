@@ -12,13 +12,14 @@ export {
   longestInWindowM,
   longestRunSeedM,
   longRunDaysConflict,
+  longRunFloorM,
   longRunM,
   longRunShare,
   longRunWarning,
   maxRunM,
   requiredLongRunM,
 } from "./rules/long-run";
-export type { LongestInWindowInput, LongRunInput } from "./rules/long-run";
+export type { LongestInWindowInput, LongRunFloorInput, LongRunInput } from "./rules/long-run";
 export { planLength } from "./rules/plan-length";
 export type { PlanLengthInput, PlanLengthResult } from "./rules/plan-length";
 export { predictTimeS, racePace } from "./rules/prediction";

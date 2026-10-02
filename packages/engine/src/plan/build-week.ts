@@ -11,7 +11,7 @@ import { DISTANCE_METERS } from "@running-coach/shared";
 import { addDays, daysBetween, weekdayIndex } from "../dates";
 import { hardShareHolds, hardTimeS } from "../rules/easy-share";
 import { weekLayout } from "../rules/hard-days";
-import { longRunM, longRunShare } from "../rules/long-run";
+import { longRunFloorM, longRunM } from "../rules/long-run";
 import {
   dropRep,
   QUALITY_SESSION_TYPE,
@@ -37,6 +37,8 @@ export interface PlanContext {
   /** The easy band's midpoint, the pace easy and long runs are planned at. */
   easyPaceSPerKm: number;
   minRunM: number;
+  /** The baseline's longest run, which base, build and peak long runs keep; 0 with none. */
+  baselineLongestM: number;
 }
 
 export interface BuiltWeek {
@@ -75,6 +77,8 @@ interface Placed {
   date: string;
   work: Work;
 }
+
+const KEEPS_BASELINE_LONGEST: ReadonlySet<PlanPhase> = new Set(["base", "build", "peak"]);
 
 const HARD_TYPES: ReadonlySet<GeneratedSession["type"]> = new Set([
   "long",
@@ -176,9 +180,11 @@ function finish(
 
 /**
  * A base, build, peak or taper week. The long run and quality sessions come first, then easy runs
- * fill the week's volume. The long run's share and each session's work are measured against the week
- * as built, so a week that holds less than its target shrinks them and builds again; reps come off
- * the hardest session while easy time is under 80%. Each pass shrinks something, so the loop ends.
+ * fill the week's volume. Before the taper the long run never drops under the runner's own longest
+ * (longRunFloorM). The long run and each session's work are measured against the week as built: a week
+ * that holds less than its target shortens the long run to the longest the week holds, or sizes the
+ * work from what it holds, and builds again; reps come off the hardest session while easy time is
+ * under 80%. Each pass shortens the long run or the work or drops a rep, so the loop ends.
  */
 export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): BuiltWeek {
   const { number, phase, weekStart, targetM, maxRunM, lastHardDate } = input;
@@ -204,16 +210,26 @@ export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): B
   const qualitySlotDates = qualityDates.map(movable);
   const hasLong = longDate !== blocked;
 
-  let longSizeM = targetM;
-  let workSizeM = targetM;
-  const drops = zones.map(() => 0);
-  for (;;) {
-    const longM = longRunM({
-      weekVolumeM: longSizeM,
+  // The long run a week of this volume allows: the share and its caps, and before the taper never
+  // under the runner's own longest run.
+  const longFor = (weekVolumeM: number) => {
+    const sized = {
+      weekVolumeM,
       daysPerWeek: ctx.daysPerWeek,
       easyPaceSPerKm: ctx.easyPaceSPerKm,
       maxRunM,
-    });
+    };
+    return KEEPS_BASELINE_LONGEST.has(phase)
+      ? Math.max(
+          longRunM(sized),
+          longRunFloorM({ ...sized, baselineLongestM: ctx.baselineLongestM, minRunM: ctx.minRunM }),
+        )
+      : longRunM(sized);
+  };
+
+  let workSizeM = targetM;
+  const drops = zones.map(() => 0);
+  const build = (longM: number) => {
     const restM = targetM - (hasLong ? longM : 0);
     const quality = zones.map((zone, k): Placed | null => {
       if (qualityDates[k] === blocked) return null;
@@ -243,9 +259,28 @@ export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): B
       ...placed.map((p, k) => qualitySession(p, fill.qualityPadM[k]!, ctx.paces)),
       ...fill.easyRunsM.map((m, k) => runSession(slots[k]!, "easy", m, ctx.paces)),
     ];
-    const actualM = sumM(sessions);
-    if (hasLong && longM > longRunShare(ctx.daysPerWeek) * actualM) {
-      longSizeM = actualM;
+    return { placed, sessions, actualM: sumM(sessions) };
+  };
+  const holds = (longM: number) => !hasLong || longM <= longFor(build(longM).actualM);
+  // Between a long run the week as built allows and one it does not, the longest the week holds. A
+  // week that cannot place its last few meters (the easy run would be under 20 min) gives those meters
+  // up from the long run, rather than cutting the long run to its share of the shorter week.
+  const longestHeldM = (allowedM: number, tooLongM: number) => {
+    let low = allowedM;
+    let high = tooLongM;
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if (holds(middle)) low = middle;
+      else high = middle;
+    }
+    return low;
+  };
+
+  let longM = longFor(targetM);
+  for (;;) {
+    const { placed, sessions, actualM } = build(longM);
+    if (hasLong && longM > longFor(actualM)) {
+      longM = longestHeldM(longFor(actualM), longM);
       continue;
     }
     if (placed.some((p) => p.work.reps * p.work.repM > workCapM(p.work.zone, actualM))) {

@@ -5,6 +5,7 @@ import {
   longestInWindowM,
   longestRunSeedM,
   longRunDaysConflict,
+  longRunFloorM,
   longRunM,
   longRunShare,
   longRunWarning,
@@ -14,6 +15,19 @@ import {
 
 // 360 s/km makes 150 min exactly 25 km.
 const PACE = 360;
+// 20 min at 360 s/km, rounded up.
+const MIN_RUN = 3334;
+
+const floorOf = (overrides: Partial<Parameters<typeof longRunFloorM>[0]>) =>
+  longRunFloorM({
+    baselineLongestM: 15_000,
+    weekVolumeM: 26_000,
+    daysPerWeek: 4,
+    easyPaceSPerKm: PACE,
+    maxRunM: 16_500,
+    minRunM: MIN_RUN,
+    ...overrides,
+  });
 
 describe("long run", () => {
   it("allows 40% of the week at 3 runs and 30% at 4 or more", () => {
@@ -82,9 +96,11 @@ describe("long run", () => {
     expect(longRunDaysConflict({ distanceKey: "half", daysPerWeek: 3 })).toBeNull();
   });
 
-  it("asks for a peak long run in minutes at easy pace by distance", () => {
-    expect(requiredLongRunM({ distanceKey: "marathon", easyPaceSPerKm: PACE })).toBe(25_000);
+  it("asks for a peak long run of 60, 75, 90 and 120 min at easy pace by distance", () => {
     expect(requiredLongRunM({ distanceKey: "5k", easyPaceSPerKm: PACE })).toBe(10_000);
+    expect(requiredLongRunM({ distanceKey: "10k", easyPaceSPerKm: PACE })).toBe(12_500);
+    expect(requiredLongRunM({ distanceKey: "half", easyPaceSPerKm: PACE })).toBe(15_000);
+    expect(requiredLongRunM({ distanceKey: "marathon", easyPaceSPerKm: PACE })).toBe(20_000);
   });
 
   it("warns long_run_short 1 m under the required long run and not at or above it", () => {
@@ -118,6 +134,80 @@ describe("long run", () => {
               cap,
             ),
           );
+        },
+      ),
+    );
+  });
+
+  it("floors the long run at the baseline's longest run, though 30% of the week is less", () => {
+    expect(
+      longRunM({ weekVolumeM: 26_000, daysPerWeek: 4, easyPaceSPerKm: PACE, maxRunM: 16_500 }),
+    ).toBe(7800);
+    expect(floorOf({})).toBe(15_000);
+  });
+
+  it("floor equals the baseline longest when the other days leave exactly that: one below, at and one above", () => {
+    // 3 other runs of 3334 m leave 15_000 m of a 25_002 m week.
+    expect(floorOf({ weekVolumeM: 25_001 })).toBe(14_999);
+    expect(floorOf({ weekVolumeM: 25_002 })).toBe(15_000);
+    expect(floorOf({ weekVolumeM: 25_003 })).toBe(15_000);
+  });
+
+  it("floor binds at 150 min of easy running: one below, at and one above the cap", () => {
+    const at = (baselineLongestM: number) =>
+      floorOf({ baselineLongestM, weekVolumeM: 100_000, maxRunM: 40_000 });
+    expect(at(24_999)).toBe(24_999);
+    expect(at(25_000)).toBe(25_000);
+    expect(at(25_001)).toBe(25_000);
+  });
+
+  it("floor binds at the other days' 20 min runs when the week is small", () => {
+    expect(floorOf({ weekVolumeM: 12_000 })).toBe(12_000 - 3 * MIN_RUN);
+    expect(floorOf({ weekVolumeM: 12_000, daysPerWeek: 3 })).toBe(12_000 - 2 * MIN_RUN);
+  });
+
+  it("floor is zero when the baseline has no runs or the other days take the whole week", () => {
+    expect(floorOf({ baselineLongestM: 0 })).toBe(0);
+    expect(floorOf({ weekVolumeM: 3 * MIN_RUN })).toBe(0);
+    expect(floorOf({ weekVolumeM: 3 * MIN_RUN - 1 })).toBe(0);
+  });
+
+  it("floor never passes 110% of the longest recent run", () => {
+    expect(floorOf({ maxRunM: 12_000 })).toBe(12_000);
+  });
+
+  it("floor is the smallest of the baseline longest, 150 min, 110% and the week less the other days, never under 0", () => {
+    fc.assert(
+      fc.property(
+        fc.nat({ max: 40_000 }),
+        fc.integer({ min: 0, max: 150_000 }),
+        fc.integer({ min: 3, max: 6 }),
+        fc.double({ min: 180, max: 600, noNaN: true }),
+        fc.integer({ min: 5500, max: 40_000 }),
+        (baselineLongestM, weekVolumeM, daysPerWeek, easyPaceSPerKm, cap) => {
+          const minRunM = Math.ceil((1200 * 1000) / easyPaceSPerKm);
+          const floorM = longRunFloorM({
+            baselineLongestM,
+            weekVolumeM,
+            daysPerWeek,
+            easyPaceSPerKm,
+            maxRunM: cap,
+            minRunM,
+          });
+          expect(Number.isInteger(floorM)).toBe(true);
+          expect(floorM).toBe(
+            Math.max(
+              0,
+              Math.min(
+                baselineLongestM,
+                Math.floor((9000 * 1000) / easyPaceSPerKm),
+                cap,
+                weekVolumeM - (daysPerWeek - 1) * minRunM,
+              ),
+            ),
+          );
+          expect(floorM).toBeLessThanOrEqual(Math.max(0, baselineLongestM));
+          expect(floorM).toBeLessThanOrEqual(weekVolumeM);
         },
       ),
     );
