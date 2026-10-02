@@ -3,7 +3,8 @@
 One login for the whole batch; one details call per distinct run, in request order, then the
 records call when asked for. Each run comes back "ok", "gone" (deleted on Garmin) or "failed" (this
 run alone could not be read), and the batch goes on; records that cannot be read come back null.
-Only a 429 or a dead login fails the whole request (errors.py maps it, with a rotated bundle).
+Of Garmin's failures only a 429 or a dead login fails the whole request (errors.py maps it, with a
+rotated bundle); an exception that is not Garmin's is a 500.
 
 When every run fails the answer is still 200, each outcome "failed" or "skipped": the API decides
 that Garmin is down. Two runs failing in a row already say so, and the API waits SYNC_TIMEOUT_MS

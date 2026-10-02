@@ -614,7 +614,6 @@ def test_unmapped_malformed_records_are_ignored_without_a_warning(
         garmin_down_error(),
         blocked_error(),
         network_error(),
-        ValueError("a library bug quoting 1625.87"),
     ],
 )
 def test_records_call_failing_gives_null_records_with_the_series_intact(
@@ -634,7 +633,21 @@ def test_records_call_failing_gives_null_records_with_the_series_intact(
     )
     assert warning["error_chain"][0] == type(error).__name__
     assert "API Error" not in json.dumps(warning)
-    assert "1625.87" not in json.dumps(warning)
+
+
+def test_an_error_that_is_not_garmins_on_the_records_call_fails_the_request_with_500(
+    make_client: AppFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    garmin = ScriptedGarmin(records_error=ValueError("a library bug quoting 1625.87"))
+
+    response = make_client(connect=garmin.connect()).post(
+        PATH, json=series_body([42], include_records=True)
+    )
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal"
+    assert garmin.calls[-1] == "get_personal_record"
+    assert "could not read Garmin's records" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

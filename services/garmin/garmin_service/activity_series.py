@@ -2,8 +2,9 @@
 records, for best efforts and personal bests.
 
 A batch fails as a whole only on a 429 or a dead login: every later call would fail the same way,
-and the API must back off or ask the runner to reconnect. Anything else concerns one run (its
-outcome says what became of it) or the records (null), and the batch goes on.
+and the API must back off or ask the runner to reconnect. Any other Garmin failure concerns one run
+(its outcome says what became of it) or the records (null), and the batch goes on. An exception
+that is not Garmin's is a bug here or in the library, and fails the request with a 500.
 """
 
 import logging
@@ -115,20 +116,20 @@ def to_series(garmin_activity_id: int, details: object) -> ActivitySeries:
 
 
 def fetch_records(garmin: GarminSession) -> list[GarminRecord] | None:
-    """Garmin's records, or None when they cannot be had: they are only a comparison, so they never
-    fail the series. A 429 or a dead login still raises."""
+    """Garmin's records, or None when Garmin would not give them or sent a shape this service
+    cannot read: they are only a comparison, so they never fail the series. A 429, a dead login or
+    an exception that is not Garmin's raises, the last so that a bug is a 500, not a hidden
+    comparison."""
     try:
         raw = garmin.call(garmin.api.get_personal_record)
     except Exception as exc:
         error = from_garmin_exception(exc)
-        if error is not None and error.code in REQUEST_FAILURES:
+        if error is None or error.code in REQUEST_FAILURES:
             raise
+        # The class names only: the library's messages can quote Garmin's answer.
         log.warning(
             "could not read Garmin's records, answered without them",
-            extra={
-                "code": None if error is None else error.code.value,
-                "error_chain": error_names(exc),
-            },
+            extra={"code": error.code.value, "error_chain": error_names(exc)},
         )
         return None
     return to_records(raw)
