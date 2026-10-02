@@ -14,8 +14,8 @@ type SplitsTableProps = {
 };
 
 /**
- * Every lap as the watch recorded it (auto-laps at 1 km or 1 mi are the splits), GPS glitches included and
- * named, since the table is where the runner checks what the chart left out.
+ * The laps it is given as the watch recorded them (auto-laps at 1 km or 1 mi are the splits), with avg HR:
+ * the split bars' table view, which hands it the first 12 laps until Show all. GPS glitches are named.
  */
 export function SplitsTable({ laps, units }: SplitsTableProps) {
   if (laps.length === 0) {

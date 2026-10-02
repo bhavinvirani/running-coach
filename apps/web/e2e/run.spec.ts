@@ -1,4 +1,9 @@
-import { ErrorCode, activityResponseSchema, type Problem } from "@running-coach/shared";
+import {
+  ErrorCode,
+  RACE_EVENT_TYPE,
+  activityResponseSchema,
+  type Problem,
+} from "@running-coach/shared";
 import type { Locator, Page, Request } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
 import {
@@ -6,7 +11,7 @@ import {
   fixtureRunIds,
   seedLongRun,
   seedRunDetail,
-  syncFromMidSeptember,
+  syncFromRaceDay,
   syncGarmin,
 } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
@@ -46,7 +51,35 @@ function stat(page: Page, label: string): Locator {
     .locator("xpath=following-sibling::*[1]");
 }
 
-/** One lap of the splits table: lap, distance, pace and average HR. */
+/**
+ * The line above the stats: start time, Race chip, Indoor. The dots between them are items spaced by a gap,
+ * so the text reads "18:30·Indoor".
+ */
+function startLine(page: Page): Locator {
+  return section(page, "Summary").locator("p", { has: page.locator("time") });
+}
+
+/** The pace bars' rows, one per lap shown. */
+function splitBars(page: Page): Locator {
+  return section(page, "Splits").getByRole("list", { name: "Splits" }).getByRole("listitem");
+}
+
+/**
+ * One lap of the pace bars: its bar is an image named by the lap's pace, and the text after it is the change
+ * from the lap before ("+0:04" faster, "-0:25" slower), blank on the first lap.
+ */
+async function expectSplitBar(page: Page, lap: number, pace: string, delta: string) {
+  const row = splitBars(page).nth(lap - 1);
+  await expect(row.locator(":scope > span").first()).toHaveText(String(lap));
+  await expect(row.getByRole("img")).toHaveAccessibleName(pace);
+  // The delta is followed by a visually hidden "faster" or "slower" for screen readers; an empty delta
+  // must be empty, which toContainText("") would not check.
+  const deltaCell = row.locator(":scope > span").last();
+  if (delta === "") await expect(deltaCell).toHaveText("");
+  else await expect(deltaCell).toContainText(delta);
+}
+
+/** One lap of the splits table (Show table): lap, distance, pace and average HR. */
 function split(page: Page, lap: number): Locator {
   return section(page, "Splits").getByRole("row").nth(lap).getByRole("cell");
 }
@@ -65,7 +98,7 @@ async function getRun(page: Page, id: string) {
 }
 
 /** The first lap of the fixture Garmin's detail (detail-splits.json): 1000 m in 390.422 s, 167 bpm. */
-const fixtureFirstLap = ["1", "1.0 km", "6:30", "167"];
+const fixtureFirstPace = "6:30 /km";
 
 const unavailable = {
   type: "about:blank",
@@ -75,10 +108,10 @@ const unavailable = {
   requestId: "e2e-detail-unavailable",
 } satisfies Problem;
 
-test("opens a stored run from Progress with its stats, splits, charts and route, and Back returns", async ({
+test("opens a stored race from Progress with its stats, splits, charts and route, and Back returns", async ({
   page,
 }) => {
-  await seedLongRun();
+  await seedLongRun({ race: true });
   await seedRunDetail(fixtureRunIds.longRun, "outdoor");
   const detailPosts: string[] = [];
   page.on("request", (request) => {
@@ -89,8 +122,10 @@ test("opens a stored run from Progress with its stats, splits, charts and route,
   await openRun(page, "Sun 27 Sep");
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
 
-  // 18 km in 6120 s: 1:42:00, or 5:40 per km.
+  // 18 km in 6120 s: 1:42:00, or 5:40 per km, marked as a race in Garmin Connect.
   await expect(section(page, "Summary").locator("time")).toHaveText("08:00");
+  await expect(startLine(page)).toHaveText("08:00·Race");
+  await expect(startLine(page).getByText("Race", { exact: true })).toBeVisible();
   await expect(stat(page, "Distance")).toHaveText(/^18\.0\s*km$/);
   await expect(stat(page, "Time")).toHaveText("1:42:00");
   await expect(stat(page, "Avg pace")).toHaveText(/^5:40\s*\/km$/);
@@ -99,20 +134,48 @@ test("opens a stored run from Progress with its stats, splits, charts and route,
   await expect(stat(page, "Cadence")).toHaveText(/^168\s*spm$/);
   await expect(stat(page, "Calories")).toHaveText(/^1,150\s*kcal$/);
 
-  // The seeded laps (seed.ts): a slow first km, the hill on km 10, the descent, a fast last km.
-  await expect(section(page, "Splits").getByRole("row")).toHaveCount(1 + 18);
+  // The seeded laps (seed.ts) as pace bars, the first 12 of 18, each with its change from the lap before:
+  // 5:52 then 5:48 (4 s faster), the hill on km 10 at 6:06 (25 s slower than 5:41), the descent at 5:31
+  // (35 s faster), and the fast last km at 5:06 (28 s faster than 5:34).
+  const splits = section(page, "Splits");
+  await expect(splitBars(page)).toHaveCount(12);
+  await expectSplitBar(page, 1, "5:52 /km", "");
+  await expectSplitBar(page, 2, "5:48 /km", "+0:04");
+  await expectSplitBar(page, 10, "6:06 /km", "-0:25");
+  await expectSplitBar(page, 11, "5:31 /km", "+0:35");
+  await expect(splits.getByRole("table")).toHaveCount(0);
+
+  await splits.getByRole("button", { name: "Show all 18 laps" }).click();
+  await expect(splitBars(page)).toHaveCount(18);
+  await expectSplitBar(page, 18, "5:06 /km", "+0:28");
+  await splits.getByRole("button", { name: "Show fewer" }).click();
+  await expect(splitBars(page)).toHaveCount(12);
+
+  // The table view lists the same 12 laps with their average HR, and shares Show all.
+  await splits.getByRole("button", { name: "Show table" }).click();
+  const table = splits.getByRole("table", { name: "Splits" });
+  await expect(table.getByRole("columnheader")).toHaveText([
+    "Lap",
+    "Distance",
+    "Pace /km",
+    "Avg HR",
+  ]);
+  await expect(table.getByRole("row")).toHaveCount(1 + 12);
   await expect(split(page, 1)).toHaveText(["1", "1.0 km", "5:52", "140"]);
   await expect(split(page, 10)).toHaveText(["10", "1.0 km", "6:06", "158"]);
   await expect(split(page, 11)).toHaveText(["11", "1.0 km", "5:31", "150"]);
+  await expect(splitBars(page)).toHaveCount(0);
+  await splits.getByRole("button", { name: "Show all 18 laps" }).click();
+  await expect(table.getByRole("row")).toHaveCount(1 + 18);
   await expect(split(page, 18)).toHaveText(["18", "1.0 km", "5:06", "165"]);
+  await splits.getByRole("button", { name: "Show chart" }).click();
+  await expect(table).toHaveCount(0);
+  await expect(splitBars(page)).toHaveCount(18);
 
   const route = section(page, "Route");
   await expect(route.getByRole("img", { name: "Route sketch" })).toBeVisible();
   await expect(route.getByText("Route only: no map token.", { exact: true })).toBeVisible();
 
-  // The lap pace chart sits over the splits table, which is its table view, so that section has no toggle.
-  await expect(section(page, "Splits").getByRole("img", { name: "Lap pace chart" })).toBeVisible();
-  await expect(section(page, "Splits").getByRole("button", { name: "Show table" })).toHaveCount(0);
   const charts = [
     ["Heart rate zones", "Heart rate zones chart"],
     ["Cadence", "Cadence chart"],
@@ -194,7 +257,12 @@ test("the first open fetches the detail from Garmin: a failure keeps the stats, 
   release();
   expect((await fetched).ok()).toBe(true);
 
-  await expect(split(page, 1)).toHaveText(fixtureFirstLap);
+  // The fixture's 17 laps: 6:30, then 6:49, 19 s slower.
+  await expectSplitBar(page, 1, fixtureFirstPace, "");
+  await expectSplitBar(page, 2, "6:49 /km", "-0:19");
+  await expect(
+    section(page, "Splits").getByRole("button", { name: "Show all 17 laps" }),
+  ).toBeVisible();
   // The fixture Garmin gives an outdoor run a made-up loop in open ocean.
   const route = section(page, "Route");
   await expect(route.getByRole("img", { name: "Route sketch" })).toBeVisible();
@@ -220,16 +288,17 @@ test("the first open fetches the detail from Garmin: a failure keeps the stats, 
 
   // Opened again, the run shows the stored detail without another Garmin fetch.
   await page.reload();
-  await expect(split(page, 1)).toHaveText(fixtureFirstLap);
+  await expectSplitBar(page, 1, fixtureFirstPace, "");
   expect(detailPosts).toHaveLength(2);
 });
 
-test("a treadmill run has no route or elevation, and a run without heart rate has no zones", async ({
+// One sync for the three runs: each Garmin connect counts against the API's six a minute.
+test("a treadmill run has no route or elevation, a run without heart rate has no zones, and a race says so", async ({
   page,
 }) => {
-  // From this cursor the sync stores the fixture's four runs of 16 to 27 Sep.
-  await connectGarmin(page.request, syncFromMidSeptember);
-  expect((await syncGarmin(page.request)).activitiesWritten).toBe(4);
+  // From this cursor the sync stores the fixture's six runs of 6 to 27 Sep.
+  await connectGarmin(page.request, syncFromRaceDay);
+  expect((await syncGarmin(page.request)).activitiesWritten).toBe(6);
   const fetched = () => page.waitForResponse((response) => isDetailPost(response.request()));
 
   await openProgress(page);
@@ -237,10 +306,12 @@ test("a treadmill run has no route or elevation, and a run without heart rate ha
   await openRun(page, "Thu 24 Sep");
   expect((await detail).ok()).toBe(true);
 
+  // Garmin has the treadmill run uncategorized: no Race chip.
   await expect(section(page, "Summary").locator("time")).toHaveText("18:30");
-  await expect(section(page, "Summary")).toContainText("18:30 · Indoor");
+  await expect(startLine(page)).toHaveText("18:30·Indoor");
+  await expect(section(page, "Summary").getByText("Race", { exact: true })).toHaveCount(0);
   await expect(stat(page, "Elevation gain")).toHaveText("–");
-  await expect(split(page, 1)).toHaveText(fixtureFirstLap);
+  await expectSplitBar(page, 1, fixtureFirstPace, "");
   const route = section(page, "Route");
   await expect(route.getByText("Indoor run: no GPS route.", { exact: true })).toBeVisible();
   await expect(route.getByRole("img")).toHaveCount(0);
@@ -257,6 +328,9 @@ test("a treadmill run has no route or elevation, and a run without heart rate ha
   expect((await detail).ok()).toBe(true);
 
   await expect(stat(page, "Avg HR")).toHaveText("–");
+  await expectSplitBar(page, 1, fixtureFirstPace, "");
+  // The table's Avg HR column shows the dash for every lap.
+  await section(page, "Splits").getByRole("button", { name: "Show table" }).click();
   await expect(split(page, 1)).toHaveText(["1", "1.0 km", "6:30", "–"]);
   const zones = section(page, "Heart rate zones");
   await expect(
@@ -269,6 +343,27 @@ test("a treadmill run has no route or elevation, and a run without heart rate ha
   await expect(
     section(page, "Elevation").getByRole("img", { name: "Elevation chart" }),
   ).toBeVisible();
+
+  // The 10.2 km of Sun 6 Sep is a race in Garmin Connect: its row names it and its screen shows the chip.
+  // 3300 s over 10.2 km is 5:24 per km.
+  await page.getByRole("link", { name: "Back" }).click();
+  await expect(page.getByRole("heading", { name: "Progress", level: 1 })).toBeVisible();
+  const raceRow = page.getByRole("link", { name: /^Sun 6 Sep,/ });
+  await expect(raceRow).toHaveAccessibleName("Sun 6 Sep, Race, 10.2 km, 55:00, 5:24 /km");
+  await expect(raceRow.getByText("Race", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Thu 24 Sep,/ })).toHaveAccessibleName(
+    "Thu 24 Sep, Indoor, 8.0 km, 45:00, 5:38 /km",
+  );
+  detail = fetched();
+  await openRun(page, "Sun 6 Sep");
+  expect((await detail).ok()).toBe(true);
+
+  await expect(startLine(page)).toHaveText("07:30·Race");
+  await expect(startLine(page).getByText("Race", { exact: true })).toBeVisible();
+  await expect(stat(page, "Distance")).toHaveText(/^10\.2\s*km$/);
+  await expectSplitBar(page, 1, fixtureFirstPace, "");
+  const stored = await getRun(page, runId(page));
+  expect(stored.activity.eventType).toBe(RACE_EVENT_TYPE);
 });
 
 test("says a run does not exist for an unknown id and for a malformed one", async ({ page }) => {

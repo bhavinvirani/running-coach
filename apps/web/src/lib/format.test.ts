@@ -14,11 +14,13 @@ import {
   formatElevationValue,
   formatHeartRate,
   formatLapDistance,
+  formatLapDistanceValue,
   formatLocalDateTime,
   formatLocalDay,
   formatLocalTime,
   formatMonthYear,
   formatPace,
+  formatPaceDelta,
   formatPaceValue,
   formatPercent,
   formatTime,
@@ -43,6 +45,32 @@ describe("formatPace", () => {
     expect(formatPace(0, "km")).toBe(MISSING);
     expect(formatPace(-10, "km")).toBe(MISSING);
     expect(formatPace(Number.POSITIVE_INFINITY, "km")).toBe(MISSING);
+  });
+});
+
+describe("formatPaceDelta", () => {
+  it("signs a faster lap + and a slower one -, as m:ss", () => {
+    expect(formatPaceDelta(5)).toBe("+0:05");
+    expect(formatPaceDelta(-27)).toBe("-0:27");
+    expect(formatPaceDelta(75)).toBe("+1:15");
+    expect(formatPaceDelta(-600)).toBe("-10:00");
+  });
+
+  it("shows an equal pace unsigned", () => {
+    expect(formatPaceDelta(0)).toBe("0:00");
+  });
+
+  it("rounds to whole seconds first, so -0.4 s reads 0:00 and never -0:00", () => {
+    expect(formatPaceDelta(-0.4)).toBe("0:00");
+    expect(formatPaceDelta(0.4)).toBe("0:00");
+    expect(formatPaceDelta(4.6)).toBe("+0:05");
+    expect(formatPaceDelta(-59.6)).toBe("-1:00");
+  });
+
+  it("shows the missing mark for null and non-finite deltas", () => {
+    expect(formatPaceDelta(null)).toBe(MISSING);
+    expect(formatPaceDelta(undefined)).toBe(MISSING);
+    expect(formatPaceDelta(Number.NaN)).toBe(MISSING);
   });
 });
 
@@ -108,6 +136,20 @@ describe("formatLapDistance", () => {
   it("shows the missing mark for null and negative distances", () => {
     expect(formatLapDistance(null, "km")).toBe(MISSING);
     expect(formatLapDistance(-0.1, "km")).toBe(MISSING);
+  });
+});
+
+describe("formatLapDistanceValue", () => {
+  it("shows the lap distance without its unit, two decimals under one unit", () => {
+    expect(formatLapDistanceValue(0.04)).toBe("0.04");
+    expect(formatLapDistanceValue(0.621)).toBe("0.62");
+    expect(formatLapDistanceValue(1)).toBe("1.0");
+    expect(formatLapDistanceValue(2.04)).toBe("2.0");
+  });
+
+  it("shows the missing mark for null and negative distances", () => {
+    expect(formatLapDistanceValue(null)).toBe(MISSING);
+    expect(formatLapDistanceValue(-0.1)).toBe(MISSING);
   });
 });
 

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from garmin_service.models.problem import ErrorCode
 from tests.conftest import AppFactory
-from tests.helpers import JSON_SCHEMA_DIR, ScriptedGarmin, assert_valid, bundle
+from tests.helpers import JSON_SCHEMA_DIR, ScriptedGarmin, assert_valid, bundle, raw_run
 
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
 
@@ -41,6 +41,27 @@ def test_sync_responses_match_garmin_sync_response(
     assert_valid("garmin-sync-response", response.json())
     for activity in response.json()["activities"]:
         assert_valid("garmin-activity-summary", activity)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [{"typeId": 1, "typeKey": "race", "sortOrder": 10}, None, "absent", {"typeKey": ""}],
+)
+def test_sync_responses_with_any_event_type_match_garmin_sync_response(
+    make_client: AppFactory, event_type: object
+) -> None:
+    item = raw_run(eventType=event_type)
+    if event_type == "absent":
+        del item["eventType"]
+    garmin = ScriptedGarmin(activities=[item])
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json={"tokenBundle": bundle(), **FULL_RANGE}
+    )
+
+    assert response.status_code == 200
+    assert_valid("garmin-sync-response", response.json())
+    assert_valid("garmin-activity-summary", response.json()["activities"][0])
 
 
 @pytest.mark.parametrize(

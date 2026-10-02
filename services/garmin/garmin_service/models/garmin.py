@@ -4,10 +4,21 @@ Garmin leaves a key out when it has no value (indoor runs have no elevation, man
 rate), so everything except identity and start times is optional.
 """
 
+import logging
 from datetime import datetime
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    WrapValidator,
+)
 from pydantic.alias_generators import to_camel
+
+log = logging.getLogger(__name__)
 
 
 class GarminModel(BaseModel):
@@ -18,6 +29,26 @@ class GarminModel(BaseModel):
 
 class GarminActivityType(GarminModel):
     type_key: str = Field(min_length=1)
+
+
+class GarminEventType(GarminModel):
+    """What the runner tagged the activity as in Garmin Connect: race, training, uncategorized."""
+
+    type_key: str = Field(min_length=1)
+
+
+def _event_type_or_none(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+    """The event type is a label, not a metric: a shape Garmin changes makes it null instead of
+    failing the whole sync."""
+    try:
+        return handler(value)
+    except ValidationError as exc:
+        # Where the shape broke, never the values.
+        fields = [".".join(["eventType", *map(str, error["loc"])]) for error in exc.errors()]
+        log.warning(
+            "unexpected eventType shape from Garmin, reported as null", extra={"fields": fields}
+        )
+        return None
 
 
 class GarminActivity(GarminModel):
@@ -36,6 +67,7 @@ class GarminActivity(GarminModel):
     calories: float | None = None
     elevation_gain: float | None = None
     manual_activity: bool = False
+    event_type: Annotated[GarminEventType | None, WrapValidator(_event_type_or_none)] = None
 
 
 class GarminLap(GarminModel):

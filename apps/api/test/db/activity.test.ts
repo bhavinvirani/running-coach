@@ -25,6 +25,7 @@ function summary(overrides: Partial<GarminActivitySummary> = {}): GarminActivity
     elevationGainM: 50,
     isIndoor: false,
     isManual: false,
+    eventType: "uncategorized",
     ...overrides,
   };
 }

@@ -32,6 +32,18 @@ export function formatPace(secondsPerUnit: number | null | undefined, unit: Unit
   return value === MISSING ? MISSING : `${value} ${paceUnitLabel(unit)}`;
 }
 
+/**
+ * The change in pace from the previous lap, previous minus this one in seconds per unit, so a faster lap is
+ * positive: 5 → "+0:05", -27 → "-0:27", 0 → "0:00". Rounded to whole seconds first, so -0.4 reads "0:00".
+ */
+export function formatPaceDelta(seconds: number | null | undefined): string {
+  if (!isFiniteNumber(seconds)) return MISSING;
+  const rounded = Math.round(seconds);
+  const total = Math.abs(rounded);
+  const sign = rounded > 0 ? "+" : rounded < 0 ? "-" : "";
+  return `${sign}${Math.floor(total / 60)}:${pad2(total % 60)}`;
+}
+
 /** 330 → "05:30"; 4325 → "1:12:05". */
 export function formatDuration(seconds: number | null | undefined): string {
   if (!isFiniteNumber(seconds) || seconds < 0) return MISSING;
@@ -54,15 +66,24 @@ export function formatDistance(distanceInUnit: number | null | undefined, unit: 
   return value === MISSING ? MISSING : `${value} ${unit}`;
 }
 
+/** Under this many units a lap is a short one (the end of a run): its distance gets two decimals. */
+export const SHORT_LAP_IN_UNITS = 0.95;
+
+/** A lap's distance already converted to the user's unit, for a column that names the unit once: "0.04". */
+export function formatLapDistanceValue(distanceInUnit: number | null | undefined): string {
+  if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
+  return distanceInUnit < SHORT_LAP_IN_UNITS
+    ? distanceInUnit.toFixed(2)
+    : formatDistanceValue(distanceInUnit);
+}
+
 /**
  * A lap's distance already converted to the user's unit: one decimal like any distance, but two under one
  * unit, so the short last lap of a run reads "0.04 km" rather than a "0.0 km" that looks like no distance.
  */
 export function formatLapDistance(distanceInUnit: number | null | undefined, unit: Units): string {
-  if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
-  return distanceInUnit < 0.95
-    ? `${distanceInUnit.toFixed(2)} ${unit}`
-    : formatDistance(distanceInUnit, unit);
+  const value = formatLapDistanceValue(distanceInUnit);
+  return value === MISSING ? MISSING : `${value} ${unit}`;
 }
 
 /** 147.6 → "148". Zero means the watch recorded no HR, not a stopped heart. */

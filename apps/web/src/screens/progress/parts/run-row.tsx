@@ -5,7 +5,10 @@ import {
   type Units,
 } from "@running-coach/shared";
 import { Link } from "react-router";
+import { DotLine } from "@/components/dot-line";
+import { RunTypeChip } from "@/components/run-type-chip";
 import { MISSING, formatDistance, formatDuration, formatLocalDay, formatPace } from "@/lib/format";
+import { runTypeName } from "@/lib/run-type";
 import { progressCopy } from "../progress-copy";
 
 type RunRowProps = {
@@ -14,7 +17,8 @@ type RunRowProps = {
 };
 
 /**
- * One run: its local day, distance, time and pace in fixed columns so figures line up down the week.
+ * One run: its local day, distance, time and pace in fixed columns so figures line up down the week, and
+ * under the day the Race chip, Indoor or Manual, so a race reads at a glance.
  * Pace is derived from distance and time; a run without distance (treadmill, manual) shows the dash for
  * both rather than 0 or a pace from nothing. The whole row opens the run, so it needs no icon.
  */
@@ -23,7 +27,9 @@ export function RunRow({ run, units }: RunRowProps) {
     run.distanceM > 0 ? formatDistance(distanceInUnits(run.distanceM, units), units) : MISSING;
   const duration = run.durationS > 0 ? formatDuration(run.durationS) : MISSING;
   const pace = formatPace(paceSecondsPerUnit(run.distanceM, run.durationS, units), units);
+  const typeName = runTypeName(run.eventType);
   const flags = [
+    typeName,
     run.isIndoor ? progressCopy.indoor : null,
     run.isManual ? progressCopy.manual : null,
   ]
@@ -45,7 +51,13 @@ export function RunRow({ run, units }: RunRowProps) {
           <time dateTime={run.startLocal} className="truncate text-body text-ink">
             {formatLocalDay(run.startLocal)}
           </time>
-          {flags ? <span className="text-caption text-ink-2">{flags}</span> : null}
+          {flags ? (
+            <DotLine className="text-caption text-ink-2">
+              {typeName ? <RunTypeChip eventType={run.eventType} /> : null}
+              {run.isIndoor ? progressCopy.indoor : null}
+              {run.isManual ? progressCopy.manual : null}
+            </DotLine>
+          ) : null}
         </div>
         <span className="w-18 shrink-0 text-right text-body text-ink">{distance}</span>
         <span className="w-16 shrink-0 text-right text-body text-ink">{duration}</span>

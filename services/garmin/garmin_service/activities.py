@@ -73,6 +73,7 @@ def to_summary(activity: GarminActivity) -> ActivitySummary:
         elevation_gain_m=activity.elevation_gain,
         is_indoor=type_key in INDOOR_TYPE_KEYS,
         is_manual=activity.manual_activity,
+        event_type=None if activity.event_type is None else activity.event_type.type_key,
     )
 
 

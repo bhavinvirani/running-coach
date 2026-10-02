@@ -21,6 +21,7 @@ const run = {
   calories: null,
   elevationGainM: null,
   isIndoor: true,
+  eventType: null,
   isManual: false,
 };
 

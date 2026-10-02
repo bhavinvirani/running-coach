@@ -111,6 +111,11 @@ test("Sync now brings in the 18 km fixture run and stores it", async ({ page }) 
   const card = page.getByRole("region", { name: "Latest run" });
   await expectLongRun(card);
   await expect(card).not.toContainText("Indoor");
+  // Garmin has the fixture's long run uncategorized: the card names no type.
+  await expect(card.getByRole("link")).toHaveAccessibleName(
+    "Open the latest run, Sun 27 Sep, 08:00, 18.0 km, 1:42:00",
+  );
+  await expect(card.getByText("Race", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sync now" })).toBeEnabled();
   await expect(page.getByText(emptySentence, { exact: true })).toHaveCount(0);
 
@@ -128,6 +133,20 @@ test("Sync now brings in the 18 km fixture run and stores it", async ({ page }) 
   const me = meResponseSchema.parse(await (await page.request.get("/api/me")).json());
   expect(me.garmin.status).toBe("ok");
   expect(me.garmin.lastSyncAt).not.toBeNull();
+});
+
+test("names a latest run marked as a race in Garmin Connect, with its Race chip", async ({
+  page,
+}) => {
+  await seedLongRun({ race: true });
+
+  await page.goto("/");
+  const card = page.getByRole("region", { name: "Latest run" });
+  await expectLongRun(card);
+  await expect(card.getByText("Race", { exact: true })).toBeVisible();
+  await expect(card.getByRole("link")).toHaveAccessibleName(
+    "Open the latest run, Sun 27 Sep, 08:00, Race, 18.0 km, 1:42:00",
+  );
 });
 
 test("says to connect Garmin when Sync now runs before it is connected", async ({ page }) => {

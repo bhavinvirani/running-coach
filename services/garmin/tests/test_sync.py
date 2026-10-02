@@ -19,6 +19,8 @@ from tests.helpers import (
 )
 
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
+# The 10.2 km run the runner tagged as a race in Garmin Connect.
+RACE = 10_000_000_002
 
 
 def sync_body(**overrides: str) -> dict[str, str]:
@@ -57,7 +59,64 @@ def test_maps_an_outdoor_run_to_the_shared_summary(make_client: AppFactory) -> N
         "elevationGainM": 142.0,
         "isIndoor": False,
         "isManual": False,
+        "eventType": "uncategorized",
     }
+
+
+def test_carries_the_event_type_the_runner_set_race_or_uncategorized(
+    make_client: AppFactory,
+) -> None:
+    activities = by_id(make_client().post("/sync", json=sync_body()).json()["activities"])
+
+    assert activities[RACE]["eventType"] == "race"
+    assert activities[10_000_000_005]["eventType"] == "uncategorized"
+    assert [a for a, run in activities.items() if run["eventType"] == "race"] == [RACE]
+
+
+@pytest.mark.parametrize("sent", ["absent", "null"])
+def test_returns_null_event_type_and_keeps_the_run_when_garmin_sends_no_event_type(
+    make_client: AppFactory, sent: str
+) -> None:
+    item = raw_run(eventType=None)
+    if sent == "absent":
+        del item["eventType"]
+    garmin = ScriptedGarmin(activities=[item])
+
+    response = make_client(connect=garmin.connect()).post("/sync", json=sync_body())
+
+    assert response.status_code == 200
+    [summary] = response.json()["activities"]
+    assert (summary["garminActivityId"], summary["eventType"]) == (10_000_000_007, None)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [{}, {"typeKey": ""}, {"typeKey": None}, {"typeKey": 1}, "race", ["race"]],
+)
+def test_returns_null_event_type_and_keeps_the_run_when_the_event_type_is_malformed(
+    make_client: AppFactory, capsys: pytest.CaptureFixture[str], event_type: object
+) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run(eventType=event_type)])
+
+    response = make_client(connect=garmin.connect()).post("/sync", json=sync_body())
+
+    assert response.status_code == 200
+    [summary] = response.json()["activities"]
+    assert (summary["garminActivityId"], summary["eventType"]) == (10_000_000_007, None)
+    assert summary["distanceM"] == 18000.0
+    assert '"race"' not in capsys.readouterr().out
+
+
+def test_logs_the_malformed_event_type_shape_without_its_value(
+    make_client: AppFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run(eventType={"typeKey": "", "typeId": 31337})])
+
+    make_client(connect=garmin.connect()).post("/sync", json=sync_body())
+
+    logs = capsys.readouterr().out
+    assert "eventType" in logs
+    assert "31337" not in logs
 
 
 def test_marks_a_treadmill_run_indoor_without_elevation(make_client: AppFactory) -> None:

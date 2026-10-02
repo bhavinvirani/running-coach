@@ -1,5 +1,5 @@
 import type { ActivityWeeksResponse, ImportProgress, MeResponse } from "@running-coach/shared";
-import { ErrorCode } from "@running-coach/shared";
+import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -585,6 +585,29 @@ describe("ProgressScreen", () => {
 
     expect(await screen.findByText("Route not under test")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(`/runs/${sundayRun.id}`);
+  });
+
+  it("marks a race with a Race chip in its row and names it in the row's label", async () => {
+    const race = activityFixture({ ...sundayRun, eventType: RACE_EVENT_TYPE });
+    const indoorRace = activityFixture({ ...treadmillRun, eventType: RACE_EVENT_TYPE });
+    const raceWeek = weekFixture("2026-09-21", [race, wednesdayRun, indoorRace]);
+    fakeProgressApi({ pages: { latest: { weeks: [raceWeek], nextBefore: null } } });
+    renderProgress();
+
+    const week = await screen.findByRole("region", { name: "21–27 Sep" });
+    const [sunday, wednesday, tuesday] = rows(week) as [HTMLElement, HTMLElement, HTMLElement];
+    expect(sunday).toHaveTextContent(/^Sun 27 SepRace10\.0 km52:185:13 \/km$/);
+    expect(within(sunday).getByText("Race").querySelector(".bg-type-race")).not.toBeNull();
+    expect(within(sunday).getByRole("link")).toHaveAccessibleName(
+      "Sun 27 Sep, Race, 10.0 km, 52:18, 5:13 /km",
+    );
+    expect(tuesday).toHaveTextContent(
+      new RegExp(`^Tue 22 SepRace·Indoor${MISSING}30:00${MISSING}$`),
+    );
+    expect(within(tuesday).getByRole("link")).toHaveAccessibleName(
+      "Tue 22 Sep, Race · Indoor, 30:00",
+    );
+    expect(within(wednesday).queryByText("Race")).not.toBeInTheDocument();
   });
 
   it("marks manual runs with a caption", async () => {

@@ -44,7 +44,7 @@ export function MapboxRoute({ route, token, onFail }: MapboxRouteProps) {
   );
 
   return (
-    <div className="relative h-60 overflow-hidden rounded-md bg-surface-1">
+    <div className="relative h-60 overflow-hidden rounded-md">
       <MapGL
         ref={mapRef}
         mapboxAccessToken={token}

@@ -55,7 +55,8 @@
   /* charts */
   --color-chart-series: #e1e8f0;
   --color-chart-series-2: #a9b1be;
-  --color-chart-grid: #2a313b;
+  /* gridlines sit on surface-1 cards */
+  --color-chart-grid: #353e4a;
   --color-chart-target: #34ccb5;
 
   /* type scale: two or three sizes per screen */

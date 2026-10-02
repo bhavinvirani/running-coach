@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { ErrorCode, syncResponseSchema } from "@running-coach/shared";
-import { eq } from "drizzle-orm";
+import { ErrorCode, RACE_EVENT_TYPE, syncResponseSchema } from "@running-coach/shared";
+import { eq, inArray } from "drizzle-orm";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
@@ -22,6 +22,9 @@ const app = createTestApp();
 const PATH = "/api/sync";
 const CURSOR = new Date("2026-09-01T12:00:00Z");
 const FIXTURE_RUNS = 7;
+/** The fixture's 10.2 km of 2026-09-06, which Garmin lists with event type race. */
+const RACE_RUN = 10_000_000_002;
+const EASY_RUN = 10_000_000_005;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -79,6 +82,59 @@ describe("POST /api/sync", () => {
 
     expect(response.status).toBe(200);
     expect(syncResponseSchema.parse(response.body).activitiesWritten).toBe(0);
+    expect(await runs()).toHaveLength(FIXTURE_RUNS);
+  });
+
+  it("stores Garmin's event type: the fixture race as race and the other runs uncategorized (race badge)", async () => {
+    const { agent } = await connectedOwner();
+
+    await agent.post(PATH);
+
+    const stored = await runs();
+    expect(stored.find((run) => run.garminActivityId === RACE_RUN)?.eventType).toBe(
+      RACE_EVENT_TYPE,
+    );
+    expect(stored.find((run) => run.garminActivityId === EASY_RUN)?.eventType).toBe(
+      "uncategorized",
+    );
+    expect(stored.filter((run) => run.eventType === RACE_EVENT_TYPE)).toHaveLength(1);
+  });
+
+  it("rewrites only the runs whose event type changed on Garmin, and nothing when re-read unchanged (edited activity)", async () => {
+    const { agent, userId } = await connectedOwner();
+    await agent.post(PATH);
+    const rereadAll = () =>
+      db
+        .update(garminConnection)
+        .set({ lastSyncAt: CURSOR })
+        .where(eq(garminConnection.userId, userId));
+
+    await rereadAll();
+    const unchanged = await agent.post(PATH);
+    // As if the race was synced before the runner marked it a race, and the easy run before 0007.
+    await db
+      .update(activity)
+      .set({ eventType: "uncategorized" })
+      .where(eq(activity.garminActivityId, RACE_RUN));
+    await db
+      .update(activity)
+      .set({ eventType: null })
+      .where(eq(activity.garminActivityId, EASY_RUN));
+    await rereadAll();
+    const changed = await agent.post(PATH);
+
+    expect(syncResponseSchema.parse(unchanged.body).activitiesWritten).toBe(0);
+    expect(syncResponseSchema.parse(changed.body).activitiesWritten).toBe(2);
+    const rewritten = await db
+      .select({ garminActivityId: activity.garminActivityId, eventType: activity.eventType })
+      .from(activity)
+      .where(inArray(activity.garminActivityId, [RACE_RUN, EASY_RUN]));
+    expect(rewritten).toEqual(
+      expect.arrayContaining([
+        { garminActivityId: RACE_RUN, eventType: RACE_EVENT_TYPE },
+        { garminActivityId: EASY_RUN, eventType: "uncategorized" },
+      ]),
+    );
     expect(await runs()).toHaveLength(FIXTURE_RUNS);
   });
 

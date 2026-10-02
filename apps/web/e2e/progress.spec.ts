@@ -134,6 +134,15 @@ test("lists runs by week, newest first, and Show earlier weeks loads older ones"
   await expect(run(newest, "Thu 24 Sep")).toContainText("Indoor");
   await expect(run(newest, "Sun 27 Sep")).not.toContainText("Indoor");
   await expect(run(week(page, "14–20 Sep"), "Thu 17 Sep")).toContainText("Manual");
+  // The 5 km of Thu 10 Sep is a race in Garmin Connect: its row shows the chip and its name says so.
+  const race = run(week(page, "7–13 Sep"), "Thu 10 Sep");
+  await expect(race.getByText("Race", { exact: true })).toBeVisible();
+  await expect(race.getByRole("link")).toHaveAccessibleName(
+    "Thu 10 Sep, Race, 5.0 km, 27:30, 5:30 /km",
+  );
+  await expect(run(newest, "Sun 27 Sep").getByRole("link")).toHaveAccessibleName(
+    "Sun 27 Sep, 16.0 km, 1:32:00, 5:45 /km",
+  );
   await expect(weekDistance(week(page, "31 Aug – 6 Sep"))).toHaveText(/^20\.0\s*km$/);
 
   await page.getByRole("button", { name: "Show earlier weeks" }).click();

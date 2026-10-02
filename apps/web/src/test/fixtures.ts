@@ -52,6 +52,7 @@ export function activityFixture(overrides: Partial<Activity> = {}): Activity {
     elevationGainM: 64,
     isIndoor: false,
     isManual: false,
+    eventType: null,
     ...overrides,
   });
 }

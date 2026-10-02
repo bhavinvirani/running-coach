@@ -66,6 +66,8 @@ export const garminActivitySummarySchema = z
     elevationGainM: z.number().nullable(),
     isIndoor: z.boolean(),
     isManual: z.boolean(),
+    /** Garmin's eventType.typeKey (race, training, recreation, uncategorized, ...), null when absent. */
+    eventType: z.string().min(1).nullable(),
   })
   .strict();
 export type GarminActivitySummary = z.infer<typeof garminActivitySummarySchema>;

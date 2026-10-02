@@ -191,6 +191,7 @@ export async function createLongRun(userId: string, garminActivityId = 10_000_00
       cadence: 168,
       calories: 1150,
       elevationGainM: 142,
+      eventType: "uncategorized",
     })
     .returning();
   if (!row) throw new Error("insert returned nothing");
