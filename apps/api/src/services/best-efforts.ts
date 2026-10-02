@@ -59,7 +59,7 @@ const eligible = and(
  * were computed (a null version) until they are again. Efforts from an older rule still count while they
  * wait to be recomputed.
  */
-const counted = and(eligible, isNotNull(activity.bestEffortsVersion));
+export const counted = and(eligible, isNotNull(activity.bestEffortsVersion));
 
 /**
  * Tries before a run is given up: batches in which Garmin failed to read the run while it read another
