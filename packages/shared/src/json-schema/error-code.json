@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "validation",
+    "unauthorized",
+    "not_found",
+    "rate_limited",
+    "internal",
+    "garmin_not_connected",
+    "garmin_auth_expired",
+    "garmin_rate_limited",
+    "garmin_unavailable",
+    "garmin_mfa_required",
+    "claude_key_missing",
+    "claude_key_invalid",
+    "claude_unavailable"
+  ]
+}

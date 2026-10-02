@@ -1,0 +1,26 @@
+{
+  "name": "@running-coach/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "check": "pnpm typecheck && pnpm lint && pnpm contract:check && pnpm test",
+    "contract:build": "tsx scripts/build-json-schema.ts",
+    "contract:check": "tsx scripts/build-json-schema.ts --check"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

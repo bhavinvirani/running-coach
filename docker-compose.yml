@@ -1,0 +1,22 @@
+# Local Postgres for dev (running_coach), integration tests (running_coach_test) and e2e (running_coach_e2e).
+# Port 5434 because 5432 is often taken by a host Postgres. Matches Neon's Postgres 17.
+name: running-coach
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: running_coach
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d running_coach"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  pgdata:

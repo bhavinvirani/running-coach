@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+packages/shared/src/json-schema/
+apps/api/src/db/migrations/
+apps/web/e2e/screens/*-snapshots/
+services/garmin/
+coverage/
+dist/
+dev-dist/
+playwright-report/
+test-results/
