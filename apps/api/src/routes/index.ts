@@ -4,6 +4,7 @@ import { notFoundHandler } from "../lib/errors";
 import { activitiesRouter } from "./activities";
 import { garminRouter } from "./garmin";
 import { healthRouter } from "./health";
+import { importRouter } from "./import";
 import { meRouter } from "./me";
 import { syncRouter } from "./sync";
 
@@ -20,6 +21,7 @@ export function registerRoutes(app: Express): void {
   api.use(garminRouter);
   api.use(syncRouter);
   api.use(activitiesRouter);
+  api.use(importRouter);
   api.use(notFoundHandler);
   app.use("/api", api);
 }

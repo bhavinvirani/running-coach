@@ -1,5 +1,6 @@
 import type { WorkOptions } from "pg-boss";
 import { getBoss, startBoss, stopBoss } from "./boss";
+import * as importHistory from "./import-history";
 import * as syncGarmin from "./sync-garmin";
 
 // Registers every queue and worker. Routes and the cron endpoint enqueue through the functions below.
@@ -9,6 +10,8 @@ export interface StartJobsOptions {
   pollingIntervalSeconds?: number;
   /** The clock jobs read the user's current date from; tests pin it. */
   clock?: () => Date;
+  /** Items per history import page; tests use small pages so the fixture spans several. */
+  historyPageSize?: number;
 }
 
 export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
@@ -21,6 +24,16 @@ export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
   await boss.createQueue(syncGarmin.name, syncGarmin.queue);
   await boss.work(syncGarmin.name, work, async ([job]) =>
     job ? syncGarmin.handle(boss, job, options.clock) : undefined,
+  );
+
+  await boss.createQueue(importHistory.name, importHistory.queue);
+  // With metadata, so a page knows its last attempt (retryCount against retryLimit).
+  await boss.work(importHistory.name, { ...work, includeMetadata: true }, async ([job]) =>
+    job
+      ? importHistory.handle(boss, job, {
+          ...(options.historyPageSize === undefined ? {} : { pageSize: options.historyPageSize }),
+        })
+      : undefined,
   );
 }
 

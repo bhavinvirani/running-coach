@@ -3,7 +3,13 @@ import { eq } from "drizzle-orm";
 import { inject, vi } from "vitest";
 import { auth } from "../src/auth/auth";
 import { db } from "../src/db/client";
-import { activity, garminConnection, userSettings } from "../src/db/schema";
+import {
+  activity,
+  garminConnection,
+  type ImportProgressRow,
+  importProgress,
+  userSettings,
+} from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 
 // Fictional rows for integration tests. Bundles and keys steer the two fakes (global-setup.ts).
@@ -94,6 +100,64 @@ export async function connectGarmin(
   await db
     .insert(garminConnection)
     .values({ userId, tokenBundleEnc: encrypt(bundle, userId), ...values });
+}
+
+/**
+ * Replaces the stored bundle, which picks the fixture service's behaviour from the next call on. The write
+ * moves updated_at, which marks a 429's hour; `updatedAt` places it instead.
+ */
+export async function setGarminBundle(
+  userId: string,
+  bundle: string,
+  updatedAt?: Date,
+): Promise<void> {
+  await db
+    .update(garminConnection)
+    .set({ tokenBundleEnc: encrypt(bundle, userId), ...(updatedAt ? { updatedAt } : {}) })
+    .where(eq(garminConnection.userId, userId));
+}
+
+/**
+ * The fixture account as the Garmin service's get_activities lists it (services/garmin tests/fixtures,
+ * sync.json then history.json): 49 items newest first, 46 runs and three other sports.
+ */
+export const FIXTURE_ACCOUNT = {
+  listed: 49,
+  runs: 46,
+  /** A walk, a ride and a strength session. */
+  nonRunIds: [9_000_000_040, 9_000_000_031, 9_000_000_017],
+  oldestRunDate: "2023-09-17",
+} as const;
+
+/** The user's import_progress row, written over: a running import at offset 0 begun now by default. */
+export async function seedImport(
+  userId: string,
+  values: Partial<Omit<typeof importProgress.$inferInsert, "userId">> = {},
+): Promise<ImportProgressRow> {
+  const row = { status: "running" as const, startedAt: new Date(), nextOffset: 0, ...values };
+  const [stored] = await db
+    .insert(importProgress)
+    .values({ userId, ...row })
+    .onConflictDoUpdate({
+      target: importProgress.userId,
+      set: {
+        cursorDate: null,
+        lastError: null,
+        resumeAt: null,
+        finishedAt: null,
+        ...row,
+      },
+    })
+    .returning();
+  if (!stored) throw new Error("insert returned nothing");
+  return stored;
+}
+
+/** The user's import_progress row. */
+export async function storedImport(userId: string): Promise<ImportProgressRow> {
+  const [row] = await db.select().from(importProgress).where(eq(importProgress.userId, userId));
+  if (!row) throw new Error("no import_progress row");
+  return row;
 }
 
 /** Changes the settings row createUser made; `claudeKey` is stored encrypted. */

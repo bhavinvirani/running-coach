@@ -1,5 +1,9 @@
 import {
   ErrorCode,
+  type GarminHistoryRequest,
+  garminHistoryRequestSchema,
+  type GarminHistoryResponse,
+  garminHistoryResponseSchema,
   type GarminProblem,
   garminProblemSchema,
   type GarminProfileRequest,
@@ -28,6 +32,7 @@ import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } fr
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
 // caller's onTokenBundle, awaited before the call returns, retries or throws; a retry sends the new one.
 
+// Sync and history pages list many activities; the api rule's 60 s covers both.
 const SYNC_TIMEOUT_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 /** Garmin blocks last about an hour; the service sends 3600 when Garmin gives no delay. */
@@ -54,6 +59,11 @@ export interface GarminClient {
   ): Promise<GarminProfileResponse>;
   /** Runs whose local start date is in [startDate, endDate]. */
   sync(request: GarminSyncRequest, options: GarminCallOptions): Promise<GarminSyncResponse>;
+  /** One page of the full history: `limit` list items from offset `start`, newest first. */
+  history(
+    request: GarminHistoryRequest,
+    options: GarminCallOptions,
+  ): Promise<GarminHistoryResponse>;
 }
 
 // Read before the full response schema, so a 2xx body that breaks the contract still hands its bundle over.
@@ -169,6 +179,15 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
         garminSyncRequestSchema,
         request,
         garminSyncResponseSchema,
+        SYNC_TIMEOUT_MS,
+        callOptions,
+      ),
+    history: (request, callOptions) =>
+      post(
+        "/history",
+        garminHistoryRequestSchema,
+        request,
+        garminHistoryResponseSchema,
         SYNC_TIMEOUT_MS,
         callOptions,
       ),

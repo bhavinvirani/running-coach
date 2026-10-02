@@ -12,6 +12,7 @@ const TABLES = [
   "activity",
   "coach_message",
   "garmin_connection",
+  "import_progress",
   "session",
   "user",
   "user_settings",
