@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
+    "test:e2e": "playwright test --project flows",
+    "test:screens": "node e2e/run-screens.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
