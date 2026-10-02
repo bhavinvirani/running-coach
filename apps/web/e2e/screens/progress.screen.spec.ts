@@ -1,11 +1,9 @@
 import { expect, test } from "../fixtures/login";
 import {
   bestsCheckedAt,
-  connectGarmin,
   historyBestEfforts,
   importDone,
   seedBestEfforts,
-  seedGarminRecords,
   seedImportProgress,
   seedRunHistory,
 } from "../fixtures/seed";
@@ -17,9 +15,6 @@ test("progress shows the personal bests and the seeded runs by week under a fini
   await seedRunHistory();
   await seedBestEfforts(historyBestEfforts);
   await seedImportProgress(importDone);
-  // Garmin's own records live on the connection.
-  await connectGarmin(page.request);
-  await seedGarminRecords();
   // "New" is measured from the browser's clock: pinned three days after the newest run, the badges of
   // Sun 27 Sep read New and the rest do not, whatever the date.
   await page.clock.setFixedTime(bestsCheckedAt);
@@ -33,16 +28,8 @@ test("progress shows the personal bests and the seeded runs by week under a fini
   );
   const bests = page.getByRole("region", { name: "Personal bests" });
   await expect(bests.getByRole("link")).toHaveCount(7);
-  await expect(
-    bests.getByRole("link", { name: "10K, 56:41, 27 Sep 2026, Garmin 56:38, New" }),
-  ).toBeVisible();
+  await expect(bests.getByRole("link", { name: "10K, 56:41, 27 Sep 2026, New" })).toBeVisible();
   await expect(bests.getByText("No run yet", { exact: true })).toHaveCount(4);
-  // Under the row of tiles, since Garmin's records are seeded.
-  await expect(
-    bests.getByText("Garmin keeps records for 1K, 1 mi, 5K, 10K, half and marathon only.", {
-      exact: true,
-    }),
-  ).toBeVisible();
 
   // A full-page capture of a page taller than the viewport leaves the sticky tab bar where the viewport
   // ends, over the fourth week. A viewport as tall as the page puts it at the bottom, where a runner who

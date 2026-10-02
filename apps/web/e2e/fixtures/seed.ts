@@ -6,7 +6,6 @@ import {
   personalBestsResponseSchema,
   syncResponseSchema,
   type DistanceKey,
-  type GarminRecord,
   type MeResponse,
   type SyncResponse,
   type UpdateSettingsRequest,
@@ -854,36 +853,4 @@ export async function seedBestEfforts(runs: readonly SeededEfforts[]): Promise<v
       [runner.email, BEST_EFFORTS_VERSION, runs.map((run) => run.garminActivityId)],
     );
   });
-}
-
-/**
- * Garmin's own records beside historyBestEfforts: the same where Garmin agrees (1 mi 8:12, 5K 27:29), a few
- * seconds apart where it measures differently (1K 4:56, 10K 56:38), and a half of 2:05:20 from October 2025,
- * before the imported history, at a distance where the app has no run yet.
- */
-export const seededGarminRecords: readonly GarminRecord[] = [
-  { distanceKey: "1k", timeS: 296.82, achievedAt: "2026-09-02T16:30:00Z" },
-  { distanceKey: "1mi", timeS: 492.95, achievedAt: "2026-09-10T16:30:00Z" },
-  { distanceKey: "5k", timeS: 1649.9, achievedAt: "2026-09-10T16:30:00Z" },
-  { distanceKey: "10k", timeS: 3398, achievedAt: "2026-09-27T06:00:00Z" },
-  { distanceKey: "half", timeS: 7520.4, achievedAt: "2025-10-12T07:00:00Z" },
-];
-
-/**
- * Stores Garmin's records on the runner's connection, as the best-efforts batch that empties the pending
- * list does, fetched at a fixed time. Connect first: the records live on the connection.
- */
-export async function seedGarminRecords(
-  records: readonly GarminRecord[] = seededGarminRecords,
-): Promise<void> {
-  const stored = await withDatabase((db) =>
-    db.query(
-      `update garmin_connection set garmin_records = $2::jsonb, garmin_records_at = $3
-       where user_id = ${runnerId}`,
-      [runner.email, JSON.stringify(records), "2026-09-28T06:02:00Z"],
-    ),
-  );
-  if (stored.rowCount !== 1) {
-    throw new Error("Seeding Garmin's records found no Garmin connection for the runner");
-  }
 }

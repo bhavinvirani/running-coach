@@ -48,18 +48,17 @@ const historyRow = [
 
 /**
  * What the real best-efforts job finds in the fixture Garmin's detail samples (16.7 km, served for any run
- * of the account), on the fixture's 18 km run of Sun 27 Sep, beside the fixture's own records (1K 4:48,
- * mile 7:51, 5K 28:22, 10K 58:18, half 2:08:51). The samples reach 10 mi but not 20K.
+ * of the account), on the fixture's 18 km run of Sun 27 Sep. The samples reach 10 mi but not 20K.
  */
 const fixtureBadges = [
   "10 mi, 1:44:08, 27 Sep 2026, New",
   "15K, 1:36:46, 27 Sep 2026, New",
-  "10K, 1:04:17, 27 Sep 2026, Garmin 58:18, New",
+  "10K, 1:04:17, 27 Sep 2026, New",
   "5 mi, 51:08, 27 Sep 2026, New",
-  "5K, 31:22, 27 Sep 2026, Garmin 28:22, New",
+  "5K, 31:22, 27 Sep 2026, New",
   "2 mi, 19:54, 27 Sep 2026, New",
-  "1 mi, 9:40, 27 Sep 2026, Garmin 7:51, New",
-  "1K, 5:54, 27 Sep 2026, Garmin 4:48, New",
+  "1 mi, 9:40, 27 Sep 2026, New",
+  "1K, 5:54, 27 Sep 2026, New",
 ];
 /** The whole row after the sync: its badges, then the distances the samples do not reach. */
 const fixtureRow = [
@@ -76,9 +75,6 @@ const fixtureRow = [
   "20K",
 ];
 const fixtureChip = "8 PBs";
-
-/** Under the tiles once Garmin's records are in. */
-const garminCaption = "Garmin keeps records for 1K, 1 mi, 5K, 10K, half and marathon only.";
 
 const isPersonalBests = (url: URL) => url.pathname === "/api/personal-bests";
 
@@ -190,10 +186,6 @@ async function personalBests(request: APIRequestContext): Promise<PersonalBestsR
   return personalBestsResponseSchema.parse(await response.json());
 }
 
-// Garmin's records need a Garmin connection, and the API allows six connects a minute per user, which the
-// flows already spend (this file's sync, the imports, the run detail fetches, Today's sync). So the seeded
-// bests here come without them; the sync below shows the captions from the fixture account's records, and
-// progress.screen.spec.ts captures seeded ones.
 test("Progress shows a badge per distance with its time and date, and a badge opens its run", async ({
   page,
 }) => {
@@ -206,10 +198,9 @@ test("Progress shows a badge per distance with its time and date, and a badge op
   await expect(card.getByRole("heading", { name: "Personal bests", level: 2 })).toBeVisible();
   await expectBadgeLinks(card, historyBadges);
   await expectNoRunYet(card, ["10 mi", "20K", "Half", "Marathon"]);
-  await expect(card).not.toContainText("Garmin");
   // Only the newest run's bests are within a week of the clock.
   await expect(card.getByText("New", { exact: true })).toHaveCount(2);
-  // No pending line ("Checking N runs ...", "The next sync checks N runs ...") and no stopped alert.
+  // No pending line ("Checking N runs ...", "N runs still to check ...") and no stopped alert.
   await expect(card).not.toContainText("best efforts");
   await expect(card.getByRole("alert")).toHaveCount(0);
 
@@ -299,7 +290,8 @@ test("Sync now flags the run that set new bests: its PB chip on Today, then its 
   page,
 }) => {
   // From the pinned cursor the sync stores one run, the fixture's 18 km of Sun 27 Sep; the best-efforts
-  // job it queues fetches that run's samples and Garmin's records from the fixture service.
+  // job it queues fetches that run's samples and Garmin's records from the fixture service. The tiles show
+  // the app's bests only: Garmin's records stay in the API's answer (checked below) and off the screen.
   await connectGarmin(page.request);
   await page.goto("/");
   await expect(
@@ -327,10 +319,8 @@ test("Sync now flags the run that set new bests: its PB chip on Today, then its 
   await expectBadgeLinks(card, fixtureBadges);
   await expectRowOrder(card, fixtureRow);
   await expectNoRunYet(card, ["20K", "Half", "Marathon"]);
-  await expect(tile(card, "Half")).toContainText("Garmin 2:08:51");
-  // Garmin's records are in, so the caption under the tiles says why 2 mi, 5 mi, 15K and 10 mi have none.
-  await expect(card.getByText(garminCaption, { exact: true })).toBeVisible();
-  // No pending line ("Checking N runs ...", "The next sync checks N runs ...") and no stopped alert.
+  await expect(card).not.toContainText("Garmin");
+  // No pending line ("Checking N runs ...", "N runs still to check ...") and no stopped alert.
   await expect(card).not.toContainText("best efforts");
   await expect(card.getByRole("alert")).toHaveCount(0);
   await expect(runRow(week(page, "21–27 Sep"), "Sun 27 Sep")).toHaveAccessibleName(
