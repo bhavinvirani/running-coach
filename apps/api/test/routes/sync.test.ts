@@ -8,6 +8,7 @@ import { activity, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
 import { decrypt } from "../../src/lib/crypto";
 import { addDays, type DateRange, dateChunks } from "../../src/lib/local-date";
+import { connectGarminLimiter } from "../../src/routes/garmin";
 import { syncLimiter } from "../../src/routes/sync";
 import { SYNC_CHUNK_DAYS } from "../../src/services/garmin-sync";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
@@ -25,6 +26,7 @@ const FIXTURE_RUNS = 7;
 afterEach(() => {
   vi.restoreAllMocks();
   syncLimiter.reset();
+  connectGarminLimiter.reset();
 });
 
 async function connectedOwner(bundle = garminBundle(), status: "ok" | "expired" = "ok") {
@@ -42,6 +44,14 @@ async function storedConnection(userId: string) {
 
 async function runs() {
   return db.select().from(activity);
+}
+
+/** Moves the connection's last change, which marks a 429, this many seconds into the past. */
+async function rateLimitedSecondsAgo(userId: string, seconds: number) {
+  await db
+    .update(garminConnection)
+    .set({ updatedAt: new Date(Date.now() - seconds * 1000) })
+    .where(eq(garminConnection.userId, userId));
 }
 
 describe("POST /api/sync", () => {
@@ -158,6 +168,57 @@ describe("POST /api/sync", () => {
       lastSyncAt: CURSOR,
       lastError: ErrorCode.garminRateLimited,
     });
+  });
+
+  it("refuses Sync now for the hour after a Garmin 429 without calling Garmin or restarting the hour (Garmin 429)", async () => {
+    const { agent, userId } = await connectedOwner(garminBundle("rate_limited"));
+    expectProblem(await agent.post(PATH), 429, ErrorCode.garminRateLimited);
+    const limited = await storedConnection(userId);
+    const sent = fixturesSentTo("/sync");
+
+    const response = await agent.post(PATH);
+
+    const problem = expectProblem(response, 429, ErrorCode.garminRateLimited);
+    expect(problem.retryAfterSeconds).toBeGreaterThan(3500);
+    expect(problem.retryAfterSeconds).toBeLessThanOrEqual(3600);
+    expect(response.headers["retry-after"]).toBe(String(problem.retryAfterSeconds));
+    expect(sent()).toEqual([]);
+    expect(await storedConnection(userId)).toEqual(limited);
+  });
+
+  it("answers the seconds left of the hour after a 429, and calls Garmin again once the hour has passed (Garmin 429)", async () => {
+    const { agent, userId } = await connectedOwner(garminBundle("rate_limited"));
+    expectProblem(await agent.post(PATH), 429, ErrorCode.garminRateLimited);
+    const sent = fixturesSentTo("/sync");
+
+    await rateLimitedSecondsAgo(userId, 3590);
+    const during = await agent.post(PATH);
+    await rateLimitedSecondsAgo(userId, 3601);
+    const after = await agent.post(PATH);
+
+    const refused = expectProblem(during, 429, ErrorCode.garminRateLimited);
+    expect(refused.retryAfterSeconds).toBeGreaterThan(0);
+    expect(refused.retryAfterSeconds).toBeLessThanOrEqual(10);
+    // Garmin still limits: the fresh 429 starts a new hour.
+    expect(expectProblem(after, 429, ErrorCode.garminRateLimited).retryAfterSeconds).toBe(3600);
+    expect(sent()).toEqual(["rate_limited"]);
+    const restarted = await storedConnection(userId);
+    expect(Date.now() - restarted.updatedAt.getTime()).toBeLessThan(60_000);
+  });
+
+  it("calls Garmin at once after a reconnect during the hour after a 429 (Garmin 429)", async () => {
+    const { agent } = await connectedOwner(garminBundle("rate_limited"));
+    expectProblem(await agent.post(PATH), 429, ErrorCode.garminRateLimited);
+    expect(
+      (await agent.put("/api/garmin/connection").send({ tokenBundle: garminBundle() })).status,
+    ).toBe(200);
+    const sent = fixturesSentTo("/sync");
+
+    const response = await agent.post(PATH);
+
+    expect(response.status).toBe(200);
+    expect(syncResponseSchema.parse(response.body).activitiesWritten).toBe(FIXTURE_RUNS);
+    expect(sent().length).toBeGreaterThan(0);
   });
 
   it("keeps the bundle Garmin rotated before a 429 (rotate then 429)", async () => {

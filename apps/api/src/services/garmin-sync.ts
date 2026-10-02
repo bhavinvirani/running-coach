@@ -8,7 +8,7 @@ import {
 import { type Column, eq, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
 import { activity, garminConnection, userSettings } from "../db/schema";
-import { garminClient } from "../garmin/client";
+import { DEFAULT_RETRY_AFTER_S, garminClient } from "../garmin/client";
 import { config } from "../lib/config";
 import { decrypt, encrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
@@ -136,6 +136,8 @@ async function readConnection(userId: string) {
       tokenBundleEnc: garminConnection.tokenBundleEnc,
       status: garminConnection.status,
       lastSyncAt: garminConnection.lastSyncAt,
+      lastError: garminConnection.lastError,
+      updatedAt: garminConnection.updatedAt,
       timezone: userSettings.timezone,
     })
     .from(garminConnection)
@@ -143,6 +145,18 @@ async function readConnection(userId: string) {
     .innerJoin(userSettings, eq(userSettings.userId, garminConnection.userId))
     .where(eq(garminConnection.userId, userId));
   return row;
+}
+
+/**
+ * Seconds left of the hour a Garmin 429 blocks the login, or 0 when none is running. updated_at marks the
+ * 429: recordFailure wrote last_error then, and nothing else changes the row until a finished chunk
+ * (saveChunk) or a reconnect clears last_error, which ends the hour early.
+ */
+function rateLimitSecondsLeft(connection: { lastError: string | null; updatedAt: Date }): number {
+  if (connection.lastError !== ErrorCode.garminRateLimited) return 0;
+  const leftMs = connection.updatedAt.getTime() + DEFAULT_RETRY_AFTER_S * 1000 - Date.now();
+  if (leftMs <= 0) return 0;
+  return Math.min(DEFAULT_RETRY_AFTER_S, Math.max(1, Math.ceil(leftMs / 1000)));
 }
 
 /**
@@ -218,6 +232,17 @@ export async function syncGarmin({
     }
     // A known-dead login is not sent again: failed logins are what Garmin rate-limits hardest.
     if (connection.status === "expired") throw expired();
+    // Nor is a login Garmin rate-limited within the hour: every try during the block is another login,
+    // which can stretch it. The refusal writes nothing, so a tap never pushes the hour forward.
+    const retryAfterSeconds = rateLimitSecondsLeft(connection);
+    if (retryAfterSeconds > 0) {
+      throw new DomainError(
+        ErrorCode.garminRateLimited,
+        429,
+        "Garmin is limiting requests. Try again later.",
+        { retryAfterSeconds },
+      );
+    }
 
     const timeZone = connection.timezone;
     const today = localDateOf(now ?? new Date(), timeZone);
