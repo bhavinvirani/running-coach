@@ -5,8 +5,8 @@ import { user } from "./auth";
 import { id, inList, timestamps } from "./columns";
 
 // One row per user for the full-history import: where it stands and the cursor its next page reads from.
-// No row means not started, and "stalled" is derived from updated_at (services/history-import.ts), so the
-// column holds every shared status but those two.
+// No row means not started, and "stalled" is derived from pg-boss (a running or paused import with no page
+// job left to run, services/history-import.ts), so the column holds every shared status but those two.
 
 const storedImportStatusSchema = importStatusSchema.exclude(["not_started", "stalled"]);
 export type StoredImportStatus = (typeof storedImportStatusSchema.options)[number];
@@ -31,7 +31,6 @@ export const importProgress = pgTable(
     resumeAt: timestamp("resume_at", { withTimezone: true }),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
-    // updated_at also tells a stalled import: every write here moves it.
     ...timestamps(),
   },
   (table) => [

@@ -1,10 +1,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { ErrorCode } from "@running-coach/shared";
 import { asc, eq } from "drizzle-orm";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SendOptions } from "pg-boss";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
+import { stopJobs } from "../../src/jobs";
+import { getBoss, startBoss } from "../../src/jobs/boss";
+import * as importJob from "../../src/jobs/import-history";
 import { decrypt } from "../../src/lib/crypto";
 import { DomainError } from "../../src/lib/errors";
 import { syncGarmin } from "../../src/services/garmin-sync";
@@ -13,7 +17,6 @@ import {
   HISTORY_PAGE_OVERLAP,
   type ImportedPage,
   importHistoryPage,
-  STALL_AFTER_MS,
 } from "../../src/services/history-import";
 import {
   connectGarmin,
@@ -401,14 +404,45 @@ describe("importHistoryPage", () => {
 });
 
 describe("getImportProgress", () => {
-  const NOW = new Date("2026-10-02T12:00:00Z");
-  const ago = (ms: number) => new Date(NOW.getTime() - ms);
+  const ago = (ms: number) => new Date(Date.now() - ms);
+  const HOURS = 3600 * 1000;
+
+  // pg-boss without the import worker: a page stays in the state the test puts it in. Each test starts
+  // from an empty queue, so a fetch takes that test's page.
+  beforeAll(async () => {
+    const boss = await startBoss();
+    await boss.createQueue(importJob.name, importJob.queue);
+  });
+
+  afterAll(async () => {
+    await stopJobs();
+  });
+
+  beforeEach(async () => {
+    await getBoss().deleteAllJobs(importJob.name);
+  });
+
+  /** Queues a page of the user's import as the chain does; `options` overrides the queue's. */
+  async function queuePage(userId: string, options: SendOptions = {}): Promise<string> {
+    const id = await getBoss().send(
+      importJob.name,
+      { userId },
+      { ...importJob.sendOptions({ userId }), ...options },
+    );
+    if (!id) throw new Error("page not queued");
+    return id;
+  }
+
+  async function jobState(id: string) {
+    const [job] = await getBoss().findJobs<object>(importJob.name, { id });
+    return job;
+  }
 
   it("is not_started with the runs already stored when no import ran", async () => {
     const userId = await connectedUser();
     await syncGarmin({ userId, now: new Date("2026-09-28T10:00:00Z") });
 
-    expect(await getImportProgress(userId, NOW)).toEqual({
+    expect(await getImportProgress(userId)).toEqual({
       status: "not_started",
       runsStored: 7,
       oldestDate: null,
@@ -419,45 +453,91 @@ describe("getImportProgress", () => {
     });
   });
 
-  it("is stalled when a running import has not moved for 30 minutes, and running before that (stalled)", async () => {
+  it("is stalled when a running or paused import has no page job pg-boss can still run (stalled)", async () => {
     const userId = await connectedUser();
 
-    await seedImport(userId, { updatedAt: ago(STALL_AFTER_MS - 60_000) });
-    const moving = await getImportProgress(userId, NOW);
-    await seedImport(userId, { updatedAt: ago(STALL_AFTER_MS + 60_000) });
-    const stalled = await getImportProgress(userId, NOW);
-
-    expect(moving.status).toBe("running");
-    expect(stalled.status).toBe("stalled");
-  });
-
-  it("is stalled when a paused import is 30 minutes past its resume time, and paused before that (stalled)", async () => {
-    const userId = await connectedUser();
-    const paused = {
+    // No job at all, as after a send lost with the process.
+    await seedImport(userId);
+    const neverQueued = await getImportProgress(userId);
+    // Its page completed without moving the row, or ran out of attempts without the handler (expired).
+    const completed = await queuePage(userId);
+    await getBoss().complete(importJob.name, completed, null, { includeQueued: true });
+    const afterCompleted = await getImportProgress(userId);
+    const exhausted = await queuePage(userId, { retryLimit: 0 });
+    await getBoss().fail(importJob.name, exhausted);
+    const afterFailed = await getImportProgress(userId);
+    await seedImport(userId, {
       status: "paused",
+      resumeAt: ago(HOURS),
       lastError: ErrorCode.garminRateLimited,
-      updatedAt: ago(3 * 3600 * 1000),
-    } as const;
+    });
+    const pausedWithoutPage = await getImportProgress(userId);
 
-    await seedImport(userId, { ...paused, resumeAt: ago(STALL_AFTER_MS - 60_000) });
-    const waiting = await getImportProgress(userId, NOW);
-    await seedImport(userId, { ...paused, resumeAt: ago(STALL_AFTER_MS + 60_000) });
-    const stalled = await getImportProgress(userId, NOW);
-
-    expect(waiting).toMatchObject({ status: "paused", errorCode: ErrorCode.garminRateLimited });
-    expect(stalled.status).toBe("stalled");
+    expect((await jobState(completed))?.state).toBe("completed");
+    expect((await jobState(exhausted))?.state).toBe("failed");
+    expect(
+      [neverQueued, afterCompleted, afterFailed, pausedWithoutPage].map(
+        (progress) => progress.status,
+      ),
+    ).toEqual(["stalled", "stalled", "stalled", "stalled"]);
   });
 
-  it("never reports a done or failed import as stalled however old", async () => {
+  it("is running, not stalled, while its page waits, runs or waits for a retry, however long since the row moved (stalled)", async () => {
     const userId = await connectedUser();
-    const old = ago(24 * 3600 * 1000);
+    await seedImport(userId, { updatedAt: ago(3 * HOURS) });
 
+    const id = await queuePage(userId);
+    const waiting = await getImportProgress(userId);
+    const [fetched] = await getBoss().fetch(importJob.name);
+    const active = await getImportProgress(userId);
+    // Garmin failed the attempt: pg-boss retries it 5 to 10 minutes later and the row stays as it was.
+    await getBoss().fail(importJob.name, id);
+    const retrying = await getImportProgress(userId);
+
+    expect(fetched?.id).toBe(id);
+    const retry = await jobState(id);
+    expect(retry?.state).toBe("retry");
+    expect(retry?.startAfter.getTime()).toBeGreaterThan(Date.now() + 250 * 1000);
+    expect([waiting, active, retrying].map((progress) => progress.status)).toEqual([
+      "running",
+      "running",
+      "running",
+    ]);
+  });
+
+  it("is paused, not stalled, while its deferred page waits, also long after resume_at (paused)", async () => {
+    const userId = await connectedUser();
+    const resumeAt = ago(2 * HOURS);
+    await seedImport(userId, {
+      status: "paused",
+      resumeAt,
+      lastError: ErrorCode.garminRateLimited,
+      updatedAt: ago(3 * HOURS),
+    });
+    // Deferred to resume_at, and not picked up since (a worker that was down).
+    await queuePage(userId, { startAfter: resumeAt });
+
+    expect(await getImportProgress(userId)).toMatchObject({
+      status: "paused",
+      resumeAt: resumeAt.toISOString(),
+      errorCode: ErrorCode.garminRateLimited,
+    });
+  });
+
+  it("never reports a done or failed import as stalled however old, and asks pg-boss only about a running or paused one", async () => {
+    const userId = await connectedUser();
+    const old = ago(24 * HOURS);
+    const findJobs = vi.spyOn(getBoss(), "findJobs");
+
+    const none = await getImportProgress(userId);
     await seedImport(userId, { status: "done", finishedAt: old, updatedAt: old });
-    const done = await getImportProgress(userId, NOW);
+    const done = await getImportProgress(userId);
     await seedImport(userId, { status: "failed", lastError: ErrorCode.internal, updatedAt: old });
-    const failed = await getImportProgress(userId, NOW);
+    const failed = await getImportProgress(userId);
 
+    expect(none.status).toBe("not_started");
     expect(done.status).toBe("done");
     expect(failed).toMatchObject({ status: "failed", errorCode: ErrorCode.internal });
+    expect(findJobs).not.toHaveBeenCalled();
   });
 });

@@ -5,7 +5,6 @@ import { stopJobs } from "../../src/jobs";
 import { getBoss, startBoss } from "../../src/jobs/boss";
 import * as importJob from "../../src/jobs/import-history";
 import { importLimiter } from "../../src/routes/import";
-import { STALL_AFTER_MS } from "../../src/services/history-import";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import {
   connectGarmin,
@@ -47,6 +46,17 @@ async function queuedPages(userId: string) {
   return getBoss().findJobs<object>(importJob.name, { key: userId, queued: true });
 }
 
+/** Queues a page of the user's import as the chain does; `startAfter` defers it. */
+async function queuePage(userId: string, startAfter?: Date): Promise<string> {
+  const id = await getBoss().send(
+    importJob.name,
+    { userId },
+    { ...importJob.sendOptions({ userId }), ...(startAfter ? { startAfter } : {}) },
+  );
+  if (!id) throw new Error("page not queued");
+  return id;
+}
+
 describe("GET /api/import", () => {
   it("returns not_started and the runs already stored for a runner who never imported", async () => {
     const { agent, userId } = await connectedOwner();
@@ -77,6 +87,7 @@ describe("GET /api/import", () => {
       resumeAt,
       lastError: ErrorCode.garminRateLimited,
     });
+    await queuePage(userId, resumeAt);
 
     const response = await agent.get(PATH);
 
@@ -88,9 +99,9 @@ describe("GET /api/import", () => {
     });
   });
 
-  it("returns stalled for a running import that has not moved for 30 minutes (stalled)", async () => {
+  it("returns stalled for an import marked running with no page job left to run (stalled)", async () => {
     const { agent, userId } = await connectedOwner();
-    await seedImport(userId, { updatedAt: new Date(Date.now() - STALL_AFTER_MS - 60_000) });
+    await seedImport(userId);
 
     const response = await agent.get(PATH);
 
@@ -131,11 +142,15 @@ describe("POST /api/import", () => {
     expect(await queuedPages(userId)).toHaveLength(1);
   });
 
-  it("changes nothing and queues nothing while an import runs or is paused", async () => {
+  it("changes nothing and queues nothing while the import's page waits, waits for a retry, or is deferred by a 429 (Garmin outage)", async () => {
     const { agent, userId } = await connectedOwner();
     const running = await seedImport(userId, { nextOffset: 95 });
+    const page = await queuePage(userId);
 
-    const whileRunning = await agent.post(PATH);
+    const whileWaiting = await agent.post(PATH);
+    // Garmin failed the attempt: pg-boss retries it 5 to 10 minutes later.
+    await getBoss().fail(importJob.name, page);
+    const whileRetrying = await agent.post(PATH);
     await seedImport(userId, {
       status: "paused",
       nextOffset: 95,
@@ -145,10 +160,14 @@ describe("POST /api/import", () => {
     });
     const whilePaused = await agent.post(PATH);
 
-    expect(importProgressSchema.parse(whileRunning.body).status).toBe("running");
-    expect(importProgressSchema.parse(whilePaused.body).status).toBe("paused");
+    expect(
+      [whileWaiting, whileRetrying, whilePaused].map(
+        (response) => importProgressSchema.parse(response.body).status,
+      ),
+    ).toEqual(["running", "running", "paused"]);
     expect(await storedImport(userId)).toMatchObject({ status: "paused", nextOffset: 95 });
-    expect(await queuedPages(userId)).toEqual([]);
+    const jobs = await getBoss().findJobs<object>(importJob.name, { key: userId });
+    expect(jobs.map((job) => [job.id, job.state])).toEqual([[page, "retry"]]);
   });
 
   it("resumes a failed import from its cursor and clears the error", async () => {
@@ -172,13 +191,10 @@ describe("POST /api/import", () => {
     expect(await queuedPages(userId)).toHaveLength(1);
   });
 
-  it("resumes a stalled import from its cursor (stalled)", async () => {
+  it("resumes a stalled import from its cursor with one page (stalled)", async () => {
     const { agent, userId } = await connectedOwner();
-    await seedImport(userId, {
-      nextOffset: 95,
-      cursorDate: "2025-01-11",
-      updatedAt: new Date(Date.now() - STALL_AFTER_MS - 60_000),
-    });
+    // Marked running, but pg-boss holds no page of it.
+    await seedImport(userId, { nextOffset: 95, cursorDate: "2025-01-11" });
 
     const response = await agent.post(PATH);
 

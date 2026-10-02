@@ -67,7 +67,7 @@ describe("import_progress", () => {
     });
   });
 
-  it("moves updated_at on a pause and on a failure, which stalled detection reads", async () => {
+  it("moves updated_at on a pause and on a failure", async () => {
     const userId = await createUser();
     await seedImport(userId, { updatedAt: AN_HOUR_AGO });
 

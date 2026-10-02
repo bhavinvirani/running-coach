@@ -5,6 +5,7 @@ import {
   type ImportStatus,
 } from "@running-coach/shared";
 import { and, count, eq, inArray, sql } from "drizzle-orm";
+import type { JobWithMetadata } from "pg-boss";
 import { db } from "../db/client";
 import { activity, type ImportProgressRow, importProgress } from "../db/schema";
 import { garminClient } from "../garmin/client";
@@ -28,17 +29,29 @@ export const HISTORY_PAGE_SIZE = 100;
  * upsert makes the re-read free.
  */
 export const HISTORY_PAGE_OVERLAP = 5;
-/** A running import that has not moved for this long lost its job chain (a killed process), as does a
- * paused one this long past its resume time. Above a page's job expiry (10 min) and its lock wait. */
-export const STALL_AFTER_MS = 30 * 60 * 1000;
+// A page job in one of these states is still pg-boss's to run: waiting, deferred, between retries, or
+// running (a killed one stays active until its expiry, then retries or fails).
+const PENDING_JOB_STATES: ReadonlySet<JobWithMetadata["state"]> = new Set([
+  "created",
+  "retry",
+  "active",
+]);
 
-function derivedStatus(row: ImportProgressRow, now: Date): ImportStatus {
-  const stalledBefore = now.getTime() - STALL_AFTER_MS;
-  if (row.status === "running" && row.updatedAt.getTime() < stalledBefore) return "stalled";
-  if (row.status === "paused" && (row.resumeAt ?? row.updatedAt).getTime() < stalledBefore) {
-    return "stalled";
-  }
-  return row.status;
+/** Whether pg-boss holds a page of the user's import that it can still run. */
+async function pagePending(userId: string): Promise<boolean> {
+  // Without `queued`, findJobs returns every state; `queued` alone would leave out the active page.
+  const jobs = await getBoss().findJobs(importQueue.name, { key: userId });
+  return jobs.some((job) => PENDING_JOB_STATES.has(job.state));
+}
+
+/**
+ * The status the runner sees. A running or paused import with no page job pg-boss can still run lost its
+ * chain (a killed process past its last attempt, a lost send) and shows as stalled; while a page waits,
+ * retries or runs, it shows as stored. pg-boss is asked only for those two statuses.
+ */
+async function derivedStatus(row: ImportProgressRow): Promise<ImportStatus> {
+  if (row.status !== "running" && row.status !== "paused") return row.status;
+  return (await pagePending(row.userId)) ? row.status : "stalled";
 }
 
 async function readProgress(userId: string): Promise<ImportProgressRow | undefined> {
@@ -47,10 +60,7 @@ async function readProgress(userId: string): Promise<ImportProgressRow | undefin
 }
 
 /** GET /api/import: where the import stands, with every run stored for the user, imported or synced. */
-export async function getImportProgress(
-  userId: string,
-  now: Date = new Date(),
-): Promise<ImportProgress> {
+export async function getImportProgress(userId: string): Promise<ImportProgress> {
   const [row, [stored]] = await Promise.all([
     readProgress(userId),
     db.select({ runs: count() }).from(activity).where(eq(activity.userId, userId)),
@@ -69,7 +79,7 @@ export async function getImportProgress(
   }
   const errorCode = errorCodeSchema.safeParse(row.lastError);
   return {
-    status: derivedStatus(row, now),
+    status: await derivedStatus(row),
     runsStored,
     oldestDate: row.cursorDate,
     startedAt: row.startedAt.toISOString(),
@@ -84,12 +94,13 @@ export async function getImportProgress(
 /**
  * POST /api/import. Refuses without a usable Garmin login (409, as sync). Starts a fresh import when none
  * ran or the last one finished, resumes a failed or stalled one from its cursor, and changes nothing while
- * one is running or paused. The decision takes the row's lock (or inserts it), so two concurrent POSTs
- * start one import and queue one page. The page is queued after the commit and without an id: the stately
+ * a running or paused one still has a page job pg-boss can run: a second page beside a retrying one would
+ * call Garmin during the outage it waits out. The decision takes the row's lock (or inserts it), so two
+ * concurrent POSTs start one import. The page is queued after the commit and without an id: the stately
  * queue folds it into a page already waiting, and if the process dies before the send, the import shows as
  * stalled and the next POST queues it again.
  */
-export async function startImport(userId: string, now: Date = new Date()): Promise<ImportProgress> {
+export async function startImport(userId: string): Promise<ImportProgress> {
   await requireGarminConnection(userId);
 
   const queuePage = await db.transaction(async (tx) => {
@@ -106,7 +117,7 @@ export async function startImport(userId: string, now: Date = new Date()): Promi
       .where(eq(importProgress.userId, userId))
       .for("update");
     if (!row) throw new Error("import_progress row vanished under its lock");
-    const status = derivedStatus(row, now);
+    const status = await derivedStatus(row);
     const ofUser = eq(importProgress.userId, userId);
     if (status === "done") {
       await tx
@@ -139,7 +150,7 @@ export async function startImport(userId: string, now: Date = new Date()): Promi
     await getBoss().send(importQueue.name, job, importQueue.sendOptions(job));
     log.info({ userId }, "history import queued");
   }
-  return getImportProgress(userId, now);
+  return getImportProgress(userId);
 }
 
 export interface ImportHistoryPageInput {
@@ -167,9 +178,10 @@ export type ImportHistoryPageResult = { status: "skipped" } | ImportedPage;
 /**
  * Imports one page at the stored cursor, inside the per-user lock so it never overlaps a sync or another
  * page. Skips (writes nothing, calls no one) when no import is running or paused. Throws as sync does for a
- * missing or expired login and during the hour after a 429, and rethrows a failed Garmin call after
- * recording it on the connection; the job decides what each means for the import. On success the runs, the
- * cursor and the connection's ok status commit in one transaction. Garmin's short page ends the import.
+ * missing or expired login and during the hour after a 429; a paused import that passes those gates is
+ * running again before Garmin is called. Rethrows a failed Garmin call after recording it on the
+ * connection; the job decides what each error means for the import. On success the runs, the cursor and
+ * the connection's ok status commit in one transaction. Garmin's short page ends the import.
  */
 export async function importHistoryPage({
   userId,
@@ -189,6 +201,14 @@ export async function importHistoryPage({
     signal?.throwIfAborted();
 
     const account = await openGarminAccount(userId);
+    if (progress.status === "paused") {
+      // The deferred page is past the 429's hour and about to call Garmin: from here a transient failure
+      // leaves the import running with its retry pending, not paused with a resume time in the past.
+      await db
+        .update(importProgress)
+        .set({ status: "running", resumeAt: null, lastError: null, updatedAt: sql`now()` })
+        .where(and(eq(importProgress.userId, userId), eq(importProgress.status, "paused")));
+    }
     const start = progress.nextOffset;
     const page = await account.call((tokenBundle, options) =>
       garminClient.history({ tokenBundle, start, limit: pageSize }, options),

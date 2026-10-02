@@ -107,6 +107,19 @@ async function waitForFinishedJob(userId: string): Promise<JobWithMetadata> {
   throw new Error("no job finished");
 }
 
+/** Waits until one of the user's page jobs is in `state` and returns it. */
+async function waitForJobState(
+  userId: string,
+  state: JobWithMetadata["state"],
+): Promise<JobWithMetadata> {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    const found = (await userJobs(userId)).find((job) => job.state === state);
+    if (found) return found;
+    await sleep(100);
+  }
+  throw new Error(`no job reached ${state}`);
+}
+
 beforeAll(async () => {
   const boss = await startBoss();
   await boss.createQueue(importJob.name, importJob.queue);
@@ -352,6 +365,77 @@ describe("import-history job on pg-boss", () => {
     expect(starts).toEqual([10, 10, 15, 20, 25, 30, 35, 40]);
     expect(await findJob(id)).toMatchObject({ state: "completed", retryCount: 1 });
     expect(await runCount(userId)).toBe(FIXTURE_ACCOUNT.runs);
+  });
+
+  it("keeps an import whose page waits for its retry running, and a POST queues nothing beside it (Garmin outage)", async () => {
+    const userId = await connectedUser(garminBundle("unavailable"));
+    const sent = fixturesSentTo("/history");
+
+    await startImport(userId);
+    const retrying = await waitForJobState(userId, "retry");
+    const progress = await getImportProgress(userId);
+    const resumed = await startImport(userId);
+
+    // Backoff from a 5-minute delay: the retry starts 5 to 10 minutes after the failed attempt.
+    expect(secondsUntil(retrying.startAfter)).toBeGreaterThan(250);
+    expect(progress).toMatchObject({ status: "running", errorCode: null });
+    expect(resumed.status).toBe("running");
+    expect((await userJobs(userId)).map((job) => [job.id, job.state])).toEqual([
+      [retrying.id, "retry"],
+    ]);
+    expect(sent()).toEqual(["unavailable"]);
+  });
+
+  it("resumes a stalled import with exactly one page, and the chain finishes from the stored cursor (stalled)", async () => {
+    const userId = await connectedUser();
+    await seedImport(userId);
+    // Two pages ran, then the chain was lost: the row says running and pg-boss holds no page.
+    await importHistoryPage({ userId, pageSize: PAGE_SIZE });
+    await importHistoryPage({ userId, pageSize: PAGE_SIZE });
+    const stalled = await getImportProgress(userId);
+    const original = garminClient.history.bind(garminClient);
+    const starts: number[] = [];
+    vi.spyOn(garminClient, "history").mockImplementation(async (request, options) => {
+      starts.push(request.start);
+      return original(request, options);
+    });
+
+    await startImport(userId);
+    await waitForImport(userId, "done");
+
+    expect(stalled.status).toBe("stalled");
+    expect(starts).toEqual([10, 15, 20, 25, 30, 35, 40]);
+    const jobs = await userJobs(userId);
+    expect(jobs).toHaveLength(7);
+    expect(jobs.every((job) => job.state === "completed" && job.retryCount === 0)).toBe(true);
+    expect(await runCount(userId)).toBe(FIXTURE_ACCOUNT.runs);
+  });
+
+  it("runs the deferred page of a paused import and leaves it running when Garmin fails that page (Garmin outage after a 429)", async () => {
+    const userId = await connectedUser(garminBundle("unavailable"));
+    await seedImport(userId, {
+      status: "paused",
+      nextOffset: 10,
+      resumeAt: new Date(Date.now() - 60_000),
+      lastError: ErrorCode.garminRateLimited,
+    });
+
+    // The page the 429 deferred, now due.
+    await getBoss().send(importJob.name, { userId }, importJob.sendOptions({ userId }));
+    const retrying = await waitForJobState(userId, "retry");
+
+    expect(secondsUntil(retrying.startAfter)).toBeGreaterThan(250);
+    expect(await storedImport(userId)).toMatchObject({
+      status: "running",
+      nextOffset: 10,
+      resumeAt: null,
+      lastError: null,
+    });
+    expect(await getImportProgress(userId)).toMatchObject({
+      status: "running",
+      resumeAt: null,
+      errorCode: null,
+    });
   });
 
   it("completes a 429 page without a failed attempt and moves its page past retryAfter (Garmin 429)", async () => {

@@ -2,8 +2,8 @@ import { z } from "zod";
 import { errorCodeSchema } from "../error-codes";
 
 /**
- * The full-history import. "stalled" is derived, never stored: an import still marked running that has not
- * moved for a while (its job chain died with the process), which POST /api/import resumes.
+ * The full-history import. "stalled" is derived, never stored: an import still marked running or paused
+ * with no page job left to run it (its job chain died with the process), which POST /api/import resumes.
  */
 export const importStatusSchema = z.enum([
   "not_started",
