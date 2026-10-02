@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ssl
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+import urllib.request
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,12 +31,16 @@ from garminconnect import (
 
 from garmin_service.connect_cli import (
     APP_LIMITED,
+    APP_ORIGIN_REFUSED,
     APP_REJECTED,
     BAD_APP_URL,
+    CODE_REJECTED,
     GARMIN_DOWN,
     GARMIN_LIMITED,
     GARMIN_REJECTED,
+    MFA_PROMPT,
     NO_REUSABLE_LOGIN,
+    TLS_UNVERIFIED,
     UPLOAD_FAILURES,
     UPLOAD_LOST,
     USAGE,
@@ -54,6 +60,7 @@ APP_PASSWORD = "app-password-not-real"
 GARMIN_EMAIL = "garmin-runner@example.com"
 GARMIN_PASSWORD = "garmin-password-not-real"
 MFA_CODE = "418093"
+WRONG_CODE = "418039"
 BUNDLE = json.dumps(
     {
         "di_token": "laptop-di-token-not-real",
@@ -61,7 +68,14 @@ BUNDLE = json.dumps(
         "di_client_id": "laptop-client-not-real",
     }
 )
-SECRETS = (APP_PASSWORD, GARMIN_PASSWORD, MFA_CODE, "laptop-di-token", "laptop-refresh-token")
+SECRETS = (
+    APP_PASSWORD,
+    GARMIN_PASSWORD,
+    MFA_CODE,
+    WRONG_CODE,
+    "laptop-di-token",
+    "laptop-refresh-token",
+)
 SESSION_COOKIE = "better-auth.session_token=fake-session"
 
 SIGN_IN = "/api/auth/sign-in/email"
@@ -188,13 +202,18 @@ class FakeLogin:
         *,
         needs_mfa: bool = False,
         login_error: BaseException | None = None,
-        resume_error: BaseException | None = None,
+        resume_errors: Sequence[BaseException] = (),
+        accepts_code_before_error: bool = False,
         bundle: str = BUNDLE,
     ) -> None:
         self._tokens = FakeTokenStore()
         self._needs_mfa = needs_mfa
         self._login_error = login_error
-        self._resume_error = resume_error
+        # The n-th resume_login raises the n-th error; calls past the list accept the code.
+        self._resume_errors = list(resume_errors)
+        # Garmin.resume_login loads the profile after the code is accepted, so it can fail after
+        # the tokens are in place.
+        self._accepts_code_before_error = accepts_code_before_error
         self._bundle = bundle
         self.calls: list[str] = []
         self.credentials: list[tuple[str, str]] = []
@@ -216,8 +235,10 @@ class FakeLogin:
     def resume_login(self, client_state: dict[str, Any], mfa_code: str) -> tuple[Any, Any]:
         self.calls.append("resume_login")
         self.codes.append(mfa_code)
-        if self._resume_error is not None:
-            raise self._resume_error
+        if self._accepts_code_before_error:
+            self._tokens.bundle = self._bundle
+        if self._resume_errors:
+            raise self._resume_errors.pop(0)
         self._tokens.bundle = self._bundle
         return None, None
 
@@ -314,21 +335,118 @@ def test_asks_for_the_2fa_code_and_resumes_when_garmin_needs_mfa(fake_app: FakeA
     assert fake_app.request_to(CONNECTION).body == {"tokenBundle": BUNDLE}
 
 
-def test_a_rejected_2fa_code_exits_1_and_uploads_nothing(
+def code_refused() -> GarminConnectAuthenticationError:
+    # What the library raises when every MFA verify endpoint refuses the code.
+    return auth_failure("MFA verification failed: ['verifyCode: INVALID_MFA_CODE']")
+
+
+def test_a_rejected_2fa_code_asks_again_and_the_next_code_uploads_with_one_garmin_login(
     fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # What the library raises when every MFA verify endpoint refuses the code.
-    garmin = FakeLogin(
-        needs_mfa=True,
-        resume_error=auth_failure("MFA verification failed: ['verifyCode: INVALID_MFA_CODE']"),
+    garmin = FakeLogin(needs_mfa=True, resume_errors=[code_refused()])
+    console = Console(
+        [APP_EMAIL, GARMIN_EMAIL, WRONG_CODE, MFA_CODE], [APP_PASSWORD, GARMIN_PASSWORD]
     )
 
-    assert connect(fake_app.origin, garmin) == 1
+    assert connect(fake_app.origin, garmin, console=console) == 0
+
+    assert garmin.calls == ["login", "resume_login", "resume_login"]
+    assert garmin.codes == [WRONG_CODE, MFA_CODE]
+    assert console.typed_prompts.count(MFA_PROMPT) == 2
+    assert fake_app.request_to(CONNECTION).body == {"tokenBundle": BUNDLE}
+    captured = capsys.readouterr()
+    assert CODE_REJECTED in captured.out
+    assert captured.err == ""
+    for secret in SECRETS:
+        assert secret not in captured.out
+
+
+def test_three_rejected_2fa_codes_exit_1_and_upload_nothing(
+    fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
+) -> None:
+    garmin = FakeLogin(
+        needs_mfa=True, resume_errors=[code_refused(), code_refused(), code_refused()]
+    )
+    console = Console(
+        [APP_EMAIL, GARMIN_EMAIL, WRONG_CODE, WRONG_CODE, WRONG_CODE, MFA_CODE],
+        [APP_PASSWORD, GARMIN_PASSWORD],
+    )
+
+    assert connect(fake_app.origin, garmin, console=console) == 1
+
+    assert garmin.calls == ["login", "resume_login", "resume_login", "resume_login"]
+    assert console.typed_prompts.count(MFA_PROMPT) == 3
+    assert fake_app.paths() == [SIGN_IN, SIGN_OUT]
+    captured = capsys.readouterr()
+    assert captured.out.count(CODE_REJECTED) == 2
+    assert captured.err.strip() == GARMIN_REJECTED
+
+
+def test_an_empty_2fa_code_asks_again_without_calling_garmin(fake_app: FakeApp) -> None:
+    garmin = FakeLogin(needs_mfa=True)
+    console = Console(
+        [APP_EMAIL, GARMIN_EMAIL, "", "   ", MFA_CODE], [APP_PASSWORD, GARMIN_PASSWORD]
+    )
+
+    assert connect(fake_app.origin, garmin, console=console) == 0
+
+    assert garmin.calls == ["login", "resume_login"]
+    assert garmin.codes == [MFA_CODE]
+    assert console.typed_prompts.count(MFA_PROMPT) == 3
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        pytest.param(
+            GarminConnectTooManyRequestsError("MFA verification rate limited on all endpoints"),
+            GARMIN_LIMITED,
+            id="garmin 429 on the code",
+        ),
+        pytest.param(
+            # resume_login lets requests' errors through unwrapped; they derive from OSError.
+            ConnectionError("connection reset by peer"),
+            GARMIN_DOWN,
+            id="network error while verifying the code",
+        ),
+    ],
+)
+def test_a_429_or_network_error_on_the_2fa_code_exits_1_without_asking_again(
+    fake_app: FakeApp, capsys: pytest.CaptureFixture[str], error: BaseException, message: str
+) -> None:
+    garmin = FakeLogin(needs_mfa=True, resume_errors=[error])
+    console = Console(
+        [APP_EMAIL, GARMIN_EMAIL, MFA_CODE, MFA_CODE], [APP_PASSWORD, GARMIN_PASSWORD]
+    )
+
+    assert connect(fake_app.origin, garmin, console=console) == 1
+
+    assert garmin.calls == ["login", "resume_login"]
+    assert console.typed_prompts.count(MFA_PROMPT) == 1
+    assert CONNECTION not in fake_app.paths()
+    captured = capsys.readouterr()
+    assert CODE_REJECTED not in captured.out
+    assert captured.err.strip() == message
+
+
+def test_a_failure_after_garmin_accepted_the_code_does_not_ask_for_another(
+    fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The profile load after a good code clears the MFA session, so another code cannot work.
+    garmin = FakeLogin(
+        needs_mfa=True,
+        resume_errors=[auth_failure("Invalid user settings found")],
+        accepts_code_before_error=True,
+    )
+    console = Console(
+        [APP_EMAIL, GARMIN_EMAIL, MFA_CODE, MFA_CODE], [APP_PASSWORD, GARMIN_PASSWORD]
+    )
+
+    assert connect(fake_app.origin, garmin, console=console) == 1
 
     assert garmin.calls == ["login", "resume_login"]
     assert CONNECTION not in fake_app.paths()
-    assert fake_app.paths() == [SIGN_IN, SIGN_OUT]
-    assert GARMIN_REJECTED in capsys.readouterr().err
+    assert CODE_REJECTED not in capsys.readouterr().out
 
 
 def test_garmin_429_at_login_exits_1_without_retrying_and_uploads_nothing(
@@ -343,11 +461,6 @@ def test_garmin_429_at_login_exits_1_without_retrying_and_uploads_nothing(
     assert garmin.calls == ["login"]
     assert CONNECTION not in fake_app.paths()
     assert GARMIN_LIMITED in capsys.readouterr().err
-
-
-def network_error_during_mfa() -> BaseException:
-    # resume_login lets requests' errors through unwrapped; requests' ConnectionError is an OSError.
-    return ConnectionError("connection reset by peer")
 
 
 def login_failed(message: str, cause: BaseException) -> BaseException:
@@ -379,21 +492,6 @@ def login_failed(message: str, cause: BaseException) -> BaseException:
             GARMIN_DOWN,
             id="garmin 503",
         ),
-        pytest.param(
-            FakeLogin(needs_mfa=True, resume_error=network_error_during_mfa()),
-            GARMIN_DOWN,
-            id="network error while verifying the code",
-        ),
-        pytest.param(
-            FakeLogin(
-                needs_mfa=True,
-                resume_error=GarminConnectTooManyRequestsError(
-                    "MFA verification rate limited on all endpoints"
-                ),
-            ),
-            GARMIN_LIMITED,
-            id="garmin 429 on the code",
-        ),
     ],
 )
 def test_a_failed_garmin_login_exits_1_with_one_sentence_and_uploads_nothing(
@@ -418,12 +516,11 @@ def test_a_login_without_reusable_di_tokens_uploads_nothing(
     assert NO_REUSABLE_LOGIN in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("status", [401, 403])
 def test_a_wrong_app_password_exits_1_before_any_garmin_login(
-    fake_app: FakeApp, capsys: pytest.CaptureFixture[str], status: int
+    fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fake_app.answers[SIGN_IN] = (
-        status,
+        401,
         {"code": "INVALID_EMAIL_OR_PASSWORD", "message": "Invalid email or password"},
     )
     garmin = FakeLogin()
@@ -435,6 +532,22 @@ def test_a_wrong_app_password_exits_1_before_any_garmin_login(
     assert console.typed_prompts == ["App email: "]
     assert fake_app.paths() == [SIGN_IN]
     assert capsys.readouterr().err.strip() == APP_REJECTED
+
+
+def test_a_sign_in_refused_for_invalid_origin_names_the_address_not_the_password(
+    fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Better Auth's answer when the Origin (from the typed address) is not the app's APP_URL.
+    fake_app.answers[SIGN_IN] = (403, {"message": "Invalid origin"})
+    garmin = FakeLogin()
+
+    assert connect(fake_app.origin, garmin) == 1
+
+    assert garmin.credentials == []
+    assert fake_app.paths() == [SIGN_IN]
+    err = capsys.readouterr().err.strip()
+    assert err == APP_ORIGIN_REFUSED.format(app=fake_app.origin)
+    assert err != APP_REJECTED
 
 
 @pytest.mark.parametrize(
@@ -574,6 +687,44 @@ def test_an_unreachable_app_gives_the_waking_hint_and_never_logs_in_to_garmin(
 
     assert garmin.credentials == []
     assert capsys.readouterr().err.strip() == WAKING.format(app=origin)
+
+
+def test_the_app_client_verifies_tls_against_loaded_ca_certificates() -> None:
+    client = AppClient("https://coach.onrender.com")
+
+    # typeshed declares neither attribute; both are plain instance attributes in CPython.
+    handlers = vars(client._opener)["handlers"]
+    https = [h for h in handlers if isinstance(h, urllib.request.HTTPSHandler)]
+
+    assert len(https) == 1
+    context = vars(https[0])["_context"]
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    # python.org's macOS Python has none in its default context, so every https call failed.
+    assert context.cert_store_stats()["x509_ca"] > 0
+
+
+def test_an_unverified_tls_certificate_says_so_without_the_waking_hint_or_a_garmin_login(
+    fake_app: FakeApp, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def unverified(*args: Any, **kwargs: Any) -> ssl.SSLSocket:
+        raise ssl.SSLCertVerificationError(
+            1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
+        )
+
+    # The TCP connection reaches the fake app; the handshake fails the way a missing CA store does.
+    monkeypatch.setattr(ssl.SSLContext, "wrap_socket", unverified)
+    origin = fake_app.origin.replace("http://", "https://")
+    garmin = FakeLogin()
+
+    assert connect(origin, garmin) == 1
+
+    assert garmin.credentials == []
+    assert fake_app.paths() == []
+    err = capsys.readouterr().err.strip()
+    assert err == TLS_UNVERIFIED.format(app=origin)
+    assert err != WAKING.format(app=origin)
 
 
 def test_an_app_that_does_not_answer_in_time_gives_the_waking_hint(

@@ -6,7 +6,8 @@ one Garmin call and stores it encrypted. The bundle, both passwords and the code
 process's memory only: never printed, logged or written to a file.
 
 The app sign-in comes first: a wrong app password must not spend a Garmin login, which Garmin
-rate-limits for about an hour. Nothing here retries; the runner reruns the command.
+rate-limits for about an hour. Nothing here retries a request; only a rejected 2FA code is asked
+again, on the same login. Otherwise the runner reruns the command.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import http.client
 import json
 import logging
 import os
+import ssl
 import sys
 import traceback
 import urllib.error
@@ -28,6 +30,7 @@ from http.cookiejar import CookieJar
 from typing import IO, Any, Protocol
 from urllib.parse import urlsplit
 
+import certifi
 from garminconnect import Garmin
 
 from garmin_service.errors import from_garmin_exception
@@ -43,9 +46,16 @@ _WAKING_STATUSES = frozenset({502, 503, 504})
 
 BAD_APP_URL = "Give the app's address, like https://<name>.onrender.com (http only for localhost)."
 WAKING = "Could not reach {app}. A sleeping free server takes up to a minute to wake; try again."
+TLS_UNVERIFIED = "Could not verify {app}'s TLS certificate. Check the address."
 APP_REJECTED = "The app rejected that email or password."
+APP_ORIGIN_REFUSED = (
+    "The app refused requests from {app}. Use the exact address the app opens at in your browser."
+)
 APP_LIMITED = "The app is limiting sign-ins. Wait a minute, then run pnpm garmin:connect again."
 GARMIN_REJECTED = "Garmin rejected the email, password or code. Run pnpm garmin:connect again."
+MFA_PROMPT = "Garmin 2FA code (from the email or the Garmin app): "
+MFA_ATTEMPTS = 3
+CODE_REJECTED = "Garmin did not accept that code. Try again."
 GARMIN_LIMITED = "Garmin is limiting logins. Wait an hour, then run pnpm garmin:connect again."
 GARMIN_DOWN = "Garmin is not responding. Try again later."
 NO_REUSABLE_LOGIN = (
@@ -117,6 +127,10 @@ class AppUnreachableError(Exception):
     """No HTTP answer at all: refused, reset, DNS failure or timeout."""
 
 
+class AppCertificateError(AppUnreachableError):
+    """The TLS handshake failed: the certificate did not verify, or the address is not TLS."""
+
+
 class _NoRedirects(urllib.request.HTTPRedirectHandler):
     # Following one would replay the password to another URL; a 3xx is an answer like any other.
     def redirect_request(
@@ -145,8 +159,13 @@ class AppClient:
     def __init__(self, origin: str, *, timeout_s: float = APP_TIMEOUT_S) -> None:
         self.origin = origin
         self._timeout_s = timeout_s
+        # certifi's CA certificates, not the system's: python.org's macOS Python has an OpenSSL with
+        # none until its "Install Certificates" script runs, so every https call would fail.
+        tls = ssl.create_default_context(cafile=certifi.where())
         self._opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(CookieJar()), _NoRedirects()
+            urllib.request.HTTPSHandler(context=tls),
+            urllib.request.HTTPCookieProcessor(CookieJar()),
+            _NoRedirects(),
         )
 
     def sign_in(self, email: str, password: str) -> AppAnswer:
@@ -186,6 +205,11 @@ class AppClient:
             finally:
                 error.close()
             return AppAnswer(error.code, _json_object(raw))
+        except urllib.error.URLError as error:
+            # urllib wraps a failed handshake; a sleeping server is never the reason for one.
+            if isinstance(error.reason, ssl.SSLError):
+                raise AppCertificateError(type(error.reason).__name__) from error
+            raise AppUnreachableError(type(error).__name__) from error
         except (OSError, http.client.HTTPException) as error:
             raise AppUnreachableError(type(error).__name__) from error
 
@@ -238,10 +262,39 @@ def _garmin_failure(exc: Exception) -> StepError | None:
     return StepError(GARMIN_DOWN)
 
 
+def _code_rejected(garmin: PasswordLogin, exc: Exception) -> bool:
+    """Garmin refused the code itself, so the pending MFA session can take another one."""
+    error = from_garmin_exception(exc)
+    if error is None or error.code is not ErrorCode.GARMIN_AUTH_EXPIRED:
+        return False
+    # Garmin.resume_login loads the profile after the code is accepted and the MFA session is
+    # cleared; an auth error there comes with the tokens in place, and another code cannot work.
+    return not _has_tokens(garmin.client.dumps())
+
+
+def _verify_code(garmin: PasswordLogin, ask: Callable[[str], str]) -> None:
+    """Up to MFA_ATTEMPTS codes on the one login: a typo must not cost a fresh password login.
+
+    A 429 or an outage ends the run at once. An empty code is asked again without calling Garmin.
+    """
+    for attempt in range(1, MFA_ATTEMPTS + 1):
+        code = ""
+        while not code:
+            code = ask(MFA_PROMPT).strip()
+        try:
+            garmin.resume_login({}, code)
+        except Exception as exc:
+            if attempt == MFA_ATTEMPTS or not _code_rejected(garmin, exc):
+                raise
+            print(CODE_REJECTED)
+        else:
+            return
+
+
 def garmin_bundle(
     ask: Callable[[str], str], secret: Callable[[str], str], make_garmin: GarminFactory
 ) -> str:
-    """One password login, with the 2FA code when Garmin asks for it. Never retried."""
+    """One password login, with up to three 2FA codes when Garmin asks for one. Never retried."""
     email = ask("Garmin email: ").strip()
     password = secret("Garmin password: ")
     print("Logging in to Garmin...")
@@ -249,8 +302,7 @@ def garmin_bundle(
         garmin = make_garmin(email, password)
         status, _ = garmin.login()
         if status == "needs_mfa":
-            code = ask("Garmin 2FA code (from the email or the Garmin app): ").strip()
-            garmin.resume_login({}, code)
+            _verify_code(garmin, ask)
         bundle = garmin.client.dumps()
     except Exception as exc:
         failure = _garmin_failure(exc)
@@ -269,12 +321,18 @@ def _sign_in(app: AppClient, ask: Callable[[str], str], secret: Callable[[str], 
     print(f"Signing in to {app.origin}...")
     try:
         answer = app.sign_in(email, password)
+    except AppCertificateError as exc:
+        raise StepError(TLS_UNVERIFIED.format(app=app.origin)) from exc
     except AppUnreachableError as exc:
         raise StepError(WAKING.format(app=app.origin)) from exc
     if answer.status == 200:
         return
-    if answer.status in (401, 403):
+    if answer.status == 401:
         raise StepError(APP_REJECTED)
+    if answer.status == 403:
+        # Better Auth answers a wrong password with 401; a 403 here is INVALID_ORIGIN: the typed
+        # address, sent as Origin, is not the app's APP_URL (127.0.0.1 for localhost, another port).
+        raise StepError(APP_ORIGIN_REFUSED.format(app=app.origin))
     if answer.status == 429:
         raise StepError(APP_LIMITED)
     if answer.status in _WAKING_STATUSES:
