@@ -27,6 +27,8 @@ TRAIL = 9_000_000_036
 VIRTUAL = 9_000_000_023
 SUNDAY_LATE_IN_NEW_YORK = 9_000_000_013
 DST_CHANGE_DAY = 9_000_000_026
+# sync.json's 10.2 km run, tagged as a race in Garmin Connect.
+RACE = 10_000_000_002
 
 
 def history_body(**overrides: Any) -> dict[str, Any]:
@@ -149,6 +151,16 @@ def test_keeps_trail_running_outdoor_and_virtual_run_indoor(make_client: AppFact
     assert (activities[TRAIL]["type"], activities[TRAIL]["isIndoor"]) == ("trail_running", False)
     assert activities[TRAIL]["elevationGainM"] == 420.0
     assert (activities[VIRTUAL]["type"], activities[VIRTUAL]["isIndoor"]) == ("virtual_run", True)
+
+
+def test_carries_the_race_event_type_and_uncategorized_for_every_other_run(
+    make_client: AppFactory,
+) -> None:
+    activities = by_id(whole_account(make_client)["activities"])
+
+    races = [a for a, run in activities.items() if run["eventType"] == "race"]
+    assert races == [RACE]
+    assert {run["eventType"] for a, run in activities.items() if a != RACE} == {"uncategorized"}
 
 
 def test_keeps_the_local_sunday_of_a_run_late_on_sunday_whose_utc_start_is_monday(

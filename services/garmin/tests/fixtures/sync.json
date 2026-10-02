@@ -248,8 +248,8 @@
       "trimmable": true
     },
     "eventType": {
-      "typeId": 9,
-      "typeKey": "uncategorized",
+      "typeId": 1,
+      "typeKey": "race",
       "sortOrder": 10
     },
     "distance": 10200.0,

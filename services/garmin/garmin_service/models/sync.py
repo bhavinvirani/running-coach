@@ -41,6 +41,8 @@ class ActivitySummary(ResponseModel):
     elevation_gain_m: float | None
     is_indoor: bool
     is_manual: bool
+    # Garmin's eventType.typeKey as the runner set it (race, training, uncategorized, ...).
+    event_type: str | None = Field(min_length=1)
 
 
 class SyncResponse(ResponseModel):
