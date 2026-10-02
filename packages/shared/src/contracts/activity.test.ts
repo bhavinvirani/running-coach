@@ -139,7 +139,29 @@ describe("activityDetailSchema", () => {
 
 describe("activityResponseSchema", () => {
   it("accepts a run before and after its detail is fetched", () => {
-    expect(activityResponseSchema.safeParse({ activity: run, detail: null }).success).toBe(true);
-    expect(activityResponseSchema.safeParse({ activity: run, detail }).success).toBe(true);
+    const response = { activity: run, bestEfforts: [] };
+    expect(activityResponseSchema.safeParse({ ...response, detail: null }).success).toBe(true);
+    expect(activityResponseSchema.safeParse({ ...response, detail }).success).toBe(true);
+  });
+
+  it("carries the run's best efforts and marks its personal bests", () => {
+    const parsed = activityResponseSchema.safeParse({
+      activity: run,
+      detail: null,
+      bestEfforts: [
+        { distanceKey: "5k", timeS: 1625.87, personalBest: true },
+        { distanceKey: "10k", timeS: 3290.5, personalBest: false },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects an effort without its personal-best flag", () => {
+    const parsed = activityResponseSchema.safeParse({
+      activity: run,
+      detail: null,
+      bestEfforts: [{ distanceKey: "5k", timeS: 1625.87 }],
+    });
+    expect(parsed.success).toBe(false);
   });
 });

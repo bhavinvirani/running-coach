@@ -20,6 +20,20 @@ export const personalBestSchema = z
   .strict();
 export type PersonalBest = z.infer<typeof personalBestSchema>;
 
+/**
+ * One of a run's own best efforts (its fastest stretch at a distance it covered), and whether it is the
+ * runner's current personal best there, by the same rule as GET /api/personal-bests.
+ */
+export const runBestEffortSchema = z
+  .object({
+    distanceKey: distanceKeySchema,
+    /** Timer seconds for the distance, unrounded; the web app formats them and derives the pace. */
+    timeS: z.number().positive(),
+    personalBest: z.boolean(),
+  })
+  .strict();
+export type RunBestEffort = z.infer<typeof runBestEffortSchema>;
+
 /** One of Garmin's own running records, shown beside the app's for comparison. */
 export const garminRecordSchema = z
   .object({

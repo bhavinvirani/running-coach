@@ -362,11 +362,49 @@
           "type": "null"
         }
       ]
+    },
+    "bestEfforts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "distanceKey": {
+            "type": "string",
+            "enum": [
+              "1k",
+              "1mi",
+              "2mi",
+              "5k",
+              "5mi",
+              "10k",
+              "15k",
+              "10mi",
+              "20k",
+              "half",
+              "marathon"
+            ]
+          },
+          "timeS": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "personalBest": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "distanceKey",
+          "timeS",
+          "personalBest"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
     "activity",
-    "detail"
+    "detail",
+    "bestEfforts"
   ],
   "additionalProperties": false
 }

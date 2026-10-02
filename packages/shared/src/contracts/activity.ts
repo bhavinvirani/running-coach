@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { runBestEffortSchema } from "./personal-bests";
 
 /** One stored run as the web app reads it. Pace is derived by the client from distanceM and durationS. */
 export const activitySchema = z
@@ -116,6 +117,12 @@ export const activityResponseSchema = z
   .object({
     activity: activitySchema,
     detail: activityDetailSchema.nullable(),
+    /**
+     * The run's best efforts, shortest distance first. Empty until the best-efforts job has computed the
+     * run, and always for a treadmill, indoor, manual or sub-1 km run, or one edited since its efforts
+     * were computed (the same runs GET /api/personal-bests leaves out).
+     */
+    bestEfforts: z.array(runBestEffortSchema),
   })
   .strict();
 export type ActivityResponse = z.infer<typeof activityResponseSchema>;
