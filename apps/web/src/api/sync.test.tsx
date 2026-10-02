@@ -9,6 +9,7 @@ import { testQueryClient } from "@/test/render";
 import { meQueryOptions } from "./me";
 import { actionKey } from "./query-keys";
 import { useForgetSyncOutcomeOnReconnect, useLatestSync, useSyncNow } from "./sync";
+import { settle } from "@/test/lifecycle";
 
 /** Two screens' Sync now (say Today before and after a remount) and what any screen reads of the sync. */
 function renderSyncHooks() {
@@ -130,11 +131,6 @@ function renderShellHooks({ me, sync }: ShellApi = {}) {
     syncs: () => calls.filter((call) => call.path === "/api/sync"),
     answer: (index: number, response: Response) => held[index]?.(response),
   };
-}
-
-/** Lets notifications and effects that wait a tick run before asserting that nothing changed. */
-async function settle(): Promise<void> {
-  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 }
 
 describe("useForgetSyncOutcomeOnReconnect", () => {

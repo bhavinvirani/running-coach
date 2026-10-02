@@ -9,6 +9,7 @@ import { testQueryClient } from "@/test/render";
 import { meQueryOptions } from "./me";
 import { useLatestSync, useSyncNow } from "./sync";
 import { SYNC_ON_OPEN_INTERVAL_MS, useSyncOnOpen } from "./sync-on-open";
+import { backgroundAndReturn, settle } from "@/test/lifecycle";
 
 const MINUTE = 60_000;
 
@@ -79,24 +80,6 @@ function openApp({ me, queryClient = testQueryClient(), strict = false }: OpenAp
     { wrapper },
   );
   return { ...view, queryClient };
-}
-
-/** Lets the hook's decision, which waits on promises only, finish before asserting that nothing was sent. */
-async function settle(): Promise<void> {
-  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
-}
-
-/** The installed app goes to the background and comes back to the foreground. */
-function backgroundAndReturn(): void {
-  const visibility = vi.spyOn(document, "visibilityState", "get");
-  visibility.mockReturnValue("hidden");
-  act(() => {
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  visibility.mockReturnValue("visible");
-  act(() => {
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
 }
 
 describe("useSyncOnOpen", () => {

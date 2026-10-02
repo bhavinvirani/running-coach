@@ -168,7 +168,9 @@ export async function connectGarmin(
       }
     } else {
       await db.query(
-        `insert into garmin_connection (user_id, token_bundle_enc, status) values (${runnerId}, $2, 'ok')`,
+        `insert into garmin_connection (user_id, token_bundle_enc, status) values (${runnerId}, $2, 'ok')
+         on conflict (user_id) do update
+         set token_bundle_enc = excluded.token_bundle_enc, status = 'ok', last_error = null`,
         [runner.email, storedFixtureLogin],
       );
     }

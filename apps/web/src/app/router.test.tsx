@@ -1,6 +1,6 @@
 import { ErrorCode, type MeResponse } from "@running-coach/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -17,6 +17,7 @@ import {
 } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
+import { backgroundAndReturn } from "@/test/lifecycle";
 
 function renderApp(path: string) {
   const queryClient = testQueryClient();
@@ -50,19 +51,6 @@ function signedIn({ path }: FakeRequest): Response {
     );
   }
   return notFound();
-}
-
-/** The installed app goes to the background and comes back to the foreground. */
-function backgroundAndReturn(): void {
-  const visibility = vi.spyOn(document, "visibilityState", "get");
-  visibility.mockReturnValue("hidden");
-  act(() => {
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  visibility.mockReturnValue("visible");
-  act(() => {
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
 }
 
 /** Boot retries back off with jitter; at zero they run at once, so a test never sleeps. */
