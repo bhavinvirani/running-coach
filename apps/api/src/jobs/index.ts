@@ -56,8 +56,8 @@ export async function stopJobs(): Promise<void> {
 }
 
 /**
- * Queues the daily cron's sync of a user for their local date, once per user and date (sync-garmin-queue.ts).
- * App open and Sync now do not queue: POST /api/sync syncs in the request.
+ * Queues the daily cron's sync of a user for the fire's UTC date, once per user and date
+ * (sync-garmin-queue.ts). App open and Sync now do not queue: POST /api/sync syncs in the request.
  */
 export { enqueueSyncGarmin } from "./sync-garmin-queue";
 

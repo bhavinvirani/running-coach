@@ -16,14 +16,14 @@ export type SyncResponse = z.infer<typeof syncResponseSchema>;
 
 /**
  * POST /api/cron/sync: the daily GitHub Actions cron, behind the CRON_SECRET bearer token. Queues one
- * background sync per user whose Garmin login works, keyed on that user's local date, so a second fire on
- * the same date queues nothing. An expired or missing login is left out: only the runner can reconnect it.
+ * background sync per user whose Garmin login works, keyed on the fire's UTC date, so a second fire on the
+ * same UTC day queues nothing. An expired or missing login is left out: only the runner can reconnect it.
  */
 export const cronSyncResponseSchema = z
   .object({
     /** Users whose Garmin login works (status ok). */
     connected: z.number().int().nonnegative(),
-    /** Syncs this call queued; 0 when each of those users already has today's. */
+    /** Syncs this call queued; 0 when each of those users already has this UTC day's. */
     queued: z.number().int().nonnegative(),
   })
   .strict();

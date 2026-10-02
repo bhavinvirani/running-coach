@@ -46,6 +46,14 @@ async function syncJobs(userId: string) {
   return getBoss().findJobs<object>(syncQueue.name, { key: userId });
 }
 
+/** The UTC calendar date of an instant, which keys the cron's jobs. */
+const utcDate = (instant: Date) => instant.toISOString().slice(0, 10);
+
+/** Completes a queued sync as the worker would, so a later send cannot fold into a waiting job. */
+async function runQueued(jobId: string) {
+  await getBoss().complete(syncQueue.name, jobId, null, { includeQueued: true });
+}
+
 function fire(authorization?: string) {
   const call = request(app).post(PATH);
   return authorization === undefined ? call : call.set("authorization", authorization);
@@ -85,7 +93,7 @@ describe("POST /api/cron/sync", () => {
     expectProblem(await agent.post(PATH), 401, ErrorCode.unauthorized);
   });
 
-  it("queues one sync per user with a working login, keyed on the user's local date, and answers { connected, queued }", async () => {
+  it("queues one sync per user with a working login, keyed on the fire's UTC date, and answers { connected, queued }", async () => {
     const berlin = await runner("ok", "Europe/Berlin");
     const honolulu = await runner("ok", "Pacific/Honolulu");
     const sent = fixturesSentTo("/sync");
@@ -97,14 +105,11 @@ describe("POST /api/cron/sync", () => {
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(cronSyncResponseSchema.parse(response.body)).toEqual({ connected: 2, queued: 2 });
-    for (const [userId, timezone] of [
-      [berlin, "Europe/Berlin"],
-      [honolulu, "Pacific/Honolulu"],
-    ] as const) {
+    for (const userId of [berlin, honolulu]) {
       const [job, ...others] = await syncJobs(userId);
       expect(others).toEqual([]);
-      // The date at the fire time; either side of a local midnight passing mid-request.
-      const dates = [localDateOf(before, timezone), localDateOf(after, timezone)];
+      // The UTC date at the fire time; either side of a UTC midnight passing mid-request.
+      const dates = [utcDate(before), utcDate(after)];
       expect(dates).toContain((job?.data as { date?: string }).date);
       expect(job?.id).toBe(syncQueue.jobId({ userId, date: (job?.data as { date: string }).date }));
       expect(job?.state).toBe("created");
@@ -165,20 +170,21 @@ describe("POST /api/cron/sync", () => {
 });
 
 describe("queueDailySyncs", () => {
-  it("keys each user's sync on their own local date at the fire time (time zones)", async () => {
-    // 23:30 UTC on 2026-10-01: already 2026-10-02 at UTC+14, still 2026-10-01 at UTC-10, and 01:30 on
-    // 2026-10-02 in Berlin's summer time.
-    const now = new Date("2026-10-01T23:30:00Z");
-    const expected = [
-      [await runner("ok", "Pacific/Kiritimati"), "2026-10-02"],
-      [await runner("ok", "Pacific/Honolulu"), "2026-10-01"],
-      [await runner("ok", "Europe/Berlin"), "2026-10-02"],
-    ] as const;
+  it("keys every user's sync on the fire's UTC date, whatever their local date (time zones)", async () => {
+    // The daily fire, 03:30 UTC on 2026-10-02: 17:30 that day at UTC+14, still 2026-10-01 at UTC-10 (17:30)
+    // and in New York's summer time (23:30).
+    const now = new Date("2026-10-02T03:30:00Z");
+    const users = [
+      await runner("ok", "Pacific/Kiritimati"),
+      await runner("ok", "Pacific/Honolulu"),
+      await runner("ok", "America/New_York"),
+    ];
 
     const result = await queueDailySyncs({ now });
 
     expect(result).toEqual({ connected: 3, queued: 3 });
-    for (const [userId, date] of expected) {
+    const date = "2026-10-02";
+    for (const userId of users) {
       const jobs = await syncJobs(userId);
       expect(jobs.map((job) => ({ id: job.id, data: job.data }))).toEqual([
         { id: syncQueue.jobId({ userId, date }), data: { userId, date } },
@@ -186,17 +192,59 @@ describe("queueDailySyncs", () => {
     }
   });
 
-  it("queues nothing new on a second fire at the same local date, and counts only what it queued (double fire)", async () => {
-    const userId = await runner("ok", "Pacific/Honolulu");
+  it.each([
+    // A fire delayed to 00:05 EDT, then the next on time at 23:30 EDT the same local day.
+    [
+      "America/New_York in July, the first fire delayed",
+      "America/New_York",
+      "2026-07-01T04:05:00Z",
+      "2026-07-02T03:30:00Z",
+    ],
+    // 00:30 ADT before the fall-back, then 23:30 AST the same local day.
+    [
+      "America/Halifax at the fall-back (DST)",
+      "America/Halifax",
+      "2026-11-01T03:30:00Z",
+      "2026-11-02T03:30:00Z",
+    ],
+  ])(
+    "queues on both days when two daily fires share the user's local date: %s (lost day)",
+    async (_case, timezone, firstFire, secondFire) => {
+      const userId = await runner("ok", timezone);
+      const first = new Date(firstFire);
+      const second = new Date(secondFire);
+      // The scenario: both fires fall on one local date, so a local-date key would drop the second day.
+      expect(localDateOf(first, timezone)).toBe(localDateOf(second, timezone));
 
-    const first = await queueDailySyncs({ now: new Date("2026-10-01T18:00:00Z") });
-    // Six hours later: still 2026-10-01 in Honolulu.
-    const second = await queueDailySyncs({ now: new Date("2026-10-02T00:00:00Z") });
+      expect(await queueDailySyncs({ now: first })).toEqual({ connected: 1, queued: 1 });
+      const firstJob = syncQueue.jobId({ userId, date: utcDate(first) });
+      await runQueued(firstJob);
+      expect(await queueDailySyncs({ now: second })).toEqual({ connected: 1, queued: 1 });
 
-    expect(first).toEqual({ connected: 1, queued: 1 });
-    expect(second).toEqual({ connected: 1, queued: 0 });
-    expect((await syncJobs(userId)).map((job) => job.id)).toEqual([
-      syncQueue.jobId({ userId, date: "2026-10-01" }),
-    ]);
+      const ids = (await syncJobs(userId)).map((job) => job.id);
+      expect(ids.toSorted()).toEqual(
+        [firstJob, syncQueue.jobId({ userId, date: utcDate(second) })].toSorted(),
+      );
+    },
+  );
+
+  it("queues one job per user on two fires the same UTC day, 03:30Z and a delayed 04:05Z, even after the first has run (double fire)", async () => {
+    // 23:30 and 00:05 in New York: a local-date key would queue that user twice.
+    const users = [
+      await runner("ok", "America/New_York"),
+      await runner("ok", "Pacific/Kiritimati"),
+    ];
+
+    const first = await queueDailySyncs({ now: new Date("2026-07-01T03:30:00Z") });
+    for (const userId of users) await runQueued(syncQueue.jobId({ userId, date: "2026-07-01" }));
+    const second = await queueDailySyncs({ now: new Date("2026-07-01T04:05:00Z") });
+
+    expect(first).toEqual({ connected: 2, queued: 2 });
+    expect(second).toEqual({ connected: 2, queued: 0 });
+    for (const userId of users) {
+      expect((await syncJobs(userId)).map((job) => job.id)).toEqual([
+        syncQueue.jobId({ userId, date: "2026-07-01" }),
+      ]);
+    }
   });
 });

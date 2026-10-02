@@ -9,13 +9,14 @@ import { deterministicJobId, getBoss } from "./boss";
 export const name = "sync-garmin";
 
 /**
- * The user and their local date when the cron fired. The date only keys the job id: the sync itself runs up
- * to the user's local date when it runs, so a job deferred by a 429 past midnight still reads today.
+ * The user and the UTC date the cron fired on (services/daily-sync.ts says why not the local date). The date
+ * only keys the job id: the sync itself runs up to the user's local date when it runs, so a job deferred by
+ * a 429 past midnight still reads today.
  */
 export const data = z.object({ userId: z.uuid(), date: z.iso.date() }).strict();
 export type SyncGarminData = z.infer<typeof data>;
 
-/** Keyed on user and date, so the cron firing twice in a day runs once. */
+/** Keyed on user and UTC date, so the cron firing twice in a UTC day runs once. */
 export function jobId(job: SyncGarminData): string {
   return deterministicJobId(`${name}:${job.userId}:${job.date}`);
 }
@@ -43,7 +44,7 @@ export function sendOptions(job: SyncGarminData): SendOptions {
 }
 
 /**
- * Queues the cron's sync of the user for their local date. Null when nothing new was queued: that date's
+ * Queues the cron's sync of the user for the fire's UTC date. Null when nothing new was queued: that date's
  * job exists already (queued, running or done), or another sync of the user waits and covers it.
  */
 export async function enqueueSyncGarmin(job: SyncGarminData): Promise<string | null> {
