@@ -1,6 +1,6 @@
-import { ErrorCode } from "@running-coach/shared";
+import { ErrorCode, type MeResponse } from "@running-coach/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -50,6 +50,19 @@ function signedIn({ path }: FakeRequest): Response {
     );
   }
   return notFound();
+}
+
+/** The installed app goes to the background and comes back to the foreground. */
+function backgroundAndReturn(): void {
+  const visibility = vi.spyOn(document, "visibilityState", "get");
+  visibility.mockReturnValue("hidden");
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  visibility.mockReturnValue("visible");
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
 }
 
 /** Boot retries back off with jitter; at zero they run at once, so a test never sleeps. */
@@ -197,4 +210,45 @@ describe("app routes", () => {
 
     expect(syncs()).toHaveLength(1);
   });
+
+  it.each([
+    { corner: "on Today", leaveToday: false },
+    { corner: "Today left for Settings and back", leaveToday: true },
+  ])(
+    "shows Sync now and no stale login error after a reconnect, once the open sync's rejection marked the login expired (expired login, reconnected, $corner)",
+    async ({ leaveToday }) => {
+      const anHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+      let garmin: MeResponse["garmin"] = { status: "ok", lastSyncAt: anHourAgo };
+      const calls = stubFetch((request) => {
+        if (request.path === "/api/me") return json(meFixture({ garmin }));
+        if (request.method === "POST" && request.path === "/api/sync") {
+          // The second rejection in a row: the API marks the login expired.
+          garmin = { status: "expired", lastSyncAt: anHourAgo };
+          return problem(409, ErrorCode.garminAuthExpired);
+        }
+        return signedIn(request);
+      });
+      renderApp("/");
+      const reconnect = await screen.findByRole("link", { name: "Reconnect Garmin" });
+      if (leaveToday) {
+        await userEvent.click(reconnect);
+        expect(await screen.findByText("Login expired")).toBeInTheDocument();
+      }
+
+      // Reconnected from the laptop; back in the foreground the app reads /api/me again.
+      garmin = { status: "ok", lastSyncAt: anHourAgo };
+      backgroundAndReturn();
+      if (leaveToday) {
+        expect(await screen.findByText("Connected")).toBeInTheDocument();
+        await userEvent.click(screen.getByRole("link", { name: "Today" }));
+      }
+
+      expect(await screen.findByRole("button", { name: "Sync now" })).toBeEnabled();
+      await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+      expect(screen.queryByText(errorMessages.garmin_auth_expired)).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Reconnect Garmin" })).not.toBeInTheDocument();
+      // The open sync's attempt is under 10 minutes old, so the foreground only reads /api/me.
+      expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(1);
+    },
+  );
 });

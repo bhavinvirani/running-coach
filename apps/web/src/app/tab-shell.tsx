@@ -1,6 +1,7 @@
 import { ChartNoAxesColumn, House, Settings2, type LucideIcon } from "lucide-react";
 import { NavLink, Outlet } from "react-router";
-import { useSyncOnOpen } from "@/api/sync";
+import { useForgetSyncOutcomeOnReconnect } from "@/api/sync";
+import { useSyncOnOpen } from "@/api/sync-on-open";
 import { cn } from "@/lib/cn";
 
 type Tab = { to: string; label: string; icon: LucideIcon };
@@ -12,9 +13,13 @@ const tabs: readonly Tab[] = [
   { to: "/settings", label: "Settings", icon: Settings2 },
 ];
 
-/** The authenticated layout: mounted once per app load and kept across tabs, so it owns the sync on open. */
+/**
+ * The authenticated layout: mounted once per app load and kept across tabs, so it owns the sync on open and
+ * forgets an earlier sync's login error after a reconnect, also one seen while Today was not on screen.
+ */
 export function TabShell() {
   useSyncOnOpen();
+  useForgetSyncOutcomeOnReconnect();
 
   return (
     <div className="flex min-h-dvh flex-col bg-surface-0 pt-safe">

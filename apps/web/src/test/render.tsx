@@ -17,24 +17,30 @@ type RenderScreenOptions = {
   route?: string;
   /** Addresses visited before `path`, so the screen can go back to them. Empty: opened from a link. */
   history?: string[];
+  /**
+   * A layout around every route, rendering an <Outlet />: what the tab shell runs for a screen, kept
+   * mounted while the test navigates away from the screen and back.
+   */
+  layout?: ReactElement;
 };
 
 /**
- * Renders one screen at `path` inside a memory router and a fresh QueryClient. Other paths render
- * their own name, so a test can assert where the screen navigated.
+ * Renders one screen at `path` inside a memory router and a fresh QueryClient, inside `layout` when given.
+ * Other paths render their own name, so a test can assert where the screen navigated.
  */
 export function renderScreen(
   screen: ReactElement,
-  { path = "/", route = path, history = [] }: RenderScreenOptions = {},
+  { path = "/", route = path, history = [], layout }: RenderScreenOptions = {},
 ) {
   const queryClient = testQueryClient();
-  const router = createMemoryRouter(
-    [
-      { path: route, element: screen },
-      { path: "*", element: <p>Route not under test</p> },
-    ],
-    { initialEntries: [...history, path], initialIndex: history.length },
-  );
+  const routes = [
+    { path: route, element: screen },
+    { path: "*", element: <p>Route not under test</p> },
+  ];
+  const router = createMemoryRouter(layout ? [{ element: layout, children: routes }] : routes, {
+    initialEntries: [...history, path],
+    initialIndex: history.length,
+  });
   render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />

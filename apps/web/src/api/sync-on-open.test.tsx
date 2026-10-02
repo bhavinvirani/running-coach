@@ -7,7 +7,8 @@ import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { meQueryOptions } from "./me";
-import { SYNC_ON_OPEN_INTERVAL_MS, useLatestSync, useSyncNow, useSyncOnOpen } from "./sync";
+import { useLatestSync, useSyncNow } from "./sync";
+import { SYNC_ON_OPEN_INTERVAL_MS, useSyncOnOpen } from "./sync-on-open";
 
 const MINUTE = 60_000;
 
@@ -227,6 +228,33 @@ describe("useSyncOnOpen", () => {
     backgroundAndReturn();
 
     await waitFor(() => expect(api.syncs()).toHaveLength(1));
+  });
+
+  it("reads /api/me on return to the foreground with an expired login and a recent attempt, and sends no sync within the 10 minutes (reconnected from the laptop)", async () => {
+    const api = fakeServer({
+      me: meWith({ status: "ok", lastSyncAt: minutesAgo(60) }),
+      sync: () => problem(409, ErrorCode.garminAuthExpired),
+    });
+    const { result, queryClient } = openApp({
+      me: meWith({ status: "ok", lastSyncAt: minutesAgo(60) }),
+    });
+    await waitFor(() => expect(result.current.latest.error).not.toBeNull());
+    // The API marked the login expired, and Today's /api/me observers read it once the sync settled.
+    api.server.me = meWith({ status: "expired", lastSyncAt: minutesAgo(60) });
+    await act(() => queryClient.fetchQuery({ ...meQueryOptions(), staleTime: 0 }));
+    const afterExpired = api.calls.length;
+
+    laterBy(5 * MINUTE);
+    api.server.me = meWith({ status: "ok", lastSyncAt: minutesAgo(65) });
+    backgroundAndReturn();
+    await waitFor(() => expect(api.calls.length).toBeGreaterThan(afterExpired));
+    await settle();
+
+    expect(api.calls.slice(afterExpired)).toEqual([
+      expect.objectContaining({ method: "GET", path: "/api/me" }),
+    ]);
+    expect(queryClient.getQueryData(meQueryOptions().queryKey)?.garmin.status).toBe("ok");
+    expect(api.syncs()).toHaveLength(1);
   });
 
   it("skips the foreground sync when /api/me fails (session expired)", async () => {

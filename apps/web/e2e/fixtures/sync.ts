@@ -1,6 +1,6 @@
 import { ErrorCode, meResponseSchema, type Problem } from "@running-coach/shared";
 import type { Page, Request } from "@playwright/test";
-import { attemptStorageKey } from "../../src/api/sync";
+import { attemptStorageKey } from "../../src/api/sync-on-open";
 
 /**
  * Opens the app without its app-open sync, for a test about Sync now or about another screen that needs
