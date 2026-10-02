@@ -1,5 +1,6 @@
 import { ChartNoAxesColumn, House, Settings2, type LucideIcon } from "lucide-react";
 import { NavLink, Outlet } from "react-router";
+import { useSyncOnOpen } from "@/api/sync";
 import { cn } from "@/lib/cn";
 
 type Tab = { to: string; label: string; icon: LucideIcon };
@@ -11,7 +12,10 @@ const tabs: readonly Tab[] = [
   { to: "/settings", label: "Settings", icon: Settings2 },
 ];
 
+/** The authenticated layout: mounted once per app load and kept across tabs, so it owns the sync on open. */
 export function TabShell() {
+  useSyncOnOpen();
+
   return (
     <div className="flex min-h-dvh flex-col bg-surface-0 pt-safe">
       <main className="mx-auto w-full max-w-lg flex-1">

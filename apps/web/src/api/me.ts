@@ -28,6 +28,13 @@ export function useSettings() {
   return useQuery({ ...meQueryOptions(), select: selectSettings });
 }
 
+const selectGarmin = (me: MeResponse): MeResponse["garmin"] => me.garmin;
+
+/** The Garmin connection's status and last sync. */
+export function useGarminConnection() {
+  return useQuery({ ...meQueryOptions(), select: selectGarmin });
+}
+
 export function useUpdateSettings() {
   const queryClient = useQueryClient();
   return useMutation({

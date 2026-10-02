@@ -36,8 +36,9 @@ function isWakingError(error: unknown): boolean {
 }
 
 /**
- * Retry options for the request the first screen waits on (GET /api/me in the authenticated loader): ride
- * out a wake for about 90 s, trying at least every 5 s so the app opens soon after the server is up; any
+ * Retry options for the request the first screen waits on (GET /api/me in the authenticated loader, and
+ * again when the app returns to the foreground and decides whether to sync, useSyncOnOpen): ride out a wake
+ * for about 90 s, trying at least every 5 s so the app opens soon after the server is up; any
  * other error keeps the usual policy. apiFetch sets no timeout, so a request the proxy holds while the server
  * starts is never cut short. Call it per load: the budget starts when it is called.
  */

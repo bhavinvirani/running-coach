@@ -4,7 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorMessages } from "@/lib/errors";
 import { json, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
 import {
@@ -29,9 +29,14 @@ function renderApp(path: string) {
   return router;
 }
 
-/** The API for a signed-in runner with one stored run and a finished import. */
+/**
+ * The API for a signed-in runner with one stored run and a finished import, who synced a moment ago, so
+ * opening the app sends no sync: that has its own test below.
+ */
 function signedIn({ path }: FakeRequest): Response {
-  if (path === "/api/me") return json(meFixture());
+  if (path === "/api/me") {
+    return json(meFixture({ garmin: { status: "ok", lastSyncAt: new Date().toISOString() } }));
+  }
   if (path === "/api/activities/latest") return json({ activity: activityFixture() });
   if (path === `/api/activities/${activityFixture().id}`) {
     return json(activityResponseFixture({ detail: activityDetailFixture() }));
@@ -53,6 +58,11 @@ function retryWithoutWaiting() {
 }
 
 describe("app routes", () => {
+  beforeEach(() => {
+    // The sync on open records this device's attempt there.
+    localStorage.clear();
+  });
+
   it("sends a visitor without a session to the login screen without retrying the 401", async () => {
     const calls = stubFetch(() => problem(401, ErrorCode.unauthorized));
     const router = renderApp("/settings");
@@ -160,5 +170,31 @@ describe("app routes", () => {
     expect(await screen.findByRole("heading", { name: "Today" })).toBeInTheDocument();
     expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(6);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("syncs once when the app opens on any tab, and not again on a tab change (sync on open)", async () => {
+    const calls = stubFetch((request) => {
+      if (request.path === "/api/me") {
+        const anHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+        return json(meFixture({ garmin: { status: "ok", lastSyncAt: anHourAgo } }));
+      }
+      if (request.method === "POST" && request.path === "/api/sync") {
+        return json({ lastSyncAt: new Date().toISOString(), activitiesWritten: 0 });
+      }
+      return signedIn(request);
+    });
+    const syncs = () => calls.filter((call) => call.path === "/api/sync");
+    renderApp("/settings");
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    await vi.waitFor(() => expect(syncs()).toHaveLength(1));
+    expect(syncs()[0]).toMatchObject({ method: "POST", body: undefined });
+
+    await userEvent.click(screen.getByRole("link", { name: "Today" }));
+    expect(await screen.findByText("No new runs on Garmin.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Progress" }));
+    expect(await screen.findByRole("heading", { name: "Progress" })).toBeInTheDocument();
+
+    expect(syncs()).toHaveLength(1);
   });
 });
