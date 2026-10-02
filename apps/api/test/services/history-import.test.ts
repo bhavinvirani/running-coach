@@ -212,6 +212,22 @@ describe("importHistoryPage", () => {
     expect(changed.map((row) => row.garminActivityId)).toEqual([9_000_000_029]);
   });
 
+  it("fills event_type on runs stored before it existed when the import runs again (backfill by Import history)", async () => {
+    const userId = await connectedUser();
+    await seedImport(userId);
+    await importPages(userId);
+    // Rows from before migration 0007 hold null; Garmin still lists every run with its event type.
+    await db.update(activity).set({ eventType: null }).where(eq(activity.userId, userId));
+
+    await seedImport(userId);
+    const pages = await importPages(userId);
+
+    expect(pages.reduce((sum, page) => sum + page.written, 0)).toBe(FIXTURE_ACCOUNT.runs);
+    expect((await run(userId, 10_000_000_002)).eventType).toBe(RACE_EVENT_TYPE);
+    const others = (await runs(userId)).filter((row) => row.garminActivityId !== 10_000_000_002);
+    expect(new Set(others.map((row) => row.eventType))).toEqual(new Set(["uncategorized"]));
+  });
+
   it("imports treadmill, manual, missing-HR and HR-0 runs with nulls and flags (indoor run, missing HR)", async () => {
     const userId = await connectedUser();
     await seedImport(userId);
