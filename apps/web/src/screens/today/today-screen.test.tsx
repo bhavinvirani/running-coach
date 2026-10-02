@@ -281,6 +281,7 @@ describe("TodayScreen", () => {
     expect(screen.getAllByRole("button", { name: "Sync now" })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
+
   it("shows the runs a sync stored before it failed next to its error (partial sync)", async () => {
     const calls = fakeTodayApi({
       synced: newerRun,
