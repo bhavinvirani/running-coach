@@ -14,7 +14,8 @@ import { getBoss } from "../../src/jobs/boss";
 import { connectGarmin, createRun, createUser, garminBundle, setSettings } from "../seed";
 
 // The best-efforts job on pg-boss with every worker running, against the Garmin service in fixture mode,
-// which serves its detail fixture for any run of the fixture account.
+// which serves its detail fixture for any run of the fixture account. The workers chain batches without
+// the production gap; tests that check the gap call `handle` directly.
 
 const NOW = new Date("2026-09-28T10:00:00Z");
 // Twelve outdoor runs of the fixture account's history, for two chained batches.
@@ -94,6 +95,18 @@ async function waitForChain(userId: string): Promise<JobWithMetadata[]> {
   throw new Error("the best-efforts chain did not finish");
 }
 
+async function waitForJobState(
+  id: string | null,
+  state: JobWithMetadata["state"],
+): Promise<JobWithMetadata> {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    const job = await findJob(id);
+    if (job?.state === state) return job;
+    await sleep(100);
+  }
+  throw new Error(`job ${id ?? "null"} did not reach ${state}`);
+}
+
 function secondsUntil(date: Date | undefined): number {
   return ((date?.getTime() ?? 0) - Date.now()) / 1000;
 }
@@ -112,7 +125,7 @@ function runningJob(userId: string): Job<unknown> {
 }
 
 beforeAll(async () => {
-  await startJobs({ pollingIntervalSeconds: 0.5, clock: () => NOW });
+  await startJobs({ pollingIntervalSeconds: 0.5, clock: () => NOW, bestEffortsGapSeconds: 0 });
 });
 
 afterAll(async () => {
@@ -136,10 +149,19 @@ describe("best-efforts job", () => {
     expect(jobs[0]?.output).toEqual({
       status: "ok",
       processed: 10,
+      failed: 0,
+      skipped: 0,
       remaining: 2,
       nextJobId: jobs[1]?.id,
     });
-    expect(jobs[1]?.output).toEqual({ status: "ok", processed: 2, remaining: 0, nextJobId: null });
+    expect(jobs[1]?.output).toEqual({
+      status: "ok",
+      processed: 2,
+      failed: 0,
+      skipped: 0,
+      remaining: 0,
+      nextJobId: null,
+    });
     const [stored] = await db
       .select({ records: garminConnection.garminRecords })
       .from(garminConnection)
@@ -156,11 +178,59 @@ describe("best-efforts job", () => {
 
     const job = await waitForJob(await enqueueBestEfforts({ userId }));
 
-    expect(job.output).toEqual({ status: "ok", processed: 0, remaining: 0, nextJobId: null });
+    expect(job.output).toEqual({
+      status: "ok",
+      processed: 0,
+      failed: 0,
+      skipped: 0,
+      remaining: 0,
+      nextJobId: null,
+    });
     expect(series).not.toHaveBeenCalled();
     expect(await db.select().from(bestEffort).where(eq(bestEffort.userId, userId))).toEqual(
       efforts,
     );
+  });
+
+  it("queues its successor BATCH_GAP_S after a batch while runs are pending (paced backfill)", async () => {
+    const userId = await connectedUser();
+    await createRuns(userId, HISTORY_RUNS);
+
+    const output = await bestEffortsJob.handle(getBoss(), runningJob(userId));
+
+    expect(output).toMatchObject({
+      status: "ok",
+      processed: 10,
+      failed: 0,
+      skipped: 0,
+      remaining: 2,
+    });
+    const next = await findJob((output as { nextJobId: string | null }).nextJobId);
+    expect(next?.state).toBe("created");
+    expect(secondsUntil(next?.startAfter)).toBeGreaterThan(bestEffortsJob.BATCH_GAP_S - 5);
+    expect(secondsUntil(next?.startAfter)).toBeLessThanOrEqual(bestEffortsJob.BATCH_GAP_S);
+    // A sync's send while the successor waits folds into it.
+    expect(await enqueueBestEfforts({ userId })).toBeNull();
+    expect(await queuedJobs(userId)).toEqual([next?.id]);
+  });
+
+  it("rethrows garmin_unavailable so pg-boss retries, leaving the runs pending (Garmin outage)", async () => {
+    const userId = await connectedUser(garminBundle("unavailable"));
+    await createRuns(userId, [LONG_RUN]);
+
+    await expect(bestEffortsJob.handle(getBoss(), runningJob(userId))).rejects.toMatchObject({
+      code: ErrorCode.garminUnavailable,
+    });
+    const retrying = await waitForJobState(await enqueueBestEfforts({ userId }), "retry");
+
+    // Backoff from a 5-minute delay: the retry starts 5 to 10 minutes after the failed attempt.
+    expect(secondsUntil(retrying.startAfter)).toBeGreaterThan(250);
+    expect(await pendingRuns(userId)).toBe(1);
+    const [run] = await db
+      .select({ attempts: activity.bestEffortsAttempts })
+      .from(activity)
+      .where(eq(activity.userId, userId));
+    expect(run?.attempts).toBe(0);
   });
 
   it("folds repeated sends into the one batch already queued for the user", async () => {

@@ -5,11 +5,10 @@ import {
   type ImportStatus,
 } from "@running-coach/shared";
 import { and, count, eq, inArray, sql } from "drizzle-orm";
-import type { JobWithMetadata } from "pg-boss";
 import { db } from "../db/client";
 import { activity, type ImportProgressRow, importProgress } from "../db/schema";
 import { garminClient } from "../garmin/client";
-import { getBoss } from "../jobs/boss";
+import { hasPendingJob } from "../jobs/boss";
 import * as importQueue from "../jobs/import-history-queue";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
@@ -30,19 +29,10 @@ export const HISTORY_PAGE_SIZE = 100;
  * upsert makes the re-read free.
  */
 export const HISTORY_PAGE_OVERLAP = 5;
-// A page job in one of these states is still pg-boss's to run: waiting, deferred, between retries, or
-// running (a killed one stays active until its expiry, then retries or fails).
-const PENDING_JOB_STATES: ReadonlySet<JobWithMetadata["state"]> = new Set([
-  "created",
-  "retry",
-  "active",
-]);
 
 /** Whether pg-boss holds a page of the user's import that it can still run. */
-async function pagePending(userId: string): Promise<boolean> {
-  // Without `queued`, findJobs returns every state; `queued` alone would leave out the active page.
-  const jobs = await getBoss().findJobs(importQueue.name, { key: userId });
-  return jobs.some((job) => PENDING_JOB_STATES.has(job.state));
+function pagePending(userId: string): Promise<boolean> {
+  return hasPendingJob(importQueue.name, userId);
 }
 
 /**

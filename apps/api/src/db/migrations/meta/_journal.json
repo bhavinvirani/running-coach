@@ -64,6 +64,13 @@
       "when": 1790956193729,
       "tag": "0008_create_best_effort",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790960863312,
+      "tag": "0009_add_best_efforts_attempts",
+      "breakpoints": true
     }
   ]
 }

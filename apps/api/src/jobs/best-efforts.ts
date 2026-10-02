@@ -13,6 +13,18 @@ import { data, jobOptions, name, sendOptions } from "./best-efforts-queue";
 export { data, jobOptions, name, queue, sendOptions } from "./best-efforts-queue";
 export type { BestEffortsData } from "./best-efforts-queue";
 
+/**
+ * Seconds before a batch's successor may start. Every batch is a Garmin login, and a first pass over a
+ * long history would otherwise log in every few seconds for minutes, the pattern Garmin rate-limits; the
+ * first batch after a sync or an import page still starts at once.
+ */
+export const BATCH_GAP_S = 30;
+
+export interface BestEffortsHandleOptions {
+  /** Seconds before the successor may start; tests shorten it. */
+  batchGapSeconds?: number;
+}
+
 export type BestEffortsOutput =
   /** nextJobId: the successor; null when none was needed or one already waits. */
   | ({ status: "ok"; nextJobId: string | null } & BestEffortsBatchResult)
@@ -20,22 +32,29 @@ export type BestEffortsOutput =
   | { status: "garmin_auth_expired" | "garmin_not_connected" };
 
 /**
- * Runs one batch and queues the next while runs are pending, without an id: the successor re-reads what
- * is pending, so a send folded into a waiting job loses nothing.
+ * Runs one batch and queues the next while runs are pending, BATCH_GAP_S later and without an id: the
+ * successor re-reads what is pending, so a send folded into a waiting job loses nothing.
  *
  * A 429 defers the work exactly as sync does: every waiting batch of the user moves to start after
  * retryAfterSeconds, or one is queued for then, and the job completes, never as a failed attempt. An
  * expired or missing login completes too: retrying cannot fix it, and the next sync after a reconnect
- * queues the batch again. Anything else throws, and pg-boss retries with backoff; the runs stay pending.
+ * queues the batch again. Anything else throws, garmin_unavailable for an answer that reads as Garmin
+ * being down included, and pg-boss retries with backoff; the runs stay pending.
  */
-export async function handle(boss: PgBoss, job: Job<unknown>): Promise<BestEffortsOutput> {
+export async function handle(
+  boss: PgBoss,
+  job: Job<unknown>,
+  { batchGapSeconds = BATCH_GAP_S }: BestEffortsHandleOptions = {},
+): Promise<BestEffortsOutput> {
   const input = data.parse(job.data);
   return withRequestId(`job-${job.id}`, async () => {
     const log = logger.child({ module: "jobs", job: name, jobId: job.id, userId: input.userId });
     try {
       const result = await computeBestEffortsBatch(input.userId, { signal: job.signal });
       const nextJobId =
-        result.remaining > 0 ? await boss.send(name, input, sendOptions(input)) : null;
+        result.remaining > 0
+          ? await boss.send(name, input, { ...sendOptions(input), startAfter: batchGapSeconds })
+          : null;
       return { status: "ok", ...result, nextJobId };
     } catch (error) {
       if (!(error instanceof DomainError)) throw error;

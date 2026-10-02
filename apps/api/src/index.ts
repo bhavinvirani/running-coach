@@ -8,11 +8,12 @@ import { config, inheritedEnv } from "./lib/config";
 import { onShutdown, registerReadinessCheck, runShutdownHooks } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
 import { paths } from "./lib/paths";
+import { queuePendingBestEfforts } from "./services/best-efforts";
 import { seedOwner } from "./services/owner";
 
 // Boot order (api rule): config (validated on import) → migrations → owner → Garmin service child process
-// → pg-boss and its workers → listen. The server listens last, so /health answers only once all are up;
-// shutdown runs the same steps in reverse.
+// → pg-boss and its workers (then a best-efforts batch for every user with pending runs) → listen. The
+// server listens last, so /health answers only once all are up; shutdown runs the same steps in reverse.
 
 const log = logger.child({ module: "boot" });
 
@@ -86,6 +87,8 @@ async function main(): Promise<void> {
   onShutdown("jobs", stopJobs);
   await startJobs();
   log.info("jobs started");
+  // Not awaited: it never throws and logs its own failure, so boot never waits on it.
+  void queuePendingBestEfforts();
 
   const server = await listen(config.PORT);
   onShutdown("http", () => new Promise((resolve) => server.close(() => resolve())));

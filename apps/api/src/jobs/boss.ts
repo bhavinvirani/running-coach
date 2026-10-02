@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { PgBoss } from "pg-boss";
+import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { config } from "../lib/config";
 import { logger } from "../lib/logger";
 
@@ -37,6 +37,21 @@ export async function stopBoss(): Promise<void> {
   const instance = boss;
   boss = undefined;
   await instance?.stop({ graceful: true, timeout: 15_000 });
+}
+
+// A job in one of these states is still pg-boss's to run: waiting or deferred, between retries, or running
+// (a killed one stays active until its expiry, then retries or fails).
+const PENDING_JOB_STATES: ReadonlySet<JobWithMetadata["state"]> = new Set([
+  "created",
+  "retry",
+  "active",
+]);
+
+/** Whether pg-boss holds a job of the queue under this singleton key that it can still run. */
+export async function hasPendingJob(name: string, key: string): Promise<boolean> {
+  // Without `queued`, findJobs returns every state; `queued` alone would leave out the active job.
+  const jobs = await getBoss().findJobs(name, { key });
+  return jobs.some((job) => PENDING_JOB_STATES.has(job.state));
 }
 
 // A fixed namespace for this app's job ids.

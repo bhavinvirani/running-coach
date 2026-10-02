@@ -49,6 +49,9 @@ export const activity = pgTable(
     // The engine's BEST_EFFORTS_VERSION this run's best_effort rows were computed with. Null until they
     // are, and again once a sync changes the run's distance or time, so a lower or null value is pending.
     bestEffortsVersion: smallint("best_efforts_version"),
+    // Batches in which Garmin could not read this run while it read others; reset when the run is done or
+    // its distance or time changes. The run is tried again last, and given up at BEST_EFFORTS_MAX_ATTEMPTS.
+    bestEffortsAttempts: smallint("best_efforts_attempts").notNull().default(0),
     garminUpdatedAt: timestamp("garmin_updated_at", { withTimezone: true }),
     summary: jsonb("summary"),
     ...timestamps(),

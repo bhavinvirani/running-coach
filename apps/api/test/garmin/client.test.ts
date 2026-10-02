@@ -371,6 +371,9 @@ describe("garminClient", () => {
     const LONG_RUN = 10_000_000_007;
     const RACE = 10_000_000_002;
     const UNKNOWN = 123;
+    // FAKE_UNAVAILABLE_ACTIVITY_IDS in services/garmin fake_client.py: Garmin down for these runs alone.
+    const UNREADABLE = 9_000_000_503;
+    const UNREADABLE_TOO = 9_000_000_504;
 
     it("returns one row-aligned series per id in request order, without records unless asked (best efforts)", async () => {
       const options = writeBack();
@@ -398,7 +401,7 @@ describe("garminClient", () => {
       expect(new Headers(spy.mock.calls[0]?.[1]?.headers).get("x-request-id")).toBe("req-series-1");
     });
 
-    it("answers a run Garmin no longer has with empty samples, and the batch goes on (deleted run)", async () => {
+    it("answers a run Garmin no longer has as gone with empty samples, and the batch goes on (deleted run)", async () => {
       const response = await garminClient.series(
         {
           tokenBundle: garminBundle(),
@@ -410,10 +413,57 @@ describe("garminClient", () => {
 
       expect(response.series[0]).toEqual({
         garminActivityId: UNKNOWN,
+        outcome: "gone",
         elapsedS: [],
         distanceM: [],
       });
+      expect(response.series[1]?.outcome).toBe("ok");
       expect(response.series[1]?.elapsedS.length).toBeGreaterThan(500);
+    });
+
+    it("answers a run Garmin could not read as failed, and the batch goes on (one run failing)", async () => {
+      const response = await garminClient.series(
+        {
+          tokenBundle: garminBundle(),
+          garminActivityIds: [UNREADABLE, LONG_RUN],
+          includeRecords: true,
+        },
+        writeBack(),
+      );
+
+      expect(response.series[0]).toEqual({
+        garminActivityId: UNREADABLE,
+        outcome: "failed",
+        elapsedS: [],
+        distanceM: [],
+      });
+      expect(response.series[1]?.outcome).toBe("ok");
+      expect(response.records).toHaveLength(5);
+    });
+
+    it("answers the runs after two failures in a row as skipped, never asked about, with no records (Garmin outage)", async () => {
+      const response = await garminClient.series(
+        {
+          tokenBundle: garminBundle(),
+          garminActivityIds: [LONG_RUN, UNREADABLE, UNREADABLE_TOO, RACE],
+          includeRecords: true,
+        },
+        writeBack(),
+      );
+
+      expect(response.series.map((series) => series.outcome)).toEqual([
+        "ok",
+        "failed",
+        "failed",
+        "skipped",
+      ]);
+      expect(response.series[3]).toEqual({
+        garminActivityId: RACE,
+        outcome: "skipped",
+        elapsedS: [],
+        distanceM: [],
+      });
+      expect(response.records).toBeNull();
     });
 
     it("returns Garmin's records at the app's distances, shortest first, when asked", async () => {

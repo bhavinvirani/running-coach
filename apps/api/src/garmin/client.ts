@@ -82,7 +82,8 @@ export interface GarminClient {
   ): Promise<GarminActivityDetailResponse>;
   /**
    * The timer and distance samples of up to GARMIN_SERIES_BATCH_MAX runs, one entry per id in request
-   * order (empty arrays for a run Garmin no longer has), and Garmin's own records when asked for.
+   * order with its outcome ("ok", "gone" when Garmin no longer has the run, "failed" when it could not
+   * read this one), and Garmin's own records when asked for (null when they could not be read).
    */
   series(request: GarminSeriesRequest, options: GarminCallOptions): Promise<GarminSeriesResponse>;
 }

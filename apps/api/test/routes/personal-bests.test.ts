@@ -1,19 +1,35 @@
 import { BEST_EFFORTS_VERSION } from "@running-coach/engine";
 import {
   type DistanceKey,
+  ErrorCode,
   type GarminRecord,
   personalBestsResponseSchema,
 } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, bestEffort, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
+import * as bestEffortsQueue from "../../src/jobs/best-efforts-queue";
+import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
+import { BEST_EFFORTS_MAX_ATTEMPTS } from "../../src/services/best-efforts";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
-import { connectGarmin, createRun, createUser } from "../seed";
+import { connectGarmin, createRun, createUser, garminBundle } from "../seed";
+
+// GET /api/personal-bests on the real Postgres. pg-boss runs with the best-efforts queue but no worker, so
+// a queued batch waits until a test fetches and completes it.
 
 const app = createTestApp();
+
+beforeAll(async () => {
+  const boss = await startBoss();
+  await boss.createQueue(bestEffortsQueue.name, bestEffortsQueue.queue);
+});
+
+afterAll(async () => {
+  await stopBoss();
+});
 
 let nextGarminId = 1;
 
@@ -179,7 +195,13 @@ describe("GET /api/personal-bests", () => {
     const agent = await signedInAgent(app);
     await connectGarmin(await ownerId());
 
-    expect(await personalBests(agent)).toEqual({ bests: [], garmin: null, pendingRuns: 0 });
+    expect(await personalBests(agent)).toEqual({
+      bests: [],
+      garmin: null,
+      pendingRuns: 0,
+      checking: false,
+      errorCode: null,
+    });
   });
 
   it("returns Garmin's records as last stored, without calling Garmin", async () => {
@@ -202,6 +224,22 @@ describe("GET /api/personal-bests", () => {
     expect(series).not.toHaveBeenCalled();
   });
 
+  it("counts a run Garmin failed to read 3 times as given up, not pending (one run failing)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await connectGarmin(userId);
+    await createRun(userId, {
+      garminActivityId: nextGarminId++,
+      bestEffortsAttempts: BEST_EFFORTS_MAX_ATTEMPTS,
+    });
+    await createRun(userId, {
+      garminActivityId: nextGarminId++,
+      bestEffortsAttempts: BEST_EFFORTS_MAX_ATTEMPTS - 1,
+    });
+
+    expect((await personalBests(agent)).pendingRuns).toBe(1);
+  });
+
   it("never shows another runner's efforts", async () => {
     const agent = await signedInAgent(app);
     const other = await createUser("other@example.com");
@@ -214,5 +252,116 @@ describe("GET /api/personal-bests", () => {
     const response = await request(app).get("/api/personal-bests");
 
     expectProblem(response, 401, "unauthorized");
+  });
+});
+
+describe("GET /api/personal-bests checking and errorCode", () => {
+  async function ownerWithPendingRun(
+    connection: Parameters<typeof connectGarmin>[2] | "none" = {},
+  ) {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    if (connection !== "none") await connectGarmin(userId, garminBundle(), connection);
+    await createRun(userId, { garminActivityId: nextGarminId++ });
+    return { agent, userId };
+  }
+
+  it("answers checking while a batch waits or runs, and no error, then not once it finished (backfill)", async () => {
+    const { agent, userId } = await ownerWithPendingRun({ lastError: ErrorCode.garminUnavailable });
+    const boss = getBoss();
+    const queued = await boss.send(
+      bestEffortsQueue.name,
+      { userId },
+      bestEffortsQueue.sendOptions({ userId }),
+    );
+    if (!queued) throw new Error("batch not queued");
+
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 1,
+      checking: true,
+      errorCode: null,
+    });
+
+    const [active] = await boss.fetch(bestEffortsQueue.name);
+    expect(active?.id).toBe(queued);
+    expect(await personalBests(agent)).toMatchObject({ checking: true, errorCode: null });
+
+    await boss.complete(bestEffortsQueue.name, queued);
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 1,
+      checking: false,
+      errorCode: ErrorCode.garminUnavailable,
+    });
+  });
+
+  it("answers checking while a batch waits for its retry (Garmin outage)", async () => {
+    const { agent, userId } = await ownerWithPendingRun({ lastError: ErrorCode.garminUnavailable });
+    const boss = getBoss();
+    const queued = await boss.send(
+      bestEffortsQueue.name,
+      { userId },
+      bestEffortsQueue.sendOptions({ userId }),
+    );
+    if (!queued) throw new Error("batch not queued");
+    await boss.fetch(bestEffortsQueue.name);
+    await boss.fail(bestEffortsQueue.name, queued);
+
+    const [job] = await boss.findJobs(bestEffortsQueue.name, { id: queued });
+    expect(job?.state).toBe("retry");
+    expect(await personalBests(agent)).toMatchObject({ checking: true, errorCode: null });
+  });
+
+  it.each([
+    ["no Garmin connection", "none", ErrorCode.garminNotConnected],
+    ["an expired login (token expiry)", { status: "expired" }, ErrorCode.garminAuthExpired],
+    [
+      "an expired login whatever the last error",
+      { status: "expired", lastError: ErrorCode.garminUnavailable },
+      ErrorCode.garminAuthExpired,
+    ],
+    [
+      "the last error (Garmin outage)",
+      { lastError: ErrorCode.garminUnavailable },
+      ErrorCode.garminUnavailable,
+    ],
+    ["a 429 (Garmin 429)", { lastError: ErrorCode.garminRateLimited }, ErrorCode.garminRateLimited],
+    ["a last error that is no code of the app's", { lastError: "something_else" }, null],
+    ["a working login with no error", {}, null],
+  ] as const)("answers why pending runs have no batch: %s", async (_, connection, errorCode) => {
+    const { agent } = await ownerWithPendingRun(connection);
+
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 1,
+      checking: false,
+      errorCode,
+    });
+  });
+
+  it("answers no error when nothing is pending, whatever the connection says", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await connectGarmin(userId, garminBundle(), { status: "expired" });
+    await createRun(userId, {
+      garminActivityId: nextGarminId++,
+      bestEffortsVersion: BEST_EFFORTS_VERSION,
+    });
+
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 0,
+      checking: false,
+      errorCode: null,
+    });
+  });
+
+  it("never answers checking for another runner's batch", async () => {
+    const { agent } = await ownerWithPendingRun();
+    const other = await createUser("other@example.com");
+    await getBoss().send(
+      bestEffortsQueue.name,
+      { userId: other },
+      bestEffortsQueue.sendOptions({ userId: other }),
+    );
+
+    expect(await personalBests(agent)).toMatchObject({ checking: false, errorCode: null });
   });
 });

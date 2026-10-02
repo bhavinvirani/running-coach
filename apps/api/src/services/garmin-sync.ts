@@ -76,7 +76,7 @@ const seriesChanged = sql`(${sql.join(seriesColumns.map(current), sql`, `)}) is 
 /**
  * Inserts new runs and updates changed ones on (user_id, garmin_activity_id). An unchanged run is not
  * rewritten, so a repeated sync writes nothing. A changed distance or time also clears the run's
- * best-efforts version. Returns the number of rows inserted or changed.
+ * best-efforts version and failed attempts. Returns the number of rows inserted or changed.
  */
 export async function upsertActivities(
   userId: string,
@@ -112,6 +112,8 @@ export async function upsertActivities(
         ...Object.fromEntries(SYNCED_KEYS.map((key) => [key, excluded(activity[key])])),
         tz: sql`coalesce(${excluded(activity.tz)}, ${current(activity.tz)})`,
         bestEffortsVersion: sql`case when ${seriesChanged} then null else ${current(activity.bestEffortsVersion)} end`,
+        // A new series earns fresh tries, also for a run given up on after failed reads.
+        bestEffortsAttempts: sql`case when ${seriesChanged} then 0 else ${current(activity.bestEffortsAttempts)} end`,
         updatedAt: sql`now()`,
       },
       setWhere: sql`(${sql.join(syncedColumns.map(current), sql`, `)}) is distinct from (${sql.join(

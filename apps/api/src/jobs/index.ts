@@ -13,6 +13,8 @@ export interface StartJobsOptions {
   clock?: () => Date;
   /** Items per history import page; tests use small pages so the fixture spans several. */
   historyPageSize?: number;
+  /** Seconds between chained best-efforts batches; tests shorten it. */
+  bestEffortsGapSeconds?: number;
 }
 
 export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
@@ -39,7 +41,13 @@ export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
 
   await boss.createQueue(bestEfforts.name, bestEfforts.queue);
   await boss.work(bestEfforts.name, work, async ([job]) =>
-    job ? bestEfforts.handle(boss, job) : undefined,
+    job
+      ? bestEfforts.handle(boss, job, {
+          ...(options.bestEffortsGapSeconds === undefined
+            ? {}
+            : { batchGapSeconds: options.bestEffortsGapSeconds }),
+        })
+      : undefined,
   );
 }
 
