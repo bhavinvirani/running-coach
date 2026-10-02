@@ -17,12 +17,92 @@ export const activitySchema = z
     maxHr: z.number().nonnegative().nullable(),
     /** Steps per minute. */
     cadence: z.number().nonnegative().nullable(),
+    calories: z.number().nonnegative().nullable(),
     elevationGainM: z.number().nullable(),
     isIndoor: z.boolean(),
     isManual: z.boolean(),
   })
   .strict();
 export type Activity = z.infer<typeof activitySchema>;
+
+/** One lap as the watch recorded it, in SI; on an auto-lap watch these are the per-km splits. */
+export const activityLapSchema = z
+  .object({
+    /** Lap number as the watch shows it, starting at 1. */
+    index: z.number().int().min(1),
+    distanceM: z.number().nonnegative(),
+    durationS: z.number().nonnegative(),
+    avgHr: z.number().nonnegative().nullable(),
+    /** Steps per minute. */
+    avgCadence: z.number().nonnegative().nullable(),
+  })
+  .strict();
+export type ActivityLap = z.infer<typeof activityLapSchema>;
+
+/**
+ * Row-aligned samples of the run as Garmin's detail call thins them (about 2000 points): every array
+ * has the length of `elapsedS`, empty when Garmin holds no samples (a manual entry). A whole series is
+ * null when the watch did not record it (no HR, no elevation indoors); one sample is null where that
+ * reading alone is missing.
+ */
+export const activityStreamsSchema = z
+  .object({
+    /** Timer seconds from the start, non-decreasing. */
+    elapsedS: z.array(z.number().nonnegative()),
+    distanceM: z.array(z.number().nonnegative()),
+    hr: z.array(z.number().nonnegative().nullable()).nullable(),
+    /** Steps per minute. */
+    cadence: z.array(z.number().nonnegative().nullable()).nullable(),
+    elevationM: z.array(z.number().nullable()).nullable(),
+    speedMps: z.array(z.number().nonnegative().nullable()).nullable(),
+  })
+  .strict();
+export type ActivityStreams = z.infer<typeof activityStreamsSchema>;
+
+/** Seconds spent in one of Garmin's five zones, with the zone's lower bound from the runner's Garmin settings. */
+export const hrZoneTimeSchema = z
+  .object({
+    zone: z.number().int().min(1).max(5),
+    lowBpm: z.number().nonnegative(),
+    seconds: z.number().nonnegative(),
+  })
+  .strict();
+export type HrZoneTime = z.infer<typeof hrZoneTimeSchema>;
+
+/** [latitude, longitude] in degrees. */
+export const routePointSchema = z.tuple([
+  z.number().min(-90).max(90),
+  z.number().min(-180).max(180),
+]);
+export type RoutePoint = z.infer<typeof routePointSchema>;
+
+/** What Garmin holds about one run beyond its summary, fetched once and stored. */
+export const activityDetailSchema = z
+  .object({
+    laps: z.array(activityLapSchema),
+    streams: activityStreamsSchema,
+    /** The GPS track in order, null for an indoor run or a manual entry. */
+    route: z.array(routePointSchema).nullable(),
+    /** Garmin's five zones in order, null when the run has no heart rate. */
+    hrZones: z.array(hrZoneTimeSchema).nullable(),
+  })
+  .strict();
+export type ActivityDetail = z.infer<typeof activityDetailSchema>;
+
+export const activityParamsSchema = z.object({ id: z.uuid() }).strict();
+export type ActivityParams = z.infer<typeof activityParamsSchema>;
+
+/**
+ * GET /api/activities/:id reads what is stored; `detail` is null until POST /api/activities/:id/detail
+ * has fetched the laps, samples, route and zones from Garmin, which answers with the same shape.
+ */
+export const activityResponseSchema = z
+  .object({
+    activity: activitySchema,
+    detail: activityDetailSchema.nullable(),
+  })
+  .strict();
+export type ActivityResponse = z.infer<typeof activityResponseSchema>;
 
 /** GET /api/activities/latest: the run with the latest start, or null before the first one is stored. */
 export const latestActivityResponseSchema = z

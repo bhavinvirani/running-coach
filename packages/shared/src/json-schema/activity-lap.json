@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "index": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "distanceM": {
+      "type": "number",
+      "minimum": 0
+    },
+    "durationS": {
+      "type": "number",
+      "minimum": 0
+    },
+    "avgHr": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "avgCadence": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "index",
+    "distanceM",
+    "durationS",
+    "avgHr",
+    "avgCadence"
+  ],
+  "additionalProperties": false
+}

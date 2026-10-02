@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { activityDetailSchema } from "./activity";
 import { problemSchema } from "./problem";
 
 /**
@@ -104,3 +105,21 @@ export const garminHistoryResponseSchema = z
   })
   .strict();
 export type GarminHistoryResponse = z.infer<typeof garminHistoryResponseSchema>;
+
+/**
+ * POST /activities/{garminActivityId}/detail: the laps, samples, route and heart-rate zones of one run,
+ * from get_activity_splits, get_activity_details and get_activity_hr_in_timezones in one request, so the
+ * three calls share one login.
+ */
+export const garminActivityDetailRequestSchema = z
+  .object({ tokenBundle: garminTokenBundleSchema })
+  .strict();
+export type GarminActivityDetailRequest = z.infer<typeof garminActivityDetailRequestSchema>;
+
+export const garminActivityDetailResponseSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    detail: activityDetailSchema,
+  })
+  .strict();
+export type GarminActivityDetailResponse = z.infer<typeof garminActivityDetailResponseSchema>;

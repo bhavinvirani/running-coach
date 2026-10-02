@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  activityDetailSchema,
+  activityResponseSchema,
   activityWeekSchema,
   activityWeeksQuerySchema,
   latestActivityResponseSchema,
@@ -16,6 +18,7 @@ const run = {
   avgHr: null,
   maxHr: null,
   cadence: null,
+  calories: null,
   elevationGainM: null,
   isIndoor: true,
   isManual: false,
@@ -67,5 +70,69 @@ describe("activityWeekSchema", () => {
   it("accepts a week of one indoor run without heart rate", () => {
     const week = { weekStart: "2026-09-21", distanceM: 18000, durationS: 5940, runs: [run] };
     expect(activityWeekSchema.safeParse(week).success).toBe(true);
+  });
+});
+
+const detail = {
+  laps: [{ index: 1, distanceM: 1000, durationS: 305, avgHr: 150, avgCadence: 172 }],
+  streams: {
+    elapsedS: [0, 2, 4],
+    distanceM: [0, 6.1, 12.3],
+    hr: [148, null, 151],
+    cadence: [170, 172, 171],
+    elevationM: [12.4, 12.6, 12.9],
+    speedMps: [3.1, 3.2, 3.2],
+  },
+  route: [
+    [51.5, -0.12],
+    [51.5001, -0.1201],
+  ],
+  hrZones: [1, 2, 3, 4, 5].map((zone) => ({ zone, lowBpm: 90 + zone * 18, seconds: 60 })),
+};
+
+describe("activityDetailSchema", () => {
+  it("accepts laps, row-aligned samples with one missing reading, a route and five zones", () => {
+    expect(activityDetailSchema.safeParse(detail).success).toBe(true);
+  });
+
+  it("accepts a treadmill run without a route, elevation or zones, and a manual entry without samples", () => {
+    const treadmill = {
+      ...detail,
+      streams: { ...detail.streams, elevationM: null, hr: null },
+      route: null,
+      hrZones: null,
+    };
+    const manual = {
+      laps: [],
+      streams: {
+        elapsedS: [],
+        distanceM: [],
+        hr: null,
+        cadence: null,
+        elevationM: null,
+        speedMps: null,
+      },
+      route: null,
+      hrZones: null,
+    };
+    expect(activityDetailSchema.safeParse(treadmill).success).toBe(true);
+    expect(activityDetailSchema.safeParse(manual).success).toBe(true);
+  });
+
+  it("rejects a route point outside the globe and a sixth zone", () => {
+    expect(activityDetailSchema.safeParse({ ...detail, route: [[91, 0]] }).success).toBe(false);
+    expect(
+      activityDetailSchema.safeParse({
+        ...detail,
+        hrZones: [...(detail.hrZones ?? []), { zone: 6, lowBpm: 200, seconds: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("activityResponseSchema", () => {
+  it("accepts a run before and after its detail is fetched", () => {
+    expect(activityResponseSchema.safeParse({ activity: run, detail: null }).success).toBe(true);
+    expect(activityResponseSchema.safeParse({ activity: run, detail }).success).toBe(true);
   });
 });
