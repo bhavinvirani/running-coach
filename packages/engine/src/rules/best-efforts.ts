@@ -3,7 +3,7 @@ import { GLITCH_WINDOW_S, GPS_GLITCH_SPEED_M_PER_S } from "../constants";
 
 /** Row-aligned samples as Garmin's activity details give them, about one row a second. */
 export interface BestEffortsInput {
-  /** Timer seconds from the start, non-decreasing. */
+  /** Timer seconds from the start in Garmin's row order; segments are cut wherever they go backwards. */
   elapsedS: readonly number[];
   /** Cumulative meters. */
   distanceM: readonly number[];

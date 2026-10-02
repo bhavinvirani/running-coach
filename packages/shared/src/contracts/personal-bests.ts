@@ -52,9 +52,10 @@ export const personalBestsResponseSchema = z
     /** A best-efforts job for the runner is waiting, deferred, retrying or running. */
     checking: z.boolean(),
     /**
-     * Why runs are pending with no job to check them: the Garmin login expired or is missing, or the last
-     * try failed (garmin_unavailable, ...). Null while checking, when nothing is pending, or when no reason
-     * is known (the next sync queues the work again).
+     * Why pending runs are not being checked right now: with no job, the Garmin login expired or is missing
+     * or the last try failed (garmin_unavailable, ...); with a job held back (a 429's hour, a retry's
+     * backoff), the failure that held it. Null while a job runs or waits its turn, when nothing is pending,
+     * or when no reason is known (the next sync queues the work again).
      */
     errorCode: errorCodeSchema.nullable(),
   })
