@@ -22,12 +22,12 @@ export async function signIn(request: APIRequestContext, origin: string): Promis
 }
 
 /**
- * Every test that imports `test` from here starts signed in as the seeded runner with default settings; the
- * `login` fixture's value is the runner, for tests that assert on the email or name. Sign-in happens once per
- * worker (`runnerSession`), so the suite stays under Better Auth's 10 sign-ins a minute however many tests it
- * has, and each test's fresh browser context starts from that session's cookies (`storageState`). A test that
- * logs out ends the shared session on the server: it must use plain Playwright `test` and sign in itself,
- * as login.spec.ts does.
+ * Every test that imports `test` from here starts signed in as the seeded runner with default settings, no
+ * runs and Garmin not connected; the `login` fixture's value is the runner, for tests that assert on the
+ * email or name. Sign-in happens once per worker (`runnerSession`), so the suite stays under Better Auth's
+ * 10 sign-ins a minute however many tests it has, and each test's fresh browser context starts from that
+ * session's cookies (`storageState`). A test that logs out ends the shared session on the server: it must
+ * use plain Playwright `test` and sign in itself, as login.spec.ts does.
  */
 export const test = base.extend<{ login: Runner }, { runnerSession: StorageState }>({
   // The second argument is Playwright's `use`; named `provide` so React's hook rules leave it alone.
