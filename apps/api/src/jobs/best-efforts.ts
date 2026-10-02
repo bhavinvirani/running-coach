@@ -40,8 +40,9 @@ export type BestEffortsOutput =
  * A 429 defers the work exactly as sync does: every waiting batch of the user moves to start after
  * retryAfterSeconds, or one is queued for then, and the job completes, never as a failed attempt. An
  * expired or missing login completes too: retrying cannot fix it, and the next sync after a reconnect
- * queues the batch again. Anything else throws, garmin_unavailable for an answer that reads as Garmin
- * being down (the canary failed) included, and pg-boss retries with backoff; the runs stay pending.
+ * queues the batch again. Anything else throws and pg-boss retries with backoff, the runs still pending:
+ * garmin_unavailable too, for an answer in which Garmin read no run or the service spent its time on the
+ * canary, so neither chains a successor BATCH_GAP_S later.
  */
 export async function handle(
   boss: PgBoss,

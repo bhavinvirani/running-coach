@@ -82,6 +82,15 @@ export async function hasPendingJob(name: string, key: string): Promise<boolean>
   return (await findPendingJob(name, key)) !== null;
 }
 
+/**
+ * Whether a job of the queue under this singleton key waits to start: due, deferred, or between retries.
+ * A running job is left out: the stately queue keeps one waiting job beside it.
+ */
+export async function hasWaitingJob(name: string, key: string): Promise<boolean> {
+  // `queued` is pg-boss's created and retry states.
+  return (await getBoss().findJobs(name, { key, queued: true })).length > 0;
+}
+
 // A fixed namespace for this app's job ids.
 const JOB_ID_NAMESPACE = Buffer.from("4b1e7c52a9d04f3e8c6b2d7f19a0e365", "hex");
 

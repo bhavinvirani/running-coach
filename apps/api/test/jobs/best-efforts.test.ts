@@ -261,6 +261,41 @@ describe("best-efforts job", () => {
     expect(run?.attempts).toBe(0);
   });
 
+  it("rethrows garmin_unavailable and queues no successor when the service spent its time on the canary and skipped every run of the batch (canary used the time budget)", async () => {
+    const userId = await connectedUser();
+    // The canary: computed, holding an effort, older than the pending runs.
+    const canary = await createRun(userId, {
+      garminActivityId: LONG_RUN,
+      startUtc: new Date(Date.UTC(2026, 7, 20, 6)),
+      startLocal: "2026-08-20 08:00:00",
+      bestEffortsVersion: BEST_EFFORTS_VERSION,
+    });
+    await db
+      .insert(bestEffort)
+      .values({ userId, activityId: canary.id, distanceKey: "1k", timeS: 300, startS: 0 });
+    await createRuns(userId, HISTORY_RUNS.slice(0, 2));
+    const original = garminClient.series.bind(garminClient);
+    vi.spyOn(garminClient, "series").mockImplementation(async (request, options) => {
+      const response = await original(request, options);
+      return {
+        ...response,
+        records: null,
+        series: response.series.map((series, index) =>
+          index === 0
+            ? series
+            : { ...series, outcome: "skipped" as const, elapsedS: [], distanceM: [] },
+        ),
+      };
+    });
+
+    await expect(
+      bestEffortsJob.handle(getBoss(), runningJob(userId), { batchGapSeconds: 30 }),
+    ).rejects.toMatchObject({ code: ErrorCode.garminUnavailable });
+
+    expect(await queuedJobs(userId)).toEqual([]);
+    expect(await pendingRuns(userId)).toBe(2);
+  });
+
   it("folds repeated sends into the one batch already queued for the user", async () => {
     const userId = await connectedUser();
     await createRuns(userId, [LONG_RUN]);
