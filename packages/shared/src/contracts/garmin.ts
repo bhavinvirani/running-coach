@@ -146,19 +146,29 @@ export const garminSeriesRequestSchema = z
 export type GarminSeriesRequest = z.infer<typeof garminSeriesRequestSchema>;
 
 /**
- * One run's samples, row-aligned. Both arrays are empty when Garmin holds no samples (a manual entry) or no
- * longer knows the run (deleted on Garmin): either way the run has no best efforts.
+ * What became of one run in a series batch. "ok": Garmin answered, with samples or with none (a run it
+ * holds no detail for); "gone": Garmin no longer knows the run (404, deleted on Garmin); "failed": this run
+ * alone could not be read (an error or an unreadable answer for it while other runs worked), so the API
+ * leaves it pending and tries it again later. A 429 or a dead login fails the whole request instead.
  */
+export const garminSeriesOutcomeSchema = z.enum(["ok", "gone", "failed"]);
+export type GarminSeriesOutcome = z.infer<typeof garminSeriesOutcomeSchema>;
+
+/** One run's samples, row-aligned; both arrays are empty unless the outcome is "ok". */
 export const garminActivitySeriesSchema = z
   .object({
     garminActivityId: z.number().int().positive(),
-    /** Timer seconds from the start, non-decreasing. */
+    outcome: garminSeriesOutcomeSchema,
+    /** Timer seconds from the start in Garmin's row order; the engine cuts wherever they go backwards. */
     elapsedS: z.array(z.number().nonnegative()),
     distanceM: z.array(z.number().nonnegative()),
   })
   .strict()
   .refine((series) => series.distanceM.length === series.elapsedS.length, {
     message: "distanceM must have the length of elapsedS",
+  })
+  .refine((series) => series.outcome === "ok" || series.elapsedS.length === 0, {
+    message: "only an ok run carries samples",
   });
 export type GarminActivitySeries = z.infer<typeof garminActivitySeriesSchema>;
 
@@ -167,7 +177,11 @@ export const garminSeriesResponseSchema = z
     tokenBundle: garminTokenBundleSchema,
     /** One entry per requested id, in request order. */
     series: z.array(garminActivitySeriesSchema),
-    /** Garmin's running records at the distances the app knows; null unless `includeRecords` was set. */
+    /**
+     * Garmin's running records at the distances the app knows; null unless `includeRecords` was set, and
+     * null when the records call failed or answered in a shape the service cannot read: they are only a
+     * comparison, so they never fail the series.
+     */
     records: z.array(garminRecordSchema).nullable(),
   })
   .strict();

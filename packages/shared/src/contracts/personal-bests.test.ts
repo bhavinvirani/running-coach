@@ -30,6 +30,8 @@ describe("personalBestsResponseSchema", () => {
       bests: [best],
       garmin: null,
       pendingRuns: 340,
+      checking: true,
+      errorCode: null,
     });
     expect(parsed.success).toBe(true);
   });
@@ -42,8 +44,22 @@ describe("personalBestsResponseSchema", () => {
         fetchedAt: "2026-10-02T08:00:00Z",
       },
       pendingRuns: 0,
+      checking: false,
+      errorCode: null,
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("accepts a stopped pass with its reason", () => {
+    expect(
+      personalBestsResponseSchema.safeParse({
+        bests: [],
+        garmin: null,
+        pendingRuns: 12,
+        checking: false,
+        errorCode: "garmin_auth_expired",
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects a distance the app does not know", () => {
@@ -51,6 +67,8 @@ describe("personalBestsResponseSchema", () => {
       bests: [{ ...best, distanceKey: "3k" }],
       garmin: null,
       pendingRuns: 0,
+      checking: false,
+      errorCode: null,
     });
     expect(parsed.success).toBe(false);
   });
@@ -60,6 +78,8 @@ describe("personalBestsResponseSchema", () => {
       bests: [{ ...best, paceS: 325 }],
       garmin: null,
       pendingRuns: 0,
+      checking: false,
+      errorCode: null,
     });
     expect(parsed.success).toBe(false);
   });
@@ -84,15 +104,23 @@ describe("garminSeriesResponseSchema", () => {
   it("accepts empty samples for a run Garmin no longer knows", () => {
     const parsed = garminSeriesResponseSchema.safeParse({
       ...response,
-      series: [{ garminActivityId: 1, elapsedS: [], distanceM: [] }],
+      series: [{ garminActivityId: 1, outcome: "gone", elapsedS: [], distanceM: [] }],
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("rejects samples on a run that failed", () => {
+    const parsed = garminSeriesResponseSchema.safeParse({
+      ...response,
+      series: [{ garminActivityId: 1, outcome: "failed", elapsedS: [0], distanceM: [0] }],
+    });
+    expect(parsed.success).toBe(false);
   });
 
   it("rejects samples that are not row-aligned", () => {
     const parsed = garminSeriesResponseSchema.safeParse({
       ...response,
-      series: [{ garminActivityId: 1, elapsedS: [0, 1], distanceM: [0] }],
+      series: [{ garminActivityId: 1, outcome: "ok", elapsedS: [0, 1], distanceM: [0] }],
     });
     expect(parsed.success).toBe(false);
   });

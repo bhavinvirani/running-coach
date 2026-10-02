@@ -117,12 +117,42 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "checking": {
+      "type": "boolean"
+    },
+    "errorCode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "validation",
+            "unauthorized",
+            "not_found",
+            "rate_limited",
+            "internal",
+            "garmin_not_connected",
+            "garmin_auth_expired",
+            "garmin_rate_limited",
+            "garmin_unavailable",
+            "garmin_mfa_required",
+            "claude_key_missing",
+            "claude_key_invalid",
+            "claude_unavailable"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
     "bests",
     "garmin",
-    "pendingRuns"
+    "pendingRuns",
+    "checking",
+    "errorCode"
   ],
   "additionalProperties": false
 }

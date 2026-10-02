@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { distanceKeySchema } from "../distances";
+import { errorCodeSchema } from "../error-codes";
 
 /**
  * A personal best: the fastest best effort at one distance over the runner's outdoor, non-manual runs,
@@ -32,8 +33,9 @@ export type GarminRecord = z.infer<typeof garminRecordSchema>;
 
 /**
  * GET /api/personal-bests: the runner's bests, shortest distance first, one per distance reached so far;
- * Garmin's records as last fetched; and how many runs still wait for their best efforts (the first pass
- * over a long history takes a while, and the list fills in as it goes).
+ * Garmin's records as last fetched; how many runs still wait for their best efforts (the first pass over a
+ * long history takes a while, and the list fills in as it goes); and whether that work is under way or
+ * stopped, and why, so the screen polls only while something will change.
  */
 export const personalBestsResponseSchema = z
   .object({
@@ -47,6 +49,14 @@ export const personalBestsResponseSchema = z
       .strict()
       .nullable(),
     pendingRuns: z.number().int().nonnegative(),
+    /** A best-efforts job for the runner is waiting, deferred, retrying or running. */
+    checking: z.boolean(),
+    /**
+     * Why runs are pending with no job to check them: the Garmin login expired or is missing, or the last
+     * try failed (garmin_unavailable, ...). Null while checking, when nothing is pending, or when no reason
+     * is known (the next sync queues the work again).
+     */
+    errorCode: errorCodeSchema.nullable(),
   })
   .strict();
 export type PersonalBestsResponse = z.infer<typeof personalBestsResponseSchema>;
