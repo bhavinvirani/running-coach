@@ -17,7 +17,8 @@ type DayRowProps = {
 
 /**
  * One day of the week: its date, then each session as its type chip with distance and time on the right
- * and its steps in one line under it, paces in the runner's unit. A day without a session reads Rest.
+ * and its steps in one line under it (a lone run's pace band, so the distance is not said twice), paces
+ * in the runner's unit. A day without a session reads Rest.
  */
 export function DayRow({ day, paces, units }: DayRowProps) {
   return (

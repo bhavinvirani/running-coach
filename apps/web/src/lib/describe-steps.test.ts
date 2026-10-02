@@ -37,10 +37,38 @@ describe("describeSteps", () => {
     );
   });
 
-  it("reads a long run by distance as easy, with no pace", () => {
+  it("reads a lone easy run as the easy band to hold, not its time again (easy run)", () => {
+    const easy: SessionSteps = [{ kind: "run", zone: "easy", distanceM: null, durationS: 2700 }];
+    expect(describeSteps(easy, paces, "km")).toBe("5:45-6:20 /km easy");
+  });
+
+  it("reads a long run as the easy band, not its distance again (long run)", () => {
     const long: SessionSteps = [{ kind: "run", zone: "easy", distanceM: 16000, durationS: null }];
-    expect(describeSteps(long, paces, "km")).toBe("16 km easy");
-    expect(describeSteps(long, paces, "mi")).toBe("9.9 mi easy");
+    expect(describeSteps(long, paces, "km")).toBe("5:45-6:20 /km easy");
+  });
+
+  it("converts a lone run's band to minutes per mile (mi units)", () => {
+    // 345 and 380 s/km are 555.2 and 611.6 s/mi.
+    const long: SessionSteps = [{ kind: "run", zone: "easy", distanceM: 16000, durationS: null }];
+    expect(describeSteps(long, paces, "mi")).toBe("9:15-10:12 /mi easy");
+  });
+
+  it("names the zone after a lone run's band: marathon pace, threshold", () => {
+    const marathon: SessionSteps = [
+      { kind: "run", zone: "marathon", distanceM: 21100, durationS: null },
+    ];
+    const threshold: SessionSteps = [
+      { kind: "run", zone: "threshold", distanceM: null, durationS: 1200 },
+    ];
+    expect(describeSteps(marathon, paces, "km")).toBe("5:15-5:22 /km marathon pace");
+    expect(describeSteps(threshold, paces, "km")).toBe("5:00-5:07 /km threshold");
+  });
+
+  it("still reads the amount for a session of one work step (one-step work)", () => {
+    const block: SessionSteps = [
+      { kind: "work", zone: "threshold", distanceM: 4000, durationS: null },
+    ];
+    expect(describeSteps(block, paces, "km")).toBe("4 km at 5:00-5:07 /km");
   });
 
   it("reads a tempo block at the threshold band", () => {
@@ -54,9 +82,9 @@ describe("describeSteps", () => {
     );
   });
 
-  it("shows one pace for a band whose ends are equal (race)", () => {
+  it("reads the race as race pace, one pace for a band whose ends are equal (race)", () => {
     const race: SessionSteps = [{ kind: "run", zone: "race", distanceM: 10000, durationS: null }];
-    expect(describeSteps(race, paces, "km")).toBe("10 km at 4:56 /km");
+    expect(describeSteps(race, paces, "km")).toBe("4:56 /km race pace");
   });
 
   it("reads a rep by time, with a recovery by distance", () => {
