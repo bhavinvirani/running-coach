@@ -1,7 +1,11 @@
 import {
   activitySchema,
+  activityWeekSchema,
+  importProgressSchema,
   meResponseSchema,
   type Activity,
+  type ActivityWeek,
+  type ImportProgress,
   type MeResponse,
 } from "@running-coach/shared";
 
@@ -45,6 +49,33 @@ export function activityFixture(overrides: Partial<Activity> = {}): Activity {
     elevationGainM: 64,
     isIndoor: false,
     isManual: false,
+    ...overrides,
+  });
+}
+
+/**
+ * One week of runs as GET /api/activities returns it, totals summed from the runs like the API does.
+ * `weekStart` is the Monday; the runs keep the order given, which the API sends newest first.
+ */
+export function weekFixture(weekStart: string, runs: Activity[]): ActivityWeek {
+  return activityWeekSchema.parse({
+    weekStart,
+    distanceM: runs.reduce((sum, run) => sum + run.distanceM, 0),
+    durationS: runs.reduce((sum, run) => sum + run.durationS, 0),
+    runs,
+  });
+}
+
+/** An import that has not started, with the overrides for the status under test. */
+export function importProgressFixture(overrides: Partial<ImportProgress> = {}): ImportProgress {
+  return importProgressSchema.parse({
+    status: "not_started",
+    runsStored: 0,
+    oldestDate: null,
+    startedAt: null,
+    finishedAt: null,
+    resumeAt: null,
+    errorCode: null,
     ...overrides,
   });
 }

@@ -4,6 +4,8 @@ import { vi } from "vitest";
 export type FakeRequest = {
   method: string;
   path: string;
+  /** The query string, so a handler can answer by `before` or a test can assert what was asked. */
+  query: URLSearchParams;
   body: unknown;
   headers: Headers;
 };
@@ -41,9 +43,11 @@ export function stubFetch(handler: Handler): FakeRequest[] {
     const original = input instanceof Request ? input : undefined;
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const text = typeof init?.body === "string" ? init.body : original ? await original.text() : "";
+    const parsed = new URL(url, window.location.origin);
     const call: FakeRequest = {
       method: (init?.method ?? original?.method ?? "GET").toUpperCase(),
-      path: new URL(url, window.location.origin).pathname,
+      path: parsed.pathname,
+      query: parsed.searchParams,
       body: text === "" ? undefined : (JSON.parse(text) as unknown),
       headers: new Headers(init?.headers ?? original?.headers),
     };

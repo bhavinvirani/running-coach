@@ -7,7 +7,7 @@ import { RouterProvider } from "react-router/dom";
 import { describe, expect, it, vi } from "vitest";
 import { errorMessages } from "@/lib/errors";
 import { json, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
-import { activityFixture, meFixture } from "@/test/fixtures";
+import { activityFixture, importProgressFixture, meFixture, weekFixture } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
 
@@ -22,10 +22,18 @@ function renderApp(path: string) {
   return router;
 }
 
-/** The API for a signed-in runner with one stored run. */
+/** The API for a signed-in runner with one stored run and a finished import. */
 function signedIn({ path }: FakeRequest): Response {
   if (path === "/api/me") return json(meFixture());
   if (path === "/api/activities/latest") return json({ activity: activityFixture() });
+  if (path === "/api/activities") {
+    return json({ weeks: [weekFixture("2026-09-21", [activityFixture()])], nextBefore: null });
+  }
+  if (path === "/api/import") {
+    return json(
+      importProgressFixture({ status: "done", runsStored: 1, finishedAt: "2026-09-27T06:20:00Z" }),
+    );
+  }
   return notFound();
 }
 
@@ -50,10 +58,32 @@ describe("app routes", () => {
     expect(router.state.location.pathname).toBe("/");
 
     const tabs = within(screen.getByRole("navigation", { name: "Tabs" })).getAllByRole("link");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Today", "Settings"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Today", "Progress", "Settings"]);
     expect(tabs[0]).toHaveAttribute("aria-current", "page");
     expect(tabs[0]).toHaveClass("text-accent");
     expect(tabs[1]).not.toHaveAttribute("aria-current");
+    expect(tabs[2]).not.toHaveAttribute("aria-current");
+  });
+
+  it("opens Progress on /progress inside the tab shell and selects only its tab", async () => {
+    stubFetch(signedIn);
+    renderApp("/progress");
+    expect(await screen.findByRole("heading", { name: "Progress" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "21–27 Sep" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Progress" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Today" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("moves from Today to Progress with its tab", async () => {
+    stubFetch(signedIn);
+    const router = renderApp("/");
+    await screen.findByRole("heading", { name: "Today" });
+
+    await userEvent.click(screen.getByRole("link", { name: "Progress" }));
+
+    expect(await screen.findByRole("heading", { name: "Progress" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/progress");
   });
 
   it("selects only the Settings tab on /settings", async () => {
@@ -62,6 +92,7 @@ describe("app routes", () => {
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Today" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Progress" })).not.toHaveAttribute("aria-current");
   });
 
   it("redirects an unknown path to Today", async () => {

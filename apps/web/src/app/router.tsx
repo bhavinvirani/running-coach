@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { isApiError } from "@/api/client";
 import { meQueryOptions } from "@/api/me";
+import { ProgressScreen } from "@/screens/progress/progress-screen";
 import { AppPending } from "./app-pending";
 import { bootRetry } from "./query-client";
 import { ScreenErrorBoundary } from "./screen-error-boundary";
@@ -49,6 +50,12 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               lazy: {
                 Component: async () => (await import("@/screens/today/today-screen")).TodayScreen,
               },
+            },
+            {
+              // Not lazy: no chart yet, and the list is small. It turns lazy with its first chart.
+              path: "progress",
+              ErrorBoundary: ScreenErrorBoundary,
+              Component: ProgressScreen,
             },
             {
               path: "settings",
