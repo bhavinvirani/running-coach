@@ -209,6 +209,67 @@ describe("garminClient", () => {
     expect(calls()).toBe(1);
   });
 
+  it("returns one history page newest first with what Garmin listed, non-runs left out (history page)", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+
+    const response = await withRequestId("req-history-1", () =>
+      garminClient.history({ tokenBundle: garminBundle(), start: 0, limit: 10 }, writeBack()),
+    );
+
+    // The fixture account's ten newest items hold one walk.
+    expect(response.listed).toBe(10);
+    expect(response.activities.map((run) => run.garminActivityId)).toEqual([
+      10_000_000_007, 10_000_000_006, 10_000_000_005, 10_000_000_004, 10_000_000_003,
+      10_000_000_002, 10_000_000_001, 9_000_000_042, 9_000_000_041,
+    ]);
+    expect(new Headers(spy.mock.calls[0]?.[1]?.headers).get("x-request-id")).toBe("req-history-1");
+  });
+
+  it("lists fewer than the limit on the last history page (history end)", async () => {
+    const response = await garminClient.history(
+      { tokenBundle: garminBundle(), start: 40, limit: 10 },
+      writeBack(),
+    );
+
+    expect(response.listed).toBe(9);
+    expect(response.activities.at(-1)?.startLocal).toBe("2023-09-17T09:00:00");
+  });
+
+  it("hands over the bundle Garmin rotated during a history page (rotated token)", async () => {
+    const options = writeBack();
+
+    const response = await garminClient.history(
+      { tokenBundle: garminBundle("rotate"), start: 0, limit: 10 },
+      options,
+    );
+
+    expect(fixtureOf(response.tokenBundle)).toBe("rotated");
+    expect(options.saved).toEqual([response.tokenBundle]);
+  });
+
+  it("does not retry a 429 on a history page and carries retryAfterSeconds (Garmin 429)", async () => {
+    const calls = countServiceCalls("/history");
+
+    const error = await rejection(
+      garminClient.history(
+        { tokenBundle: garminBundle("rate_limited"), start: 0, limit: 10 },
+        writeBack(),
+      ),
+    );
+
+    expect(error).toMatchObject({ code: ErrorCode.garminRateLimited, retryAfterSeconds: 3600 });
+    expect(calls()).toBe(1);
+  });
+
+  it("rejects a history page over the contract's limit before calling the service", async () => {
+    const calls = countServiceCalls("/history");
+
+    await expect(
+      garminClient.history({ tokenBundle: garminBundle(), start: 0, limit: 500 }, writeBack()),
+    ).rejects.toThrow();
+    expect(calls()).toBe(0);
+  });
+
   describe("against a service that drops the first connection, as while its process restarts", () => {
     let server: Server;
     let client: ReturnType<typeof createGarminClient>;

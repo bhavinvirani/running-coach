@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,17 @@ def read_fixture(name: str) -> Any:
     return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
 
 
+def raw_run(**overrides: Any) -> dict[str, Any]:
+    """The long run from sync.json, with fields replaced."""
+    item: dict[str, Any] = copy.deepcopy(read_fixture("sync.json")[0])
+    item.update(overrides)
+    return item
+
+
+def by_id(activities: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return {activity["garminActivityId"]: activity for activity in activities}
+
+
 def assert_valid(name: str, instance: Any) -> None:
     """instance matches packages/shared/src/json-schema/<name>.json, exported from zod."""
     schema = json.loads((JSON_SCHEMA_DIR / f"{name}.json").read_text(encoding="utf-8"))
@@ -55,6 +67,7 @@ class ScriptedGarmin:
         activities: list[dict[str, Any]] | None = None,
         login_error: BaseException | None = None,
         activities_error: BaseException | None = None,
+        list_answer: dict[str, Any] | None = None,
         rotate_to: str | None = None,
         full_name: str | None = "Alex Fixture",
         display_name: str | None = "fixture-runner",
@@ -66,6 +79,8 @@ class ScriptedGarmin:
         # failed profile load); None keeps the bundle sent.
         self._rotate_to = rotate_to
         self._activities_error = activities_error
+        # An object where get_activities should answer a list; None answers `activities`.
+        self._list_answer = list_answer
         self.full_name = full_name
         self.display_name = display_name
         self.calls: list[str] = []
@@ -94,6 +109,21 @@ class ScriptedGarmin:
         self.calls.append(f"get_activities_by_date:{startdate}:{enddate}:{activitytype}")
         if self._activities_error is not None:
             raise self._activities_error
+        return self._activities
+
+    def get_activities(
+        self,
+        start: int = 0,
+        limit: int = 20,
+        activitytype: str | None = None,
+        activitysubtype: str | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        """Answers `activities` as the page, whatever start and limit say."""
+        self.calls.append(f"get_activities:{start}:{limit}:{activitytype}")
+        if self._activities_error is not None:
+            raise self._activities_error
+        if self._list_answer is not None:
+            return self._list_answer
         return self._activities
 
     def connect(self) -> Connect:

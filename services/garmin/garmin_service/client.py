@@ -58,6 +58,14 @@ class GarminApi(Protocol):
         sortorder: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def get_activities(
+        self,
+        start: int = 0,
+        limit: int = 20,
+        activitytype: str | None = None,
+        activitysubtype: str | None = None,
+    ) -> dict[str, Any] | list[Any]: ...
+
 
 class GarminSession:
     """One logged-in client for one request.

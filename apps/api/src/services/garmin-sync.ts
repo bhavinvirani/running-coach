@@ -1,20 +1,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import {
-  ErrorCode,
-  type GarminActivitySummary,
-  type GarminSyncResponse,
-  type SyncResponse,
-} from "@running-coach/shared";
+import type { GarminActivitySummary, SyncResponse } from "@running-coach/shared";
 import { type Column, eq, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
-import { activity, garminConnection, userSettings } from "../db/schema";
-import { DEFAULT_RETRY_AFTER_S, garminClient } from "../garmin/client";
+import { activity, garminConnection } from "../db/schema";
+import { garminClient } from "../garmin/client";
 import { config } from "../lib/config";
-import { decrypt, encrypt } from "../lib/crypto";
-import { DomainError } from "../lib/errors";
 import { addDays, dateChunks, daysBetween, localDateOf, noonUtc } from "../lib/local-date";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
+import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
 
 const log = logger.child({ module: "garmin-sync" });
 
@@ -122,75 +116,6 @@ export function syncStartDate(lastSyncAt: Date | null, timeZone: string, today: 
   return daysBetween(start, today) < 0 ? today : start;
 }
 
-function expired(): DomainError {
-  return new DomainError(
-    ErrorCode.garminAuthExpired,
-    409,
-    "Garmin rejected the saved login. Connect Garmin again.",
-  );
-}
-
-async function readConnection(userId: string) {
-  const [row] = await db
-    .select({
-      tokenBundleEnc: garminConnection.tokenBundleEnc,
-      status: garminConnection.status,
-      lastSyncAt: garminConnection.lastSyncAt,
-      lastError: garminConnection.lastError,
-      updatedAt: garminConnection.updatedAt,
-      timezone: userSettings.timezone,
-    })
-    .from(garminConnection)
-    // Every user gets a settings row at creation (auth.ts), so the join never drops a connection.
-    .innerJoin(userSettings, eq(userSettings.userId, garminConnection.userId))
-    .where(eq(garminConnection.userId, userId));
-  return row;
-}
-
-/**
- * Seconds left of the hour a Garmin 429 blocks the login, or 0 when none is running. updated_at marks the
- * 429: recordFailure wrote last_error then, and nothing else changes the row until a finished chunk
- * (saveChunk) or a reconnect clears last_error, which ends the hour early.
- */
-function rateLimitSecondsLeft(connection: { lastError: string | null; updatedAt: Date }): number {
-  if (connection.lastError !== ErrorCode.garminRateLimited) return 0;
-  const leftMs = connection.updatedAt.getTime() + DEFAULT_RETRY_AFTER_S * 1000 - Date.now();
-  if (leftMs <= 0) return 0;
-  return Math.min(DEFAULT_RETRY_AFTER_S, Math.max(1, Math.ceil(leftMs / 1000)));
-}
-
-/**
- * Stores a bundle Garmin rotated, at once and on its own connection: the old refresh token is dead, so this
- * write must survive whatever fails next.
- */
-async function saveTokenBundle(userId: string, tokenBundle: string): Promise<void> {
-  await db
-    .update(garminConnection)
-    .set({ tokenBundleEnc: encrypt(tokenBundle, userId) })
-    .where(eq(garminConnection.userId, userId));
-}
-
-/**
- * Stores the error code. Only a second garmin_auth_expired in a row marks the login expired: the library
- * swallows a failed token refresh (a 429 or a block on the token endpoint) and reports it as the same 401,
- * and an expired connection is never tried again until the runner reconnects with 2FA. The next sync
- * confirms it with one token login. A success in between clears lastError (saveChunk).
- */
-async function recordFailure(userId: string, error: unknown): Promise<void> {
-  const code = error instanceof DomainError ? error.code : ErrorCode.internal;
-  await db
-    .update(garminConnection)
-    .set({
-      lastError: code,
-      ...(code === ErrorCode.garminAuthExpired
-        ? {
-            status: sql`case when ${garminConnection.lastError} = ${code} then 'expired' else ${garminConnection.status} end`,
-          }
-        : {}),
-    })
-    .where(eq(garminConnection.userId, userId));
-}
-
 /** Saves one finished chunk: runs, then the cursor, together. */
 async function saveChunk(
   userId: string,
@@ -200,14 +125,9 @@ async function saveChunk(
   return db.transaction(async (tx) => {
     const written = await upsertActivities(userId, activities, tx);
     // Never move the cursor back: an older job finishing late must not re-open synced days.
-    await tx
-      .update(garminConnection)
-      .set({
-        lastSyncAt: sql`greatest(${garminConnection.lastSyncAt}, ${cursor.toISOString()}::timestamptz)`,
-        status: "ok",
-        lastError: null,
-      })
-      .where(eq(garminConnection.userId, userId));
+    await recordGarminSuccess(tx, userId, {
+      lastSyncAt: sql`greatest(${garminConnection.lastSyncAt}, ${cursor.toISOString()}::timestamptz)`,
+    });
     return written;
   });
 }
@@ -226,33 +146,11 @@ export async function syncGarmin({
   signal,
 }: SyncGarminInput): Promise<SyncGarminResult> {
   return withUserLock(userId, async () => {
-    const connection = await readConnection(userId);
-    if (!connection) {
-      throw new DomainError(ErrorCode.garminNotConnected, 409, "Connect Garmin first.");
-    }
-    // A known-dead login is not sent again: failed logins are what Garmin rate-limits hardest.
-    if (connection.status === "expired") throw expired();
-    // Nor is a login Garmin rate-limited within the hour: every try during the block is another login,
-    // which can stretch it. The refusal writes nothing, so a tap never pushes the hour forward.
-    const retryAfterSeconds = rateLimitSecondsLeft(connection);
-    if (retryAfterSeconds > 0) {
-      throw new DomainError(
-        ErrorCode.garminRateLimited,
-        429,
-        "Garmin is limiting requests. Try again later.",
-        { retryAfterSeconds },
-      );
-    }
-
-    const timeZone = connection.timezone;
+    const account = await openGarminAccount(userId);
+    const timeZone = account.connection.timezone;
     const today = localDateOf(now ?? new Date(), timeZone);
-    const startDate = syncStartDate(connection.lastSyncAt, timeZone, today);
+    const startDate = syncStartDate(account.connection.lastSyncAt, timeZone, today);
     const chunks = dateChunks(startDate, today, SYNC_CHUNK_DAYS);
-    let bundle = decrypt(connection.tokenBundleEnc, userId);
-    const onTokenBundle = async (rotated: string): Promise<void> => {
-      await saveTokenBundle(userId, rotated);
-      bundle = rotated;
-    };
     let activitiesSeen = 0;
     let activitiesWritten = 0;
 
@@ -260,16 +158,9 @@ export async function syncGarmin({
       signal?.throwIfAborted();
       if (index > 0 && CHUNK_GAP_MS > 0) await sleep(CHUNK_GAP_MS, undefined, { signal });
 
-      let response: GarminSyncResponse;
-      try {
-        response = await garminClient.sync(
-          { tokenBundle: bundle, startDate: chunk.start, endDate: chunk.end },
-          { onTokenBundle },
-        );
-      } catch (error) {
-        await recordFailure(userId, error);
-        throw error;
-      }
+      const response = await account.call((tokenBundle, options) =>
+        garminClient.sync({ tokenBundle, startDate: chunk.start, endDate: chunk.end }, options),
+      );
 
       // The last chunk ends today: the cursor is now. Earlier chunks end on a past day (and so does a
       // pinned `now` in the past): noon UTC of it, whose local date is that day or the next, so the one-day

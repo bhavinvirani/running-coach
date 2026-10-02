@@ -32,6 +32,11 @@ export function errorMessage(error: unknown): string {
   return errorMessages[error.code];
 }
 
+/** What to show for an error code the API stored with a resource (a failed import), when it has one. */
+export function errorCodeMessage(code: ErrorCode | null | undefined): string {
+  return code ? errorMessages[code] : unknownErrorMessage;
+}
+
 /** On the login form a 401 means the credentials were wrong, not that a session ended. */
 export function logInErrorMessage(error: unknown): string {
   if (isApiError(error) && !error.network && error.code === "unauthorized") {

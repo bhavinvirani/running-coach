@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MISSING,
+  formatCount,
+  formatDate,
   formatDateTime,
   formatDistance,
   formatDistanceValue,
   formatDuration,
   formatHeartRate,
   formatLocalDateTime,
+  formatLocalDay,
+  formatMonthYear,
   formatPace,
   formatPaceValue,
+  formatTime,
+  formatWeekRange,
 } from "./format";
 
 describe("formatPace", () => {
@@ -140,5 +146,129 @@ describe("formatDateTime", () => {
   it("shows the missing mark for null and invalid instants", () => {
     expect(formatDateTime(null, "UTC")).toBe(MISSING);
     expect(formatDateTime("not a date", "UTC")).toBe(MISSING);
+  });
+});
+
+describe("formatDate", () => {
+  it("shows the day of a UTC instant in the given time zone", () => {
+    expect(formatDate("2026-10-02T06:40:00Z", "Europe/London")).toBe("2 Oct 2026");
+    // 23:30 UTC is already the next day in Auckland.
+    expect(formatDate("2026-10-02T23:30:00Z", "Pacific/Auckland")).toBe("3 Oct 2026");
+  });
+
+  it("shows the missing mark for null and invalid instants", () => {
+    expect(formatDate(null, "UTC")).toBe(MISSING);
+    expect(formatDate("not a date", "UTC")).toBe(MISSING);
+  });
+});
+
+describe("formatTime", () => {
+  it("shows the wall-clock time of a UTC instant in the given time zone", () => {
+    expect(formatTime("2026-10-02T13:05:00Z", "UTC")).toBe("13:05");
+    expect(formatTime("2026-10-02T13:05:00Z", "Europe/London")).toBe("14:05");
+    expect(formatTime("2026-10-02T13:05:00Z", "Asia/Kolkata")).toBe("18:35");
+  });
+
+  it("follows daylight saving time (DST)", () => {
+    expect(formatTime("2026-10-25T00:30:00Z", "Europe/London")).toBe("01:30");
+    expect(formatTime("2026-10-25T01:30:00Z", "Europe/London")).toBe("01:30");
+    expect(formatTime("2026-10-25T02:30:00Z", "Europe/London")).toBe("02:30");
+  });
+
+  it("shows the missing mark for null and invalid instants", () => {
+    expect(formatTime(undefined, "UTC")).toBe(MISSING);
+    expect(formatTime("soon", "UTC")).toBe(MISSING);
+  });
+});
+
+describe("formatLocalDay", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("shows the weekday and date of the run's own wall-clock start", () => {
+    expect(formatLocalDay("2026-09-27T07:12:00")).toBe("Sun 27 Sep");
+    expect(formatLocalDay("2026-09-28T23:55:00")).toBe("Mon 28 Sep");
+  });
+
+  it("keeps a run late on Sunday night on Sunday whatever the device's zone (time zones)", () => {
+    vi.stubEnv("TZ", "Pacific/Auckland");
+    expect(formatLocalDay("2026-09-27T23:30:00")).toBe("Sun 27 Sep");
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    expect(formatLocalDay("2026-03-29T01:30:00")).toBe("Sun 29 Mar");
+  });
+
+  it("shows the missing mark for null and malformed values", () => {
+    expect(formatLocalDay(null)).toBe(MISSING);
+    expect(formatLocalDay("27/09/2026")).toBe(MISSING);
+    expect(formatLocalDay("2026-02-30T07:12:00")).toBe(MISSING);
+  });
+});
+
+describe("formatMonthYear", () => {
+  it("shows the month and year of a calendar date", () => {
+    expect(formatMonthYear("2021-03-14")).toBe("Mar 2021");
+    expect(formatMonthYear("2026-12-01")).toBe("Dec 2026");
+  });
+
+  it("shows the missing mark for null and malformed dates", () => {
+    expect(formatMonthYear(null)).toBe(MISSING);
+    expect(formatMonthYear("2021-13-01")).toBe(MISSING);
+    expect(formatMonthYear("March 2021")).toBe(MISSING);
+  });
+});
+
+describe("formatWeekRange", () => {
+  it("shows a week within one month as one range", () => {
+    expect(formatWeekRange("2026-09-21")).toBe("21–27 Sep");
+    expect(formatWeekRange("2026-09-21", "2026-09-21")).toBe("21–27 Sep");
+  });
+
+  it("names both months when the week crosses into the next one", () => {
+    expect(formatWeekRange("2026-09-28")).toBe("28 Sep – 4 Oct");
+    expect(formatWeekRange("2026-09-29")).toBe("29 Sep – 5 Oct");
+  });
+
+  it("leaves out the year for weeks in the newest week's year", () => {
+    expect(formatWeekRange("2026-01-05", "2026-09-21")).toBe("5–11 Jan");
+    expect(formatWeekRange("2026-02-23", "2026-09-21")).toBe("23 Feb – 1 Mar");
+  });
+
+  it("adds the year to weeks of earlier years, so years of history stay unambiguous", () => {
+    expect(formatWeekRange("2025-03-10", "2026-09-21")).toBe("10–16 Mar 2025");
+    expect(formatWeekRange("2025-09-29", "2026-09-21")).toBe("29 Sep – 5 Oct 2025");
+  });
+
+  it("names both years when the week crosses New Year", () => {
+    expect(formatWeekRange("2025-12-29", "2026-09-21")).toBe("29 Dec 2025 – 4 Jan 2026");
+    expect(formatWeekRange("2025-12-29", "2025-12-29")).toBe("29 Dec 2025 – 4 Jan 2026");
+  });
+
+  it("counts a week across a DST change as seven calendar days (DST)", () => {
+    // Clocks change on 25 Oct 2026 in Europe and 1 Nov 2026 in the US; the range only reads dates.
+    expect(formatWeekRange("2026-10-19")).toBe("19–25 Oct");
+    expect(formatWeekRange("2026-10-26")).toBe("26 Oct – 1 Nov");
+  });
+
+  it("shows the missing mark for null and malformed dates", () => {
+    expect(formatWeekRange(null)).toBe(MISSING);
+    expect(formatWeekRange("2026-02-30")).toBe(MISSING);
+  });
+});
+
+describe("formatCount", () => {
+  it("uses the singular for one and the plural otherwise", () => {
+    expect(formatCount(1, "run", "runs")).toBe("1 run");
+    expect(formatCount(0, "run", "runs")).toBe("0 runs");
+    expect(formatCount(340, "run", "runs")).toBe("340 runs");
+  });
+
+  it("groups thousands", () => {
+    expect(formatCount(1240, "run", "runs")).toBe("1,240 runs");
+  });
+
+  it("shows the missing mark for negative and non-finite counts", () => {
+    expect(formatCount(-1, "run", "runs")).toBe(MISSING);
+    expect(formatCount(Number.NaN, "run", "runs")).toBe(MISSING);
   });
 });

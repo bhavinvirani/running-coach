@@ -60,14 +60,11 @@ export function formatHeartRate(bpm: number | null | undefined): string {
   return Math.round(bpm).toString();
 }
 
-/**
- * A UTC instant shown in the user's time zone: "Sun 27 Sep 2026, 11:42".
- * Built from parts so the output is the same in every browser (ICU spells September "Sept" in en-GB).
- */
-export function formatDateTime(isoUtc: string | null | undefined, timeZone: string): string {
-  if (!isoUtc) return MISSING;
+/** The calendar fields of a UTC instant in a time zone, read from parts so every browser agrees. */
+function zonedParts(isoUtc: string | null | undefined, timeZone: string) {
+  if (!isoUtc) return null;
   const date = new Date(isoUtc);
-  if (Number.isNaN(date.getTime())) return MISSING;
+  if (Number.isNaN(date.getTime())) return null;
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     weekday: "short",
@@ -80,31 +77,124 @@ export function formatDateTime(isoUtc: string | null | undefined, timeZone: stri
   }).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((item) => item.type === type)?.value ?? "";
-  const month = MONTHS[Number(part("month")) - 1] ?? "";
-  return `${part("weekday")} ${part("day")} ${month} ${part("year")}, ${part("hour")}:${part("minute")}`;
+  return {
+    weekday: part("weekday"),
+    day: part("day"),
+    month: MONTHS[Number(part("month")) - 1] ?? "",
+    year: part("year"),
+    time: `${part("hour")}:${part("minute")}`,
+  };
 }
 
-const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/;
+/**
+ * A UTC instant shown in the user's time zone: "Sun 27 Sep 2026, 11:42".
+ * Built from parts so the output is the same in every browser (ICU spells September "Sept" in en-GB).
+ */
+export function formatDateTime(isoUtc: string | null | undefined, timeZone: string): string {
+  const zoned = zonedParts(isoUtc, timeZone);
+  if (!zoned) return MISSING;
+  return `${zoned.weekday} ${zoned.day} ${zoned.month} ${zoned.year}, ${zoned.time}`;
+}
+
+/** The date of a UTC instant in the user's time zone: "2 Oct 2026". */
+export function formatDate(isoUtc: string | null | undefined, timeZone: string): string {
+  const zoned = zonedParts(isoUtc, timeZone);
+  return zoned ? `${zoned.day} ${zoned.month} ${zoned.year}` : MISSING;
+}
+
+/** The wall-clock time of a UTC instant in the user's time zone: "14:05". */
+export function formatTime(isoUtc: string | null | undefined, timeZone: string): string {
+  return zonedParts(isoUtc, timeZone)?.time ?? MISSING;
+}
+
+type CalendarDay = { year: number; month: number; day: number };
+
+/**
+ * "2026-09-27" or "2026-09-27T07:12:00" read from its digits, never through a Date in the device's zone,
+ * which would shift or reject an hour that a DST change skips. Null for anything that is not a real day.
+ */
+function calendarDay(value: string | null | undefined): CalendarDay | null {
+  const match = value ? /^(\d{4})-(\d{2})-(\d{2})/.exec(value) : null;
+  if (!match) return null;
+  const [year, month, day] = match.slice(1).map(Number) as [number, number, number];
+  const date = utcDate({ year, month, day });
+  if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return { year, month, day };
+}
+
+/** Only for weekday and day arithmetic: UTC has no DST, so the calendar day never moves. */
+function utcDate({ year, month, day }: CalendarDay): Date {
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function addDays(day: CalendarDay, days: number): CalendarDay {
+  const date = utcDate(day);
+  date.setUTCDate(date.getUTCDate() + days);
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+}
+
+function weekdayOf(day: CalendarDay): string {
+  return WEEKDAYS[utcDate(day).getUTCDay()] ?? "";
+}
+
+function monthOf(day: CalendarDay): string {
+  return MONTHS[day.month - 1] ?? "";
+}
+
+const LOCAL_TIME = /^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2})/;
 
 /**
  * A run's start as its watch showed it, "2026-09-27T07:12:00" → "Sun 27 Sep, 07:12": the runner remembers
- * the local time where they ran, even when the device is now in another zone. Read from the digits, never
- * through a Date in the device's zone, which would shift or reject an hour that a DST change skips.
+ * the local time where they ran, even when the device is now in another zone.
  */
 export function formatLocalDateTime(local: string | null | undefined): string {
-  const match = local ? LOCAL_DATE_TIME.exec(local) : null;
-  if (!match) return MISSING;
-  // The pattern has exactly five groups, all digits.
-  const [year, month, day, hour, minute] = match.slice(1).map(Number) as [
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
-  // Date.UTC only for the weekday: UTC has no DST, so the calendar day never moves.
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return MISSING;
-  const weekday = WEEKDAYS[date.getUTCDay()] ?? "";
-  return `${weekday} ${day} ${MONTHS[month - 1] ?? ""}, ${pad2(hour)}:${pad2(minute)}`;
+  const day = calendarDay(local);
+  const time = local ? LOCAL_TIME.exec(local) : null;
+  if (!day || !time) return MISSING;
+  return `${weekdayOf(day)} ${day.day} ${monthOf(day)}, ${time[1] ?? ""}:${time[2] ?? ""}`;
+}
+
+/** The day of a run's local start, "2026-09-27T07:12:00" → "Sun 27 Sep". */
+export function formatLocalDay(local: string | null | undefined): string {
+  const day = calendarDay(local);
+  return day ? `${weekdayOf(day)} ${day.day} ${monthOf(day)}` : MISSING;
+}
+
+/** A calendar date as month and year, "2021-03-14" → "Mar 2021". */
+export function formatMonthYear(date: string | null | undefined): string {
+  const day = calendarDay(date);
+  return day ? `${monthOf(day)} ${day.year}` : MISSING;
+}
+
+/**
+ * A Monday-to-Sunday week from its Monday: "21–27 Sep", "29 Sep – 5 Oct". History reaches back years, so
+ * a week outside the year in which `newestWeekStart` ends gets its year: "10–16 Mar 2025",
+ * "29 Dec 2025 – 4 Jan 2026". The newest week shown is the reference rather than today, so the label
+ * depends on the data alone.
+ */
+export function formatWeekRange(
+  weekStart: string | null | undefined,
+  newestWeekStart?: string | null,
+): string {
+  const start = calendarDay(weekStart);
+  if (!start) return MISSING;
+  const end = addDays(start, 6);
+  const newest = calendarDay(newestWeekStart);
+  const referenceYear = newest ? addDays(newest, 6).year : end.year;
+  const withYear = start.year !== referenceYear || end.year !== referenceYear;
+
+  if (start.year !== end.year) {
+    return `${start.day} ${monthOf(start)} ${start.year} – ${end.day} ${monthOf(end)} ${end.year}`;
+  }
+  const year = withYear ? ` ${end.year}` : "";
+  if (start.month === end.month) return `${start.day}–${end.day} ${monthOf(end)}${year}`;
+  return `${start.day} ${monthOf(start)} – ${end.day} ${monthOf(end)}${year}`;
+}
+
+const COUNT = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
+
+/** A count with its noun: 1, "run", "runs" → "1 run"; 1240 → "1,240 runs". */
+export function formatCount(count: number, singular: string, plural: string): string {
+  if (!isFiniteNumber(count) || count < 0) return MISSING;
+  return `${COUNT.format(count)} ${count === 1 ? singular : plural}`;
 }

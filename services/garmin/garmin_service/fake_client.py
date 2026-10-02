@@ -1,5 +1,10 @@
 """Fixture mode (GARMIN_FIXTURES=1): a fake Garmin serving tests/fixtures/*.json, no network.
 
+One fake account: profile.json is the runner; the activities are sync.json (the latest weeks) plus
+history.json (hand-made fake years before them, with non-runs mixed in).
+Both list calls serve that union newest first and ignore the activity type, so the routes' own run
+filter must hold by itself.
+
 The token bundle drives the behaviour, so the API's integration tests and e2e reach every path
 through the real service. Base bundle:
     {"di_token":"fixture-token","di_refresh_token":"fixture-refresh","di_client_id":"fixture-client"}
@@ -25,6 +30,7 @@ from garminconnect import (
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
+ACTIVITY_FIXTURES = ("sync.json", "history.json")
 
 # What garminconnect's _run_request raises underneath login() for each simulated failure.
 _LOGIN_FAILURES = {
@@ -103,22 +109,42 @@ class FakeGarmin:
         activitytype: str | None = None,
         sortorder: str | None = None,
     ) -> list[dict[str, Any]]:
-        if self._fail_next_call is not None:
-            behaviour, self._fail_next_call = self._fail_next_call, None
-            raise _call_failure(behaviour)
-        # activitytype is ignored on purpose: the route's own running filter must hold by itself.
-        items = self._read("sync.json")
-        if not isinstance(items, list):
-            raise TypeError("sync.json must hold a list")
+        self._fail_pending_call()
         last = enddate or "9999-12-31"
         selected = [
             item
-            for item in items
-            if isinstance(item, dict) and startdate <= str(item["startTimeLocal"])[:10] <= last
+            for item in self._account()
+            if startdate <= str(item["startTimeLocal"])[:10] <= last
         ]
-        # Garmin's default order is newest first by startTimeLocal.
-        selected.sort(key=lambda item: str(item["startTimeLocal"]), reverse=sortorder != "asc")
+        if sortorder == "asc":
+            selected.reverse()
         return selected
+
+    def get_activities(
+        self,
+        start: int = 0,
+        limit: int = 20,
+        activitytype: str | None = None,
+        activitysubtype: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._fail_pending_call()
+        return self._account()[start : start + limit]
+
+    def _fail_pending_call(self) -> None:
+        if self._fail_next_call is not None:
+            behaviour, self._fail_next_call = self._fail_next_call, None
+            raise _call_failure(behaviour)
+
+    def _account(self) -> list[dict[str, Any]]:
+        """Every activity of the fake account, newest first by startTimeLocal like Garmin."""
+        items: list[dict[str, Any]] = []
+        for name in ACTIVITY_FIXTURES:
+            listed = self._read(name)
+            if not isinstance(listed, list):
+                raise TypeError(f"{name} must hold a list")
+            items.extend(item for item in listed if isinstance(item, dict))
+        items.sort(key=lambda item: str(item["startTimeLocal"]), reverse=True)
+        return items
 
     def _read(self, name: str) -> Any:
         return json.loads((self._fixtures_dir / name).read_text(encoding="utf-8"))

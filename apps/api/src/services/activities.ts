@@ -1,5 +1,11 @@
-import type { Activity, LatestActivityResponse } from "@running-coach/shared";
-import { desc, eq } from "drizzle-orm";
+import type {
+  Activity,
+  ActivityWeek,
+  ActivityWeeksQuery,
+  ActivityWeeksResponse,
+  LatestActivityResponse,
+} from "@running-coach/shared";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { activity } from "../db/schema";
 
@@ -43,4 +49,55 @@ export async function getLatestActivity(userId: string): Promise<LatestActivityR
     .orderBy(desc(activity.startUtc), desc(activity.garminActivityId))
     .limit(1);
   return { activity: row ? toActivity(row) : null };
+}
+
+// The Monday that starts a run's week, from its wall-clock start: date_trunc('week') on a timestamp without
+// zone is the ISO week of the date the runner lived, whatever zone the run was in.
+const weekOf = sql`date_trunc('week', ${activity.startLocal})`;
+const weekStartOf = sql<string>`to_char(${weekOf}, 'YYYY-MM-DD')`;
+
+/**
+ * GET /api/activities: the latest `weeks` weeks with runs that start before `before`, whole weeks newest
+ * first, each with its runs newest first and its totals. One more week is looked up to tell whether an older
+ * page exists; nextBefore is then the oldest week returned.
+ */
+export async function listActivityWeeks(
+  userId: string,
+  { before, weeks }: ActivityWeeksQuery,
+): Promise<ActivityWeeksResponse> {
+  const ofUser = eq(activity.userId, userId);
+  const beforeWeek = before === undefined ? undefined : sql`${weekOf} < ${before}::date`;
+  const weekRows = await db
+    .select({ weekStart: weekStartOf })
+    .from(activity)
+    .where(and(ofUser, beforeWeek))
+    .groupBy(weekOf)
+    .orderBy(desc(weekOf))
+    .limit(weeks + 1);
+  const shown = weekRows.slice(0, weeks).map((row) => row.weekStart);
+  const oldest = shown.at(-1);
+  if (oldest === undefined) return { weeks: [], nextBefore: null };
+
+  const rows = await db
+    .select({ ...columns, weekStart: weekStartOf })
+    .from(activity)
+    .where(and(ofUser, beforeWeek, sql`${weekOf} >= ${oldest}::date`))
+    // Garmin ids grow over time, so they break a tie between two runs saved with the same start.
+    .orderBy(desc(activity.startLocal), desc(activity.garminActivityId));
+
+  const byWeek = new Map<string, ActivityWeek>();
+  for (const { weekStart, ...row } of rows) {
+    let week = byWeek.get(weekStart);
+    if (!week) {
+      week = { weekStart, distanceM: 0, durationS: 0, runs: [] };
+      byWeek.set(weekStart, week);
+    }
+    week.distanceM += row.distanceM;
+    week.durationS += row.durationS;
+    week.runs.push(toActivity(row));
+  }
+  return {
+    weeks: [...byWeek.values()],
+    nextBefore: weekRows.length > weeks ? oldest : null,
+  };
 }

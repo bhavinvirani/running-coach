@@ -51,6 +51,14 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               },
             },
             {
+              path: "progress",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () =>
+                  (await import("@/screens/progress/progress-screen")).ProgressScreen,
+              },
+            },
+            {
               path: "settings",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {

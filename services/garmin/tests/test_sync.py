@@ -2,32 +2,27 @@
 
 from __future__ import annotations
 
-import copy
 import json
-from typing import Any
 
 import pytest
 from garminconnect import GarminConnectTooManyRequestsError
 
 from tests.conftest import AppFactory
-from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle, read_fixture, rotated
+from tests.helpers import (
+    BASE_BUNDLE,
+    ScriptedGarmin,
+    bundle,
+    by_id,
+    raw_run,
+    read_fixture,
+    rotated,
+)
 
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
 
 
 def sync_body(**overrides: str) -> dict[str, str]:
     return {"tokenBundle": bundle(), **FULL_RANGE, **overrides}
-
-
-def by_id(activities: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    return {activity["garminActivityId"]: activity for activity in activities}
-
-
-def raw_run(**overrides: Any) -> dict[str, Any]:
-    """The long run from sync.json, with fields replaced."""
-    item: dict[str, Any] = copy.deepcopy(read_fixture("sync.json")[0])
-    item.update(overrides)
-    return item
 
 
 def test_returns_every_fixture_run_newest_first_with_the_unchanged_bundle(

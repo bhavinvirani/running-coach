@@ -2,6 +2,7 @@ import { ErrorCode } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/api/client";
 import {
+  errorCodeMessage,
   errorMessage,
   errorMessages,
   logInErrorMessage,
@@ -35,6 +36,20 @@ describe("errorMessage", () => {
     expect(errorMessage(new Error("boom"))).toBe(unknownErrorMessage);
     expect(errorMessage("boom")).toBe(unknownErrorMessage);
     expect(errorMessage(undefined)).toBe(unknownErrorMessage);
+  });
+});
+
+describe("errorCodeMessage", () => {
+  it("uses the shared message for a stored error code", () => {
+    expect(errorCodeMessage(ErrorCode.garminAuthExpired)).toBe(
+      "Garmin login expired. Reconnect in Settings.",
+    );
+    expect(errorCodeMessage(ErrorCode.garminUnavailable)).toBe(errorMessages.garmin_unavailable);
+  });
+
+  it("falls back when no code was stored", () => {
+    expect(errorCodeMessage(null)).toBe(unknownErrorMessage);
+    expect(errorCodeMessage(undefined)).toBe(unknownErrorMessage);
   });
 });
 
