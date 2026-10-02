@@ -12,6 +12,7 @@ Node 24, pnpm 10 (`corepack enable`), Docker, [uv](https://docs.astral.sh/uv/).
 cp .env.example .env              # the local values work as they are
 pnpm install
 (cd services/garmin && uv sync)   # the API spawns the Garmin service from this venv
+pnpm --filter @running-coach/web exec playwright install chromium   # once, for pnpm test:e2e
 ```
 
 ## Run
@@ -28,8 +29,8 @@ Database: `pnpm db:generate` writes a SQL migration from the Drizzle schema, `pn
 ```sh
 pnpm check                  # typecheck, lint, boundaries, contract drift, unit and integration tests (what CI runs)
 pnpm test                   # Vitest only
-pnpm test:e2e               # Playwright flows against the local stack
-pnpm test:screens           # screenshots inside the Playwright Docker image; --update rewrites the baselines
+pnpm test:e2e               # Playwright flows; starts its own API on port 4173 with the e2e database
+pnpm test:screens           # screenshots, browser in the Playwright Docker image (needs Docker; first pull about 2 GB); --update rewrites the baselines
 pnpm py:check               # ruff, mypy and pytest for services/garmin
 pnpm build                  # production bundles
 pnpm contract:build         # zod contracts to JSON Schema in packages/shared/src/json-schema/

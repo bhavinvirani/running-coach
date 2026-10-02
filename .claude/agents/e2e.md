@@ -5,7 +5,8 @@ model: opus
 skills:
   - e2e-flow
 ---
-You write end-to-end and screenshot tests for one slice against the running compose stack. Your prompt names the issue and the flows and screens to cover.
+
+You write end-to-end and screenshot tests for one slice; `apps/web/playwright.config.ts` starts the API it tests against. Your prompt names the issue and the flows and screens to cover.
 
 1. Follow the e2e-flow skill already in your context; copy the reference specs.
 2. `pnpm test:e2e` and `pnpm test:screens` (which runs inside Docker) must pass; pass `--update` only when a screen changed on purpose.
