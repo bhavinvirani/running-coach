@@ -660,13 +660,19 @@ describe("POST /api/activities/:id/detail", () => {
   });
 
   it("returns 404 not_found and stores nothing when Garmin no longer has the run (deleted on Garmin)", async () => {
-    const { agent, run } = await ownerWithRun(DELETED_ON_GARMIN);
+    const { agent, userId, run } = await ownerWithRun(DELETED_ON_GARMIN);
+    // A first expiry strike stands until a call finishes; Garmin's 404 came from a working login.
+    await db
+      .update(garminConnection)
+      .set({ lastError: ErrorCode.garminAuthExpired })
+      .where(eq(garminConnection.userId, userId));
 
     const response = await agent.post(detailPath(run.id));
 
     const problem = expectProblem(response, 404, ErrorCode.notFound);
     expect(problem.detail).toBe("That run is no longer on Garmin Connect.");
     expect(await stored()).toEqual({ laps: [], streams: [] });
+    expect(await storedConnection(userId)).toMatchObject({ status: "ok", lastError: null });
   });
 
   it("returns 404 not_found for an unknown id or another user's run without calling Garmin", async () => {

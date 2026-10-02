@@ -149,7 +149,13 @@ export async function openGarminAccount(userId: string): Promise<GarminAccount> 
       try {
         return await fn(bundle, { onTokenBundle });
       } catch (error) {
-        await recordFailure(userId, error);
+        // A 404 for one run (deleted on Garmin Connect) is an answer from a working login, so it counts as a
+        // finished call: recording it as a failure would reset the expiry strike or hide a 429 hour.
+        if (error instanceof DomainError && error.code === ErrorCode.notFound) {
+          await recordGarminSuccess(db, userId);
+        } else {
+          await recordFailure(userId, error);
+        }
         throw error;
       }
     },

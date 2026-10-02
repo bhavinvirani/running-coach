@@ -37,8 +37,8 @@ import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } fr
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
 // caller's onTokenBundle, awaited before the call returns, retries or throws; a retry sends the new one.
 
-// Sync and history pages list many activities, and an activity's detail is a login plus three paced calls;
-// the api rule's 60 s covers all three.
+// Sync and history pages list many activities, and an activity's detail is a login plus three paced calls:
+// 60 s for all three (api rule), 20 s for the rest.
 const SYNC_TIMEOUT_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 /** Garmin blocks last about an hour; the service sends 3600 when Garmin gives no delay. */
