@@ -5,7 +5,8 @@ import { config } from "../lib/config";
 import { DomainError } from "../lib/errors";
 
 // The GitHub Actions cron's guard (SPEC: Scheduler): it has no session, only the CRON_SECRET bearer token.
-// No rate limit: the secret is 256 bits and a wrong one does no work.
+// No rate limit: the secret is a long random value (openssl rand -hex 32, issue #20) and a wrong one does no
+// work.
 
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest();
 

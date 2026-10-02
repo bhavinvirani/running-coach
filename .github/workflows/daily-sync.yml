@@ -1,7 +1,8 @@
 # The daily sync (SPEC, Scheduler): one POST to the secret-protected cron endpoint, which queues a
-# background sync per user with a working Garmin login, keyed on that user's local date, so a second
-# fire on the same date queues nothing. Needs the repository secrets APP_URL (the Render origin) and
-# CRON_SECRET (the value Render holds), issue #20. A failed run emails whoever last edited the schedule.
+# background sync per user with a working Garmin login, keyed on the fire's UTC date
+# (services/daily-sync.ts), so a second fire or a retry on the same UTC day queues nothing. Needs the
+# repository secrets APP_URL (the Render origin) and CRON_SECRET (the value Render holds), issue #20.
+# A failed run emails whoever last edited the schedule.
 name: Daily sync
 
 on:
@@ -21,7 +22,8 @@ jobs:
     # Forks have neither the secrets nor the service.
     if: github.repository == 'bhavinvirani/running-coach'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Covers the wake loop's worst case (8 tries of up to 105 s) plus the POST and its retries.
+    timeout-minutes: 20
     steps:
       - name: Queue the daily sync
         shell: bash
