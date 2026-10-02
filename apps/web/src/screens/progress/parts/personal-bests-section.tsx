@@ -4,7 +4,7 @@ import type { ScreenState } from "@/api/screen-state";
 import { RetryAlert } from "@/components/retry-alert";
 import { cn } from "@/lib/cn";
 import { DISTANCE_KEYS } from "@/lib/distance-labels";
-import { checkingRunsLine, progressCopy } from "../progress-copy";
+import { type PendingBestsLine, pendingBestsLine, progressCopy } from "../progress-copy";
 import { PersonalBestBadge } from "./personal-best-badge";
 
 type PersonalBestsSectionProps = {
@@ -16,7 +16,8 @@ type PersonalBestsSectionProps = {
 /**
  * The runner's best time at each of the eleven distances, shortest first, on one card at the top of
  * Progress. It loads and fails on its own, so the weeks below stay usable whatever happens here. While
- * the best-efforts job still works through runs, a line under the heading says how many.
+ * runs wait for their best efforts, a line under the heading says how many are being checked, or why
+ * none are and what to do.
  */
 export function PersonalBestsSection({ state, checkedAt }: PersonalBestsSectionProps) {
   return (
@@ -40,7 +41,8 @@ function PersonalBestsContent({ state, checkedAt }: PersonalBestsSectionProps) {
     return <RetryAlert error={state.error} onRetry={() => void state.refetch()} />;
   }
 
-  const { bests, garmin, pendingRuns } = state.data;
+  const { bests, garmin } = state.data;
+  const pending = pendingBestsLine(state.data);
   const bestByDistance = new Map(bests.map((best) => [best.distanceKey, best]));
   const garminByDistance = new Map<DistanceKey, GarminRecord>(
     (garmin?.records ?? []).map((record) => [record.distanceKey, record]),
@@ -48,9 +50,7 @@ function PersonalBestsContent({ state, checkedAt }: PersonalBestsSectionProps) {
 
   return (
     <>
-      {pendingRuns > 0 ? (
-        <p className="text-caption text-ink-2">{checkingRunsLine(pendingRuns)}</p>
-      ) : null}
+      {pending ? <PendingLine line={pending} /> : null}
       {state.refetchError ? (
         <RetryAlert error={state.refetchError} onRetry={() => void state.refetch()} />
       ) : null}
@@ -67,6 +67,17 @@ function PersonalBestsContent({ state, checkedAt }: PersonalBestsSectionProps) {
         ))}
       </BadgeGrid>
     </>
+  );
+}
+
+/** A check stopped for a known reason reads as an error sentence, like a failed import; else a caption. */
+function PendingLine({ line }: { line: PendingBestsLine }) {
+  return line.stopped ? (
+    <p role="alert" className="text-body text-ink">
+      {line.text}
+    </p>
+  ) : (
+    <p className="text-caption text-ink-2">{line.text}</p>
   );
 }
 

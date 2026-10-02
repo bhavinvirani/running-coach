@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { json, notFound, stubFetch } from "@/test/fake-api";
-import { importProgressFixture } from "@/test/fixtures";
+import { importProgressFixture, personalBestsFixture } from "@/test/fixtures";
 import { holdPolls } from "@/test/held-polls";
 import { testQueryClient } from "@/test/render";
 import { useActivityWeeks } from "./activities";
@@ -97,7 +97,7 @@ describe("useImportProgress", () => {
     const { api, count } = fakeImportApi(importAt("running", 10));
     const { result, queryClient } = renderImportHooks();
     queryClient.setQueryData(detailKey("activities", "latest"), { activity: null });
-    queryClient.setQueryData(personalBestsKey, { bests: [], garmin: null, pendingRuns: 0 });
+    queryClient.setQueryData(personalBestsKey, personalBestsFixture());
     await waitFor(() => expect(result.current.weeks.isSuccess).toBe(true));
     await waitFor(() => expect(result.current.progress.isSuccess).toBe(true));
     expect(count("GET", "/api/activities")).toBe(1);

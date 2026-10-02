@@ -285,6 +285,34 @@ describe("TodayScreen", () => {
     },
   );
 
+  it.each([
+    { state: "being checked", checking: true, errorCode: null },
+    {
+      state: "stopped on an expired Garmin login",
+      checking: false,
+      errorCode: ErrorCode.garminAuthExpired,
+    },
+    { state: "waiting for the next sync", checking: false, errorCode: null },
+  ] as const)(
+    "stays quiet about runs whose best efforts are $state: only the PB chip",
+    async ({ checking, errorCode }) => {
+      fakeTodayApi({
+        bests: personalBestsFixture({
+          bests: [personalBestFixture({ distanceKey: "5k" })],
+          pendingRuns: 340,
+          checking,
+          errorCode,
+        }),
+      });
+      renderToday();
+
+      const run = await screen.findByRole("region", { name: "Latest run" });
+      expect(await within(run).findByText("PB 5K")).toBeInTheDocument();
+      expect(screen.queryByText(/best efforts|Garmin login expired/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
   it("flags the new run with a PB chip after Sync now once its best efforts are in (flag after sync)", async () => {
     const calls = fakeTodayApi({
       synced: newerRun,

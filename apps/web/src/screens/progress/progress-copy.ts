@@ -1,4 +1,4 @@
-import type { ImportProgress, ImportStatus } from "@running-coach/shared";
+import type { ImportProgress, ImportStatus, PersonalBestsResponse } from "@running-coach/shared";
 import { errorCodeMessage } from "@/lib/errors";
 import { formatCount, formatDate, formatMonthYear, formatTime } from "@/lib/format";
 
@@ -71,9 +71,24 @@ export function importLine(progress: ImportProgress, timeZone: string): string {
   }
 }
 
-/** Under Personal bests while the best-efforts job works through runs: "Checking 340 runs for best efforts". */
-export function checkingRunsLine(pendingRuns: number): string {
-  return `Checking ${runs(pendingRuns)} for best efforts`;
+/** The line under Personal bests; `stopped` makes it an error sentence rather than a caption. */
+export type PendingBestsLine = { text: string; stopped: boolean };
+
+/**
+ * The line under Personal bests while runs wait for their best efforts, null once none do. While a job
+ * checks them it counts them. With no job, it says why in the words the import line uses for a failed
+ * import, which name what to do ("Reconnect in Settings"), or, with no reason known, that the next sync,
+ * which queues the work again, checks them.
+ */
+export function pendingBestsLine({
+  pendingRuns,
+  checking,
+  errorCode,
+}: Pick<PersonalBestsResponse, "pendingRuns" | "checking" | "errorCode">): PendingBestsLine | null {
+  if (pendingRuns === 0) return null;
+  if (checking) return { text: `Checking ${runs(pendingRuns)} for best efforts`, stopped: false };
+  if (errorCode !== null) return { text: errorCodeMessage(errorCode), stopped: true };
+  return { text: `The next sync checks ${runs(pendingRuns)} for best efforts.`, stopped: false };
 }
 
 /** Garmin's own record for a distance, already formatted, beside the app's: "Garmin 27:05". */

@@ -1036,9 +1036,9 @@ describe("ProgressScreen personal bests", () => {
     expect(router.state.location.pathname).toBe(`/runs/${sundayRun.id}`);
   });
 
-  it("says how many runs are still being checked, polls every 15 s, and drops the line at 0 (pending)", async () => {
+  it("says how many runs a job is checking, polls every 15 s while it checks, and drops the line at 0 (checking)", async () => {
     const { api, calls } = fakeProgressApi({
-      bests: personalBestsFixture({ pendingRuns: 340 }),
+      bests: personalBestsFixture({ pendingRuns: 340, checking: true }),
     });
     renderProgress();
 
@@ -1048,7 +1048,7 @@ describe("ProgressScreen personal bests", () => {
     expect(line).toHaveClass("text-caption", "text-ink-2");
     expect(polls.delays()).toEqual([15_000]);
 
-    api.bests = personalBestsFixture({ ...bestsFound, pendingRuns: 1 });
+    api.bests = personalBestsFixture({ ...bestsFound, pendingRuns: 1, checking: true });
     act(() => polls.fire());
     expect(await screen.findByText("Checking 1 run for best efforts")).toBeInTheDocument();
     expect(within(badge("5K")).getByText("27:05")).toBeInTheDocument();
@@ -1056,19 +1056,79 @@ describe("ProgressScreen personal bests", () => {
     api.bests = bestsFound;
     act(() => polls.fire());
 
-    await vi.waitFor(() => expect(screen.queryByText(/for best efforts/)).not.toBeInTheDocument());
+    await vi.waitFor(() => expect(screen.queryByText(/best efforts/)).not.toBeInTheDocument());
     expect(polls.delays()).toEqual([]);
     expect(calls.filter((call) => call.path === "/api/personal-bests")).toHaveLength(3);
   });
 
-  it("does not poll the bests when no run is waiting", async () => {
-    fakeProgressApi({ bests: bestsFound });
+  it("stops polling when the check stops with runs still pending, and says the next sync checks them (no job, no reason)", async () => {
+    const { api } = fakeProgressApi({
+      bests: personalBestsFixture({ ...bestsFound, pendingRuns: 340, checking: true }),
+    });
+    renderProgress();
+    await screen.findByText("Checking 340 runs for best efforts");
+    expect(polls.delays()).toEqual([15_000]);
+
+    api.bests = personalBestsFixture({ ...bestsFound, pendingRuns: 12 });
+    act(() => polls.fire());
+
+    const line = await within(bestsRegion()).findByText(
+      "The next sync checks 12 runs for best efforts.",
+    );
+    expect(line).toHaveClass("text-caption", "text-ink-2");
+    expect(polls.delays()).toEqual([]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(badge("5K")).getByText("27:05")).toBeInTheDocument();
+  });
+
+  it("says the Garmin login expired and to reconnect when runs are pending with no job to check them (garmin_auth_expired)", async () => {
+    fakeProgressApi({
+      bests: personalBestsFixture({
+        ...bestsFound,
+        pendingRuns: 340,
+        errorCode: ErrorCode.garminAuthExpired,
+      }),
+    });
     renderProgress();
     await findBadges();
 
-    expect(screen.queryByText(/for best efforts/)).not.toBeInTheDocument();
+    const alert = within(bestsRegion()).getByRole("alert");
+    expect(alert).toHaveTextContent(/^Garmin login expired\. Reconnect in Settings\.$/);
+    expect(alert).toHaveClass("text-body", "text-ink");
+    // A read of the bests would not start the check again, so no Retry: reconnecting and syncing does.
+    expect(within(bestsRegion()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(bestsRegion()).queryByText(/best efforts/)).not.toBeInTheDocument();
     expect(polls.delays()).toEqual([]);
+    expect(within(badge("5K")).getByText("27:05")).toBeInTheDocument();
   });
+
+  it.each([ErrorCode.garminNotConnected, ErrorCode.garminRateLimited, ErrorCode.garminUnavailable])(
+    "says why the check stopped and what to do, in the words of a failed import (%s)",
+    async (errorCode) => {
+      fakeProgressApi({ bests: personalBestsFixture({ pendingRuns: 3, errorCode }) });
+      renderProgress();
+      await findBadges();
+
+      expect(within(bestsRegion()).getByRole("alert")).toHaveTextContent(errorMessages[errorCode]);
+      expect(polls.delays()).toEqual([]);
+    },
+  );
+
+  it.each([
+    { state: "nothing checking", checking: false },
+    { state: "a job finishing its last pass", checking: true },
+  ])(
+    "shows no line under the heading when no run is pending ($state, pendingRuns 0)",
+    async ({ checking }) => {
+      fakeProgressApi({ bests: personalBestsFixture({ ...bestsFound, checking }) });
+      renderProgress();
+      await findBadges();
+
+      expect(within(bestsRegion()).queryByText(/best efforts/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(polls.delays()).toEqual(checking ? [15_000] : []);
+    },
+  );
 
   it("marks the rows of runs holding a best with a PB chip and names it in the row's label", async () => {
     fakeProgressApi({ bests: bestsFound });

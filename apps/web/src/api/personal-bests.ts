@@ -12,19 +12,24 @@ import { listKey } from "./query-keys";
 export const personalBestsKey = listKey("personal-bests");
 
 /**
- * How often the bests are read again while runs still wait for their best efforts. The job fills the list
- * in the background, within minutes of a sync and over about half an hour after the first import, so a
- * faster poll would show nothing sooner and only load the free server.
+ * How often the bests are read again while a best-efforts job is waiting or running. The job fills the
+ * list in the background, within minutes of a sync and over about half an hour after the first import, so
+ * a faster poll would show nothing sooner and only load the free server.
  */
 export const PERSONAL_BESTS_POLL_MS = 15_000;
 
+/**
+ * Polls on `checking`, not on pending runs: runs can stay pending with no job to check them (an expired
+ * Garmin login, a failed pass), and reading every 15 s then would change nothing. A sync or an import page
+ * invalidates the bests, and that read learns of the job they queued and starts the poll again.
+ */
 export function personalBestsPollInterval(
   response: PersonalBestsResponse | undefined,
 ): number | false {
-  return response !== undefined && response.pendingRuns > 0 ? PERSONAL_BESTS_POLL_MS : false;
+  return response?.checking === true ? PERSONAL_BESTS_POLL_MS : false;
 }
 
-/** GET /api/personal-bests: the runner's bests, Garmin's records and the runs still being checked. */
+/** GET /api/personal-bests: the runner's bests, Garmin's records and the runs still waiting to be checked. */
 export function personalBestsQueryOptions() {
   return queryOptions({
     queryKey: personalBestsKey,
@@ -33,7 +38,7 @@ export function personalBestsQueryOptions() {
   });
 }
 
-/** The bests, polled while runs wait for their best efforts and not at all once none do. */
+/** The bests, polled while a best-efforts job is waiting or running and not at all otherwise. */
 export function usePersonalBests() {
   return useQuery({
     ...personalBestsQueryOptions(),

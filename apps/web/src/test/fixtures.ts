@@ -146,7 +146,10 @@ export function personalBestFixture(overrides: Partial<PersonalBest> = {}): Pers
   });
 }
 
-/** GET /api/personal-bests before any best: nothing found, nothing from Garmin, nothing pending. */
+/**
+ * GET /api/personal-bests before any best: nothing found, nothing from Garmin, nothing pending, no job
+ * checking and no reason one stopped.
+ */
 export function personalBestsFixture(
   overrides: Partial<PersonalBestsResponse> = {},
 ): PersonalBestsResponse {
@@ -154,6 +157,8 @@ export function personalBestsFixture(
     bests: [],
     garmin: null,
     pendingRuns: 0,
+    checking: false,
+    errorCode: null,
     ...overrides,
   });
 }

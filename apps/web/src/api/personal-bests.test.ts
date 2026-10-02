@@ -10,15 +10,30 @@ const sunday = "0d6c8a4e-7b1f-4c2d-9e3a-5f6b7c8d9e0f";
 const race = "8b9c0d1e-2f30-4a41-b526-c7d8e9f0a1b2";
 
 describe("personalBestsPollInterval", () => {
-  it("polls every 15 s while runs wait for their best efforts", () => {
+  it("polls every 15 s while a best-efforts job is checking runs", () => {
     expect(PERSONAL_BESTS_POLL_MS).toBe(15_000);
-    expect(personalBestsPollInterval(personalBestsFixture({ pendingRuns: 340 }))).toBe(15_000);
-    expect(personalBestsPollInterval(personalBestsFixture({ pendingRuns: 1 }))).toBe(15_000);
+    expect(
+      personalBestsPollInterval(personalBestsFixture({ pendingRuns: 340, checking: true })),
+    ).toBe(15_000);
+    expect(
+      personalBestsPollInterval(personalBestsFixture({ pendingRuns: 1, checking: true })),
+    ).toBe(15_000);
   });
 
-  it("stops polling once no run waits, and before the first answer", () => {
+  it("stops polling once nothing is checking, and before the first answer", () => {
     expect(personalBestsPollInterval(personalBestsFixture({ pendingRuns: 0 }))).toBe(false);
     expect(personalBestsPollInterval(undefined)).toBe(false);
+  });
+
+  it.each([
+    { reason: "an expired Garmin login", errorCode: "garmin_auth_expired" as const },
+    { reason: "no known reason", errorCode: null },
+  ])("does not poll runs still pending with no job to check them ($reason)", ({ errorCode }) => {
+    expect(
+      personalBestsPollInterval(
+        personalBestsFixture({ pendingRuns: 340, checking: false, errorCode }),
+      ),
+    ).toBe(false);
   });
 });
 

@@ -32,8 +32,8 @@ export function importChangedRuns(previous: ImportProgress, next: ImportProgress
  * Refreshes every list and detail of runs, Today's latest run among them; inactive ones refetch on mount.
  * invalidateQueries cancels a fetch in flight and refetches only the pages already loaded, which would drop
  * a "Show earlier weeks" page still loading, so that page lands first. Its failure, if any, is the weeks
- * query's to show. The bests are refreshed too: each page stored queues its runs for best efforts, and
- * only a fresh read learns they are pending and starts the bests' poll.
+ * query's to show. The bests are refreshed too: each page stored queues a best-efforts job for its runs,
+ * and only a fresh read learns that job is checking and starts the bests' poll.
  */
 async function refreshRuns(client: QueryClient): Promise<void> {
   const weeks = client.getQueryCache().find({ queryKey: activityWeeksKey, exact: true });
