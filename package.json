@@ -1,0 +1,45 @@
+{
+  "name": "running-coach",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.6",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "docker compose up -d --wait postgres && (cd services/garmin && uv sync --frozen --quiet) && pnpm --parallel --filter @running-coach/api --filter @running-coach/web dev",
+    "check": "pnpm typecheck && pnpm lint && pnpm contract:check && pnpm test && pnpm --filter @running-coach/engine test",
+    "typecheck": "pnpm -r --parallel typecheck",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:e2e": "pnpm --filter @running-coach/web test:e2e",
+    "test:screens": "pnpm --filter @running-coach/web test:screens",
+    "build": "pnpm --filter @running-coach/web build && pnpm --filter @running-coach/api build",
+    "contract:build": "pnpm --filter @running-coach/shared contract:build",
+    "contract:check": "pnpm --filter @running-coach/shared contract:check",
+    "db:generate": "pnpm --filter @running-coach/api db:generate",
+    "db:migrate": "pnpm --filter @running-coach/api db:migrate",
+    "seed:owner": "pnpm --filter @running-coach/api seed:owner",
+    "py:check": "cd services/garmin && uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run pytest"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.1",
+    "@vitest/coverage-v8": "5.0.3",
+    "eslint": "10.11.0",
+    "eslint-import-resolver-typescript": "4.4.5",
+    "eslint-plugin-better-tailwindcss": "4.7.0",
+    "eslint-plugin-boundaries": "7.2.0",
+    "eslint-plugin-check-file": "3.3.2",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.7",
+    "globals": "17.13.0",
+    "lefthook": "2.1.16",
+    "prettier": "3.9.9",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.0",
+    "vitest": "5.0.3"
+  }
+}

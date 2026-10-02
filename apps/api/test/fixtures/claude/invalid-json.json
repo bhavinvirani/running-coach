@@ -1,0 +1,12 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "end_turn",
+        "content": [{ "type": "text", "text": "Nice run! Here is my review: keep going." }],
+        "usage": { "input_tokens": 1180, "output_tokens": 12 }
+      }
+    }
+  ]
+}

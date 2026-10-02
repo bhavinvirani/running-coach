@@ -1,0 +1,25 @@
+{
+  "name": "@running-coach/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --coverage",
+    "check": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "dependencies": {
+    "@running-coach/shared": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "5.0.3",
+    "fast-check": "4.10.2",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

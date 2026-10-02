@@ -1,0 +1,17 @@
+# Pre-commit: format and lint-fix staged files only, then re-stage them.
+pre-commit:
+  parallel: true
+  jobs:
+    - name: prettier
+      glob: "*.{ts,tsx,js,mjs,cjs,json,css,md,yml,yaml,html}"
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+    - name: eslint
+      glob: "*.{ts,tsx,js,mjs,cjs}"
+      run: pnpm exec eslint --fix --max-warnings 0 --no-warn-ignored {staged_files}
+      stage_fixed: true
+    - name: ruff
+      root: "services/garmin/"
+      glob: "*.py"
+      run: uv run ruff format {staged_files} && uv run ruff check --fix {staged_files}
+      stage_fixed: true

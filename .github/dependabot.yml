@@ -1,0 +1,47 @@
+# Weekly updates. dependabot-auto-merge.yml merges patch and minor once CI is green, except garminconnect.
+# The 7-day cooldown keeps auto-merge away from fresh releases, the window in which hijacked packages
+# get caught and yanked. Security updates skip it.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: uv
+    directory: /services/garmin
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+        # Garmin breaks the unofficial client without notice: it always gets its own PR and a human.
+        exclude-patterns: [garminconnect]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # Node stays on the 24 LTS line that package.json engines and .node-version pin.
+      - dependency-name: node
+        update-types: [version-update:semver-major]

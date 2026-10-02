@@ -6,36 +6,36 @@ Status: phase 5 (bootstrap) is next and runs in its own session. After it, every
 
 ## Repo map
 
-| Path | What | Rule |
-|---|---|---|
-| `apps/web` | Vite + React 19 PWA; Tailwind 4 with token-only utilities; restyled shadcn; TanStack Query; Recharts; Mapbox | `web-ui.md` |
-| `apps/web/e2e` | Playwright flows and screenshot tests on fake seed data | `tests.md` |
-| `apps/api` | Express + TypeScript: routes → services → Drizzle on Postgres; pg-boss worker and the Garmin service run in the same process | `api.md` |
-| `apps/api/src/db` | Drizzle schema and committed SQL migrations | `migrations.md` |
-| `apps/api/src/coach` | Claude client, versioned prompt files, output schemas, fallbacks | `coach-prompts.md` |
-| `services/garmin` | FastAPI over `garminconnect`, stateless, shared-secret header, bound to 127.0.0.1 | `garmin-service.md` |
-| `packages/engine` | Training rules: pure TypeScript, no I/O, test-first | `engine.md` |
-| `packages/shared` | zod contracts, error codes, units: the only source of types | `contracts.md` |
+| Path                 | What                                                                                                                                                | Rule                |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `apps/web`           | Vite + React 19 PWA; Tailwind 4 with token-only utilities; restyled shadcn; TanStack Query; Recharts; Mapbox (slice 3)                              | `web-ui.md`         |
+| `apps/web/e2e`       | Playwright flows and screenshot tests on fake seed data                                                                                             | `tests.md`          |
+| `apps/api`           | Express + TypeScript: routes → services → Drizzle on Postgres; the pg-boss worker runs in the same process, the Garmin service as its child process | `api.md`            |
+| `apps/api/src/db`    | Drizzle schema and committed SQL migrations                                                                                                         | `migrations.md`     |
+| `apps/api/src/coach` | Claude client, versioned prompt files, output schemas, fallbacks                                                                                    | `coach-prompts.md`  |
+| `services/garmin`    | FastAPI over `garminconnect`, stateless, shared-secret header, bound to 127.0.0.1                                                                   | `garmin-service.md` |
+| `packages/engine`    | Training rules: pure TypeScript, no I/O, test-first                                                                                                 | `engine.md`         |
+| `packages/shared`    | zod contracts, error codes, units: the only source of types                                                                                         | `contracts.md`      |
 
 Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md` names the reference implementation to copy from.
 
 ## Commands (root `package.json`)
 
-| Command | Does |
-|---|---|
-| `pnpm dev` | Postgres via docker compose, API + worker, Garmin service, web with HMR |
-| `pnpm check` | typecheck, lint, boundaries, contract drift, unit and integration tests: what CI runs |
-| `pnpm test` / `pnpm test:e2e` / `pnpm test:screens` | Vitest; Playwright flows against the compose stack; screenshot comparison, always inside the Playwright Docker image (`--update` rewrites baselines) |
-| `pnpm build` / `pnpm contract:build` | production bundles; zod → JSON Schema into `packages/shared/src/json-schema/` |
-| `pnpm --filter @running-coach/<pkg> check` | one package's typecheck, lint and tests |
-| `pnpm seed:owner` | creates the owner account from env vars, locally or on Render |
-| `pnpm db:generate` / `pnpm db:migrate` | SQL from the Drizzle schema; apply locally |
-| `pnpm py:check` | ruff, mypy, pytest for `services/garmin` through uv |
-| `pnpm garmin:connect` | laptop CLI: Garmin login with 2FA, uploads the encrypted token bundle |
+| Command                                             | Does                                                                                                                                                                                              |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                          | Postgres via docker compose, API with its worker and Garmin service, web with HMR                                                                                                                 |
+| `pnpm check`                                        | typecheck, lint, boundaries, contract drift, unit and integration tests: what CI runs                                                                                                             |
+| `pnpm test` / `pnpm test:e2e` / `pnpm test:screens` | Vitest; Playwright flows against an API it starts on the e2e database with Garmin fixtures; screenshot comparison with the browser in the Playwright Docker image (`--update` rewrites baselines) |
+| `pnpm build` / `pnpm contract:build`                | production bundles; zod → JSON Schema into `packages/shared/src/json-schema/`                                                                                                                     |
+| `pnpm --filter @running-coach/<pkg> check`          | one package's typecheck, lint and tests                                                                                                                                                           |
+| `pnpm seed:owner`                                   | creates the owner from `OWNER_*`, or resets its name and password and signs it out everywhere                                                                                                     |
+| `pnpm db:generate` / `pnpm db:migrate`              | SQL from the Drizzle schema; apply locally                                                                                                                                                        |
+| `pnpm py:check`                                     | ruff, mypy, pytest for `services/garmin` through uv                                                                                                                                               |
+| `pnpm garmin:connect`                               | arrives in slice 1: laptop CLI for Garmin login with 2FA, uploads the encrypted token bundle                                                                                                      |
 
 ## Consistency standards
 
-- One contract: zod schemas in `packages/shared`, written once. The API parses with them at every edge; the web client imports their types; the Python service validates its fixtures against the exported JSON Schema in CI. No duplicate type declarations.
+- One contract: zod schemas in `packages/shared`, written once. The API parses with them at every edge; the web client imports their types; the Python service validates the responses it builds from its fixtures against the exported JSON Schema in CI. No duplicate type declarations.
 - Naming: files kebab-case; React components PascalCase; tables and columns snake_case; JSON camelCase; Python snake_case.
 - Units and time: store meters, seconds, bpm, UTC timestamps plus the activity's own time zone. Convert only at the UI edge with the user's settings.
 - Errors: typed domain errors → one Express error middleware → problem+json, including from the Python service. One error code list in `packages/shared`; user-facing messages mapped in one place in the web app and they say what happened and what to do.

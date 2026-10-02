@@ -4,16 +4,19 @@ paths:
   - "**/*.test.tsx"
   - "apps/api/test/**"
   - "apps/web/e2e/**"
+  - "apps/web/playwright.config.ts"
   - "services/garmin/tests/**"
 ---
+
 # Tests
 
-- Unit tests sit beside the source as `<file>.test.ts` (Vitest). API integration tests live in `apps/api/test/` and run on the real Postgres from docker compose (`DATABASE_URL_TEST`), one schema per test file, truncated between tests. No DB mocks, no in-memory substitutes.
-- Only the Garmin service and Claude are faked: integration tests start the Python service with `GARMIN_FIXTURES=1` and point the coach client at a local fake that replays `apps/api/test/fixtures/claude/*.json`.
-- Fixtures are fake or sanitized: no real names, locations, coordinates, ids, emails, keys or tokens. Seed data for e2e and screenshots comes from `apps/web/e2e/fixtures/seed.ts`: deterministic, 12 weeks of runs for a fictional runner.
-- Playwright flows in `apps/web/e2e/<flow>.spec.ts` at 390 × 844, `colorScheme: "dark"`, animations disabled. Screenshot specs in `apps/web/e2e/screens/` use `toHaveScreenshot`; `pnpm test:screens` always runs inside the Playwright Docker image (`--update` rewrites baselines) so local fonts never leak in; baselines live in `apps/web/e2e/screens/<spec>-snapshots/`, Playwright's default.
-- Every screen's Vitest spec covers loading, empty and error states; its screenshot spec captures the loaded state on seed data.
+- Unit tests sit beside the source as `<file>.test.ts` (Vitest). API tests live in `apps/api/test/` and run on the real Postgres from docker compose: `test/global-setup.ts` migrates a template database once per run (admin connection `DATABASE_URL_TEST`), `test/setup-database.ts` clones it into one database per test file, truncated before each test. No DB mocks, no in-memory substitutes.
+- Only the Garmin service and Claude are faked: the global setup starts the real Python service with `GARMIN_FIXTURES=1` and a local fake Claude (`test/fake-claude.ts`) that replays `apps/api/test/fixtures/claude/*.json`; `test/seed.ts` builds the rows and the bundle or key that picks each fixture.
+- Fixtures are fake or sanitized: no real names, locations, coordinates, ids, emails, keys or tokens. Seed data for e2e and screenshots comes from `apps/web/e2e/fixtures/seed.ts`: deterministic, one fictional runner; it grows runs when a slice needs them.
+- Playwright flows in `apps/web/e2e/<flow>.spec.ts` at 390 × 844, `colorScheme: "dark"`, reduced motion. `apps/web/playwright.config.ts` starts its own API with the production web build on port 4173, its own database (`running_coach_e2e`), fixture Garmin and the seeded runner as owner; specs import `test` from `e2e/fixtures/login.ts`, which signs in once per worker (`storageState`) and resets settings before each test; a test that logs out uses plain Playwright `test` and signs in itself (`login.spec.ts`).
+- Screenshot specs in `apps/web/e2e/screens/<name>.screen.spec.ts` use `toHaveScreenshot("<name>.png")` with animations disabled. `pnpm test:screens` (`e2e/run-screens.ts`) runs the browser in the linux/amd64 Playwright Docker image (CI's architecture, emulated on arm64) so local fonts never leak in (`--update` rewrites every baseline); the screens project exists only there. Baselines: `apps/web/e2e/screens/<spec>-snapshots/<name>.png`, no platform or project suffix.
+- Every screen's Vitest spec covers loading, error and, when the screen can be empty, empty states; its screenshot spec captures the loaded state on seed data.
 - Engine: one `describe` per rule, boundary values plus a fast-check property.
-- Python: pytest, fake client over `tests/fixtures`, per endpoint the success path, bad secret, 429 and expired token.
+- Python: pytest over `garmin_service/fake_client.py` and `tests/fixtures`; per endpoint the success path, bad secret, 429 and expired token; `tests/test_contract.py` checks every response against the exported JSON Schema.
 - A test that needs the network, the owner's Garmin account, a real Claude key or real data is wrong: fake the dependency or delete the test.
 - Names state the behaviour: `it("returns 401 and stores nothing when the bundle is expired")`.

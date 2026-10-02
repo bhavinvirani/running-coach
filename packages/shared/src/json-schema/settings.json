@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "units": {
+      "type": "string",
+      "enum": [
+        "km",
+        "mi"
+      ]
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "coachDetail": {
+      "type": "string",
+      "enum": [
+        "short",
+        "standard",
+        "detailed"
+      ]
+    },
+    "hasClaudeKey": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "units",
+    "timezone",
+    "coachDetail",
+    "hasClaudeKey"
+  ],
+  "additionalProperties": false
+}
