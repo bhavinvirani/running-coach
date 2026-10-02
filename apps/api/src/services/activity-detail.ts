@@ -12,6 +12,7 @@ import { DomainError } from "../lib/errors";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
 import { activityColumns, toActivity } from "./activities";
+import { getRunBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
 
 // One run with what Garmin holds about it beyond its summary. The detail is fetched on demand, once: the
@@ -66,14 +67,18 @@ async function hasDetail(activityId: string): Promise<boolean> {
   return row !== undefined;
 }
 
-/** GET /api/activities/:id: one of the user's runs and its stored detail (null until fetched). */
+/**
+ * GET /api/activities/:id: one of the user's runs, its stored detail (null until fetched) and its best
+ * efforts with their personal-best flags (empty until computed, and for runs the bests leave out).
+ */
 export async function getActivity(userId: string, id: string): Promise<ActivityResponse> {
   const [row] = await db
     .select(activityColumns)
     .from(activity)
     .where(and(eq(activity.id, id), eq(activity.userId, userId)));
   if (!row) throw runNotFound();
-  return { activity: toActivity(row), detail: await readDetail(id) };
+  const [detail, bestEfforts] = await Promise.all([readDetail(id), getRunBestEfforts(userId, id)]);
+  return { activity: toActivity(row), detail, bestEfforts };
 }
 
 /**

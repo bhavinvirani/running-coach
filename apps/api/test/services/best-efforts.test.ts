@@ -18,6 +18,8 @@ import {
   BEST_EFFORTS_MAX_ATTEMPTS,
   BEST_EFFORTS_RETRY_AFTER_S,
   computeBestEffortsBatch,
+  getPersonalBests,
+  getRunBestEfforts,
   queueBestEfforts,
   queuePendingBestEfforts,
 } from "../../src/services/best-efforts";
@@ -925,6 +927,77 @@ describe("computeBestEffortsBatch", () => {
 
     expect(await computeBestEffortsBatch(userId)).toEqual({ ...NOTHING_DONE, waiting: 1 });
     expect(calls).toEqual([]);
+  });
+});
+
+describe("getRunBestEfforts", () => {
+  /**
+   * Every personal-best flag of the runs against the run getPersonalBests names per distance: a flag is
+   * true exactly when that run holds the best there.
+   */
+  async function expectFlagsMatchBests(userId: string, activityIds: string[]) {
+    const { bests } = await getPersonalBests(userId);
+    const holder = new Map(bests.map((best) => [best.distanceKey, best.activityId]));
+    for (const activityId of activityIds) {
+      for (const effort of await getRunBestEfforts(userId, activityId)) {
+        expect(effort.personalBest).toBe(holder.get(effort.distanceKey) === activityId);
+      }
+    }
+    return bests;
+  }
+
+  it("flags exactly the runs getPersonalBests names after a batch computes them, the earlier of two identical runs holding every best (duplicate activities)", async () => {
+    const userId = await connectedUser();
+    // The fixture service serves both the same series: every effort ties, and RACE started a day earlier.
+    const [longRun, race] = await createRuns(userId, [LONG_RUN, RACE]);
+    const treadmill = await createRun(userId, {
+      garminActivityId: TREADMILL,
+      type: "treadmill_running",
+      isIndoor: true,
+    });
+    if (!longRun || !race) throw new Error("runs missing");
+    await computeBestEffortsBatch(userId);
+
+    const bests = await expectFlagsMatchBests(userId, [longRun.id, race.id, treadmill.id]);
+
+    expect(bests.map((best) => best.distanceKey)).toEqual(FIXTURE_DISTANCES);
+    expect(new Set(bests.map((best) => best.activityId))).toEqual(new Set([race.id]));
+    const efforts = bests.map(({ distanceKey, timeS }) => ({ distanceKey, timeS }));
+    expect(await getRunBestEfforts(userId, race.id)).toEqual(
+      efforts.map((effort) => ({ ...effort, personalBest: true })),
+    );
+    expect(await getRunBestEfforts(userId, longRun.id)).toEqual(
+      efforts.map((effort) => ({ ...effort, personalBest: false })),
+    );
+    expect(await getRunBestEfforts(userId, treadmill.id)).toEqual([]);
+  });
+
+  it("moves every flag to the other run when the holder is edited, and answers the edited run nothing (edited activity)", async () => {
+    const userId = await connectedUser();
+    const [longRun, race] = await createRuns(userId, [LONG_RUN, RACE]);
+    if (!longRun || !race) throw new Error("runs missing");
+    await computeBestEffortsBatch(userId);
+    // What the sync's upsert does when Garmin changes the run's distance or time.
+    await db.update(activity).set({ bestEffortsVersion: null }).where(eq(activity.id, race.id));
+
+    const bests = await expectFlagsMatchBests(userId, [longRun.id, race.id]);
+
+    expect(new Set(bests.map((best) => best.activityId))).toEqual(new Set([longRun.id]));
+    expect(await getRunBestEfforts(userId, race.id)).toEqual([]);
+    expect(
+      (await getRunBestEfforts(userId, longRun.id)).every((effort) => effort.personalBest),
+    ).toBe(true);
+  });
+
+  it("answers nothing for another runner's run", async () => {
+    const userId = await connectedUser();
+    const [run] = await createRuns(userId, [LONG_RUN]);
+    if (!run) throw new Error("run missing");
+    await computeBestEffortsBatch(userId);
+    const other = await createUser("other.runner@example.com");
+
+    expect(await getRunBestEfforts(userId, run.id)).toHaveLength(FIXTURE_DISTANCES.length);
+    expect(await getRunBestEfforts(other, run.id)).toEqual([]);
   });
 });
 

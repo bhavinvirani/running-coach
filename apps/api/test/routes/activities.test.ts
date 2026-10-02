@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { BEST_EFFORTS_VERSION } from "@running-coach/engine";
 import {
   type ActivityResponse,
   type ActivityWeeksResponse,
   activityResponseSchema,
   activityWeeksResponseSchema,
+  type DistanceKey,
   ErrorCode,
   latestActivityResponseSchema,
   RACE_EVENT_TYPE,
@@ -16,6 +18,7 @@ import {
   activity,
   activityLap,
   activityStream,
+  bestEffort,
   garminConnection,
   type NewActivity,
 } from "../../src/db/schema";
@@ -53,6 +56,46 @@ async function insertRun(userId: string, values: RunValues) {
     .returning();
   if (!row) throw new Error("insert returned nothing");
   return row;
+}
+
+/** Marks a run computed at the current rule with one effort per distance, as a batch stores them. */
+async function markComputed(
+  userId: string,
+  activityId: string,
+  efforts: Partial<Record<DistanceKey, number>>,
+) {
+  await db
+    .update(activity)
+    .set({ bestEffortsVersion: BEST_EFFORTS_VERSION })
+    .where(eq(activity.id, activityId));
+  const rows = Object.entries(efforts).map(([distanceKey, timeS]) => ({
+    userId,
+    activityId,
+    distanceKey: distanceKey as DistanceKey,
+    timeS,
+    startS: 12.5,
+  }));
+  if (rows.length > 0) await db.insert(bestEffort).values(rows);
+}
+
+/** A run whose best efforts a batch computed, with the times given. */
+async function computedRun(
+  userId: string,
+  efforts: Partial<Record<DistanceKey, number>>,
+  values: RunValues,
+) {
+  const run = await insertRun(userId, values);
+  await markComputed(userId, run.id, efforts);
+  return run;
+}
+
+/** The identity of a run with the Garmin id given, starting at 08:00 local (06:00 UTC) on `date`. */
+function startingOn(garminActivityId: number, date: string): RunValues {
+  return {
+    garminActivityId,
+    startUtc: new Date(`${date}T06:00:00Z`),
+    startLocal: `${date} 08:00:00`,
+  };
 }
 
 async function latest(agent: Awaited<ReturnType<typeof signedInAgent>>) {
@@ -434,10 +477,39 @@ async function ownerWithRun(garminActivityId = LONG_RUN, bundle = garminBundle()
   return { agent, userId, run };
 }
 
+/** A sync storing the fixture long run back from Garmin with its distance edited. */
+async function syncEditedLongRun(userId: string): Promise<number> {
+  return upsertActivities(userId, [
+    {
+      garminActivityId: LONG_RUN,
+      type: "running",
+      startUtc: "2026-09-27T06:00:00Z",
+      startLocal: "2026-09-27T08:00:00",
+      tz: null,
+      distanceM: 18_250,
+      durationS: 6120,
+      avgHr: 148,
+      maxHr: 166,
+      cadence: 168,
+      calories: 1150,
+      elevationGainM: 142,
+      isIndoor: false,
+      isManual: false,
+      eventType: "uncategorized",
+    },
+  ]);
+}
+
 async function fetchDetail(agent: Agent, id: string): Promise<ActivityResponse> {
   const response = await agent.post(detailPath(id));
   expect(response.status).toBe(200);
   return activityResponseSchema.parse(response.body);
+}
+
+async function bestEffortsOf(agent: Agent, id: string) {
+  const response = await agent.get(`/api/activities/${id}`);
+  expect(response.status).toBe(200);
+  return activityResponseSchema.parse(response.body).bestEfforts;
 }
 
 async function stored() {
@@ -481,6 +553,8 @@ describe("GET /api/activities/:id", () => {
         eventType: "uncategorized",
       },
       detail: null,
+      // Not computed yet.
+      bestEfforts: [],
     });
   });
 
@@ -508,6 +582,139 @@ describe("GET /api/activities/:id", () => {
     expect(activityResponseSchema.parse(response.body)).toEqual(fetched);
     expect(fetched.detail).not.toBeNull();
     expect(sent()).toEqual([]);
+  });
+
+  it("answers the run's best efforts shortest first, each a personal best where no run is faster (personal bests)", async () => {
+    const agent = await signedInAgent(app);
+    const run = await computedRun(
+      await ownerId(),
+      { half: 7012.125, "1k": 301, "10k": 3290.5, "1mi": 489.75, "5k": 1625.25 },
+      startingOn(1, "2026-09-20"),
+    );
+
+    expect(await bestEffortsOf(agent, run.id)).toEqual([
+      { distanceKey: "1k", timeS: 301, personalBest: true },
+      { distanceKey: "1mi", timeS: 489.75, personalBest: true },
+      { distanceKey: "5k", timeS: 1625.25, personalBest: true },
+      { distanceKey: "10k", timeS: 3290.5, personalBest: true },
+      { distanceKey: "half", timeS: 7012.125, personalBest: true },
+    ]);
+  });
+
+  it("answers personalBest false at a distance a later run beat and true where the run still holds the best (personal bests)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const older = await computedRun(
+      userId,
+      { "1k": 301, "5k": 1625.25, "10k": 3290.5 },
+      startingOn(1, "2026-08-02"),
+    );
+    const newer = await computedRun(
+      userId,
+      { "1k": 305, "5k": 1601.75 },
+      startingOn(2, "2026-09-20"),
+    );
+
+    expect(await bestEffortsOf(agent, older.id)).toEqual([
+      { distanceKey: "1k", timeS: 301, personalBest: true },
+      { distanceKey: "5k", timeS: 1625.25, personalBest: false },
+      { distanceKey: "10k", timeS: 3290.5, personalBest: true },
+    ]);
+    expect(await bestEffortsOf(agent, newer.id)).toEqual([
+      { distanceKey: "1k", timeS: 305, personalBest: false },
+      { distanceKey: "5k", timeS: 1601.75, personalBest: true },
+    ]);
+  });
+
+  it("gives an exact tie to the earlier run, and at the same start to the lower Garmin id (duplicate activities)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const later = await computedRun(userId, { "5k": 1600 }, startingOn(30, "2026-09-20"));
+    const twinSavedSecond = await computedRun(userId, { "5k": 1600 }, startingOn(32, "2026-09-10"));
+    const twin = await computedRun(userId, { "5k": 1600 }, startingOn(31, "2026-09-10"));
+    const flags = async (id: string) =>
+      (await bestEffortsOf(agent, id)).map((effort) => effort.personalBest);
+
+    expect(await flags(later.id)).toEqual([false]);
+    expect(await flags(twinSavedSecond.id)).toEqual([false]);
+    expect(await flags(twin.id)).toEqual([true]);
+  });
+
+  it.each([
+    ["treadmill", { type: "treadmill_running", isIndoor: true }],
+    ["virtual", { type: "virtual_run", isIndoor: true }],
+    ["manual", { isManual: true }],
+    ["sub-1 km", { distanceM: 999, durationS: 330 }],
+  ] as const)(
+    "answers no efforts for a %s run, even with stored rows, and it takes no best from an outdoor run (treadmill and manual runs)",
+    async (_, values) => {
+      const agent = await signedInAgent(app);
+      const userId = await ownerId();
+      const outdoor = await computedRun(userId, { "1k": 330 }, startingOn(1, "2026-09-20"));
+      const left = await computedRun(
+        userId,
+        { "1k": 290 },
+        { ...startingOn(2, "2026-09-21"), ...values },
+      );
+
+      expect(await bestEffortsOf(agent, left.id)).toEqual([]);
+      expect(await bestEffortsOf(agent, outdoor.id)).toEqual([
+        { distanceKey: "1k", timeS: 330, personalBest: true },
+      ]);
+    },
+  );
+
+  it("answers no efforts once a sync rewrites the run's distance, and the next fastest run holds the best until they are computed again (edited activity)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const other = await computedRun(userId, { "5k": 1700 }, startingOn(1, "2026-09-20"));
+    const run = await createLongRun(userId);
+    await markComputed(userId, run.id, { "5k": 1500 });
+    expect(await bestEffortsOf(agent, run.id)).toEqual([
+      { distanceKey: "5k", timeS: 1500, personalBest: true },
+    ]);
+
+    expect(await syncEditedLongRun(userId)).toBe(1);
+
+    expect(await bestEffortsOf(agent, run.id)).toEqual([]);
+    expect(await bestEffortsOf(agent, other.id)).toEqual([
+      { distanceKey: "5k", timeS: 1700, personalBest: true },
+    ]);
+  });
+
+  it("answers no efforts for a run not computed yet or computed without any (partial backfill)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const pending = await insertRun(userId, startingOn(1, "2026-09-20"));
+    const empty = await computedRun(userId, {}, startingOn(2, "2026-09-21"));
+
+    expect(await bestEffortsOf(agent, pending.id)).toEqual([]);
+    expect(await bestEffortsOf(agent, empty.id)).toEqual([]);
+  });
+
+  it("keeps answering efforts from an older rule version while they wait to be recomputed", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const run = await computedRun(userId, { "1k": 290 }, startingOn(1, "2026-09-20"));
+    await db
+      .update(activity)
+      .set({ bestEffortsVersion: BEST_EFFORTS_VERSION - 1 })
+      .where(eq(activity.id, run.id));
+
+    expect(await bestEffortsOf(agent, run.id)).toEqual([
+      { distanceKey: "1k", timeS: 290, personalBest: true },
+    ]);
+  });
+
+  it("never weighs another runner's faster efforts", async () => {
+    const agent = await signedInAgent(app);
+    const other = await createUser("other.runner@example.com");
+    await computedRun(other, { "5k": 1400 }, startingOn(1, "2026-09-10"));
+    const own = await computedRun(await ownerId(), { "5k": 1700 }, startingOn(2, "2026-09-20"));
+
+    expect(await bestEffortsOf(agent, own.id)).toEqual([
+      { distanceKey: "5k", timeS: 1700, personalBest: true },
+    ]);
   });
 
   it("returns 404 not_found for an unknown id", async () => {
@@ -588,6 +795,20 @@ describe("POST /api/activities/:id/detail", () => {
     expect(rows.streams).toHaveLength(1);
     // A finished Garmin call marks the login working, as a sync does.
     expect(await storedConnection(userId)).toMatchObject({ status: "ok", lastError: null });
+  });
+
+  it("answers the run's best efforts with their personal-best flags beside the fetched detail (run detail)", async () => {
+    const { agent, userId, run } = await ownerWithRun();
+    await markComputed(userId, run.id, { "5k": 1625.25, "1k": 301 });
+    await computedRun(userId, { "1k": 290 }, startingOn(1, "2026-09-20"));
+
+    const body = await fetchDetail(agent, run.id);
+
+    expect(body.detail).not.toBeNull();
+    expect(body.bestEfforts).toEqual([
+      { distanceKey: "1k", timeS: 301, personalBest: false },
+      { distanceKey: "5k", timeS: 1625.25, personalBest: true },
+    ]);
   });
 
   it("answers the stored detail on a second POST and calls Garmin no more (double tap)", async () => {
@@ -671,25 +892,7 @@ describe("POST /api/activities/:id/detail", () => {
     const { agent, userId, run } = await ownerWithRun();
     const { detail } = await fetchDetail(agent, run.id);
 
-    const written = await upsertActivities(userId, [
-      {
-        garminActivityId: LONG_RUN,
-        type: "running",
-        startUtc: "2026-09-27T06:00:00Z",
-        startLocal: "2026-09-27T08:00:00",
-        tz: null,
-        distanceM: 18_250,
-        durationS: 6120,
-        avgHr: 148,
-        maxHr: 166,
-        cadence: 168,
-        calories: 1150,
-        elevationGainM: 142,
-        isIndoor: false,
-        isManual: false,
-        eventType: "uncategorized",
-      },
-    ]);
+    const written = await syncEditedLongRun(userId);
 
     expect(written).toBe(1);
     const response = await agent.get(`/api/activities/${run.id}`);

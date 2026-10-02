@@ -1,6 +1,7 @@
 import { BEST_EFFORTS_VERSION, bestEfforts } from "@running-coach/engine";
 import {
   DISTANCE_METERS,
+  type DistanceKey,
   distanceKeySchema,
   ErrorCode,
   errorCodeSchema,
@@ -8,6 +9,7 @@ import {
   type GarminActivitySeries,
   type PersonalBest,
   type PersonalBestsResponse,
+  type RunBestEffort,
 } from "@running-coach/shared";
 import {
   and,
@@ -51,6 +53,13 @@ const eligible = and(
   eq(activity.isManual, false),
   gte(activity.distanceM, DISTANCE_METERS["1k"]),
 );
+
+/**
+ * Runs whose stored efforts count toward the personal bests: eligible, and not edited since the efforts
+ * were computed (a null version) until they are again. Efforts from an older rule still count while they
+ * wait to be recomputed.
+ */
+const counted = and(eligible, isNotNull(activity.bestEffortsVersion));
 
 /**
  * Tries before a run is given up: batches in which Garmin failed to read the run while it read the
@@ -406,6 +415,69 @@ export async function queuePendingBestEfforts(): Promise<number> {
 
 const DISTANCE_ORDER = new Map(distanceKeySchema.options.map((key, index) => [key, index]));
 
+/** Shortest distance first, in distanceKeySchema's order. */
+function byDistance(a: { distanceKey: DistanceKey }, b: { distanceKey: DistanceKey }): number {
+  return (DISTANCE_ORDER.get(a.distanceKey) ?? 0) - (DISTANCE_ORDER.get(b.distanceKey) ?? 0);
+}
+
+/**
+ * The personal bests: the fastest stored effort per distance over the user's runs that count, one row per
+ * distance in no set order; an exact tie goes to the earlier run. The one query behind GET
+ * /api/personal-bests and a run's personal-best flags (getRunBestEfforts), so the two never disagree. A
+ * builder, so a caller awaits it or joins it as a subquery.
+ */
+function fastestEfforts(userId: string) {
+  return db
+    .selectDistinctOn([bestEffort.distanceKey], {
+      distanceKey: bestEffort.distanceKey,
+      timeS: bestEffort.timeS,
+      activityId: activity.id,
+      startUtc: activity.startUtc,
+      startLocal: activity.startLocal,
+    })
+    .from(bestEffort)
+    .innerJoin(activity, eq(activity.id, bestEffort.activityId))
+    .where(and(eq(bestEffort.userId, userId), counted))
+    .orderBy(
+      bestEffort.distanceKey,
+      asc(bestEffort.timeS),
+      asc(activity.startUtc),
+      // Garmin ids grow over time, so they break a tie between two runs saved with the same start.
+      asc(activity.garminActivityId),
+    );
+}
+
+/**
+ * GET /api/activities/:id's best efforts: the run's own, shortest first, each a personal best when the run
+ * is the one fastestEfforts picks at that distance. Empty for a run whose efforts do not count (treadmill,
+ * indoor, manual, under 1 km, edited since they were computed) and for one not computed yet. One statement,
+ * so the run's efforts and the bests are read from one snapshot even while a batch commits.
+ */
+export async function getRunBestEfforts(
+  userId: string,
+  activityId: string,
+): Promise<RunBestEffort[]> {
+  const fastest = fastestEfforts(userId).as("fastest");
+  const rows = await db
+    .select({
+      distanceKey: bestEffort.distanceKey,
+      timeS: bestEffort.timeS,
+      fastestRunId: fastest.activityId,
+    })
+    .from(bestEffort)
+    .innerJoin(activity, eq(activity.id, bestEffort.activityId))
+    // Inner: a run that counts is itself among the efforts the bests are picked from.
+    .innerJoin(fastest, eq(fastest.distanceKey, bestEffort.distanceKey))
+    .where(and(eq(bestEffort.activityId, activityId), eq(bestEffort.userId, userId), counted));
+  return rows
+    .map(({ distanceKey, timeS, fastestRunId }) => ({
+      distanceKey,
+      timeS,
+      personalBest: fastestRunId === activityId,
+    }))
+    .sort(byDistance);
+}
+
 /**
  * Why pending runs are not being checked: no Garmin login, an expired one (the next sync after a reconnect
  * queues the work), or the error the last Garmin call ended with, when it is one of this app's codes, which
@@ -422,12 +494,11 @@ function stoppedBecause(
 }
 
 /**
- * GET /api/personal-bests: the fastest effort per distance over runs that still count, shortest first.
- * A run edited since its efforts were computed (a null version) is left out until they are again; an
- * exact tie goes to the earlier run. No Garmin call: Garmin's records are the ones last stored. Also
- * whether a best-efforts job for the user is waiting, deferred, retrying or running (checking), and, while
- * runs are pending with no job or with one held back (a 429's hour, a retry's backoff), why
- * (stoppedBecause), so the screen polls only while something will change and says what holds it.
+ * GET /api/personal-bests: the bests fastestEfforts picks, shortest first. No Garmin call: Garmin's
+ * records are the ones last stored. Also whether a best-efforts job for the user is waiting, deferred,
+ * retrying or running (checking), and, while runs are pending with no job or with one held back (a 429's
+ * hour, a retry's backoff), why (stoppedBecause), so the screen polls only while something will change and
+ * says what holds it.
  *
  * pg-boss is asked first and the tables after: a batch that finishes in between is then visible to the
  * reads, never a job gone with the runs it computed still counted as pending.
@@ -435,24 +506,7 @@ function stoppedBecause(
 export async function getPersonalBests(userId: string): Promise<PersonalBestsResponse> {
   const job = await findPendingJob(bestEffortsQueue.name, userId);
   const [fastest, { due, waiting }, [connection]] = await Promise.all([
-    db
-      .selectDistinctOn([bestEffort.distanceKey], {
-        distanceKey: bestEffort.distanceKey,
-        timeS: bestEffort.timeS,
-        activityId: activity.id,
-        startUtc: activity.startUtc,
-        startLocal: activity.startLocal,
-      })
-      .from(bestEffort)
-      .innerJoin(activity, eq(activity.id, bestEffort.activityId))
-      .where(and(eq(bestEffort.userId, userId), eligible, isNotNull(activity.bestEffortsVersion)))
-      .orderBy(
-        bestEffort.distanceKey,
-        asc(bestEffort.timeS),
-        asc(activity.startUtc),
-        // Garmin ids grow over time, so they break a tie between two runs saved with the same start.
-        asc(activity.garminActivityId),
-      ),
+    fastestEfforts(userId),
     countPendingRuns(userId),
     db
       .select({
@@ -471,9 +525,7 @@ export async function getPersonalBests(userId: string): Promise<PersonalBestsRes
       startUtc: row.startUtc.toISOString(),
       startLocal: isoLocal(row.startLocal),
     }))
-    .sort(
-      (a, b) => (DISTANCE_ORDER.get(a.distanceKey) ?? 0) - (DISTANCE_ORDER.get(b.distanceKey) ?? 0),
-    );
+    .sort(byDistance);
   // Runs waiting out their retry spacing count too: they are not done, and the screen says so.
   const pendingRuns = due + waiting;
   return {
