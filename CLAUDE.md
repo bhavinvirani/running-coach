@@ -2,7 +2,7 @@
 
 Mobile-first PWA that replaces a Runna subscription: it syncs Garmin runs, builds a training plan for any goal (5K to marathon, with or without a race date), pushes structured workouts to the watch, reviews each run with Claude as the coach, and adapts the plan. One user today (the owner); data is per-user from day one. Each user brings their own Garmin account and Claude API key. Hosting is $0 (one Render free web service, Neon Postgres). SPEC.md is the one-page spec with every decision; keep it one page.
 
-Status: the bootstrap is done (#21): every skill points at a tested reference implementation. Each session is now one slice started with `/slice N`, next `/slice 1`; the slice ends with the PR steps written in `/ship`, which the owner can also run alone.
+Status: the bootstrap is done (#21): every skill points at a tested reference implementation. Each session is now one slice started with `/slice N`, next `/slice 2`; the slice ends with the PR steps written in `/ship`, which the owner can also run alone.
 
 ## Repo map
 
@@ -31,7 +31,7 @@ Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md
 | `pnpm seed:owner`                                   | creates the owner from `OWNER_*`, or resets its name and password and signs it out everywhere                                                                                                     |
 | `pnpm db:generate` / `pnpm db:migrate`              | SQL from the Drizzle schema; apply locally                                                                                                                                                        |
 | `pnpm py:check`                                     | ruff, mypy, pytest for `services/garmin` through uv                                                                                                                                               |
-| `pnpm garmin:connect`                               | arrives in slice 1: laptop CLI for Garmin login with 2FA, uploads the encrypted token bundle                                                                                                      |
+| `pnpm garmin:connect <app-url>`                     | laptop CLI: signs in to the app, logs in to Garmin with 2FA in the terminal, uploads the token bundle, which the API proves with one call and stores encrypted                                    |
 
 ## Consistency standards
 
