@@ -59,6 +59,14 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               },
             },
             {
+              // A detail screen inside the shell, so the tabs stay one tap away.
+              path: "runs/:id",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () => (await import("@/screens/run/run-screen")).RunScreen,
+              },
+            },
+            {
               path: "settings",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {

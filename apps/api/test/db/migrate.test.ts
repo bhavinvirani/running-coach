@@ -10,6 +10,8 @@ import { paths } from "../../src/lib/paths";
 const TABLES = [
   "account",
   "activity",
+  "activity_lap",
+  "activity_stream",
   "coach_message",
   "garmin_connection",
   "import_progress",

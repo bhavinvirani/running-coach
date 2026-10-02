@@ -270,6 +270,103 @@ describe("garminClient", () => {
     expect(calls()).toBe(0);
   });
 
+  describe("activityDetail", () => {
+    const LONG_RUN = 10_000_000_007;
+
+    it("returns the run's laps, row-aligned samples, route and five HR zones (run detail)", async () => {
+      const options = writeBack();
+      const spy = vi.spyOn(globalThis, "fetch");
+
+      const response = await withRequestId("req-detail-1", () =>
+        garminClient.activityDetail(LONG_RUN, { tokenBundle: garminBundle() }, options),
+      );
+
+      const { laps, streams, route, hrZones } = response.detail;
+      expect(laps).toHaveLength(17);
+      expect(laps[0]).toEqual({
+        index: 1,
+        distanceM: 1000,
+        durationS: 390.422,
+        avgHr: 167,
+        avgCadence: 145.515625,
+      });
+      expect(streams.elapsedS.length).toBeGreaterThan(500);
+      for (const series of [streams.distanceM, streams.hr, streams.cadence, streams.elevationM]) {
+        expect(series).toHaveLength(streams.elapsedS.length);
+      }
+      expect(route?.length).toBeGreaterThan(0);
+      expect(hrZones?.map((zone) => zone.zone)).toEqual([1, 2, 3, 4, 5]);
+      expect(options.saved).toEqual([]);
+      expect(spy.mock.calls[0]?.[0]).toEqual(
+        expect.stringMatching(/\/activities\/10000000007\/detail$/),
+      );
+      expect(new Headers(spy.mock.calls[0]?.[1]?.headers).get("x-request-id")).toBe("req-detail-1");
+    });
+
+    it("returns no route and no elevation for a treadmill run (indoor run)", async () => {
+      const response = await garminClient.activityDetail(
+        10_000_000_006,
+        { tokenBundle: garminBundle() },
+        writeBack(),
+      );
+
+      expect(response.detail.route).toBeNull();
+      expect(response.detail.streams.elevationM).toBeNull();
+      expect(response.detail.laps.length).toBeGreaterThan(0);
+    });
+
+    it("throws not_found (404) without a retry when Garmin has no such activity (deleted run)", async () => {
+      const calls = countServiceCalls("/detail");
+
+      const error = await rejection(
+        garminClient.activityDetail(123, { tokenBundle: garminBundle() }, writeBack()),
+      );
+
+      expect(error).toBeInstanceOf(DomainError);
+      expect(error).toMatchObject({ code: ErrorCode.notFound, status: 404 });
+      expect(calls()).toBe(1);
+    });
+
+    it("hands over the bundle Garmin rotated (rotated token)", async () => {
+      const options = writeBack();
+
+      const response = await garminClient.activityDetail(
+        LONG_RUN,
+        { tokenBundle: garminBundle("rotate") },
+        options,
+      );
+
+      expect(fixtureOf(response.tokenBundle)).toBe("rotated");
+      expect(options.saved).toEqual([response.tokenBundle]);
+    });
+
+    it("does not retry a 429 and carries retryAfterSeconds (Garmin 429)", async () => {
+      const calls = countServiceCalls("/detail");
+
+      const error = await rejection(
+        garminClient.activityDetail(
+          LONG_RUN,
+          { tokenBundle: garminBundle("rate_limited") },
+          writeBack(),
+        ),
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.garminRateLimited, retryAfterSeconds: 3600 });
+      expect(calls()).toBe(1);
+    });
+
+    it("rejects an id that is not a Garmin id before calling the service", async () => {
+      const calls = countServiceCalls("/detail");
+
+      for (const id of [0, -1, 1.5]) {
+        await expect(
+          garminClient.activityDetail(id, { tokenBundle: garminBundle() }, writeBack()),
+        ).rejects.toThrow();
+      }
+      expect(calls()).toBe(0);
+    });
+  });
+
   describe("against a service that drops the first connection, as while its process restarts", () => {
     let server: Server;
     let client: ReturnType<typeof createGarminClient>;

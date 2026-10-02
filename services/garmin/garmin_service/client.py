@@ -66,6 +66,15 @@ class GarminApi(Protocol):
         activitysubtype: str | None = None,
     ) -> dict[str, Any] | list[Any]: ...
 
+    def get_activity_splits(self, activity_id: str) -> dict[str, Any]: ...
+
+    def get_activity_details(
+        self, activity_id: str, maxchart: int = 2000, maxpoly: int = 4000
+    ) -> dict[str, Any]: ...
+
+    # Typed dict by the library; Garmin answers a list of zones ({} on 204 No Content).
+    def get_activity_hr_in_timezones(self, activity_id: str) -> dict[str, Any] | list[Any]: ...
+
 
 class GarminSession:
     """One logged-in client for one request.

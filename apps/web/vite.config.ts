@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { parseEnv } from "node:util";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
@@ -13,6 +14,19 @@ function token(name: string): string {
 }
 
 const surface0 = token("color-surface-0");
+
+/**
+ * The public Mapbox token comes from the shell when set there (the Docker build arg on Render, "" from
+ * Playwright), else from the env file at the repo root that the API reads too. CI copies .env.example
+ * there, whose value is empty, so CI builds draw the route sketch instead of a map. Only this one name is
+ * read: envDir at the root would also apply that file's NODE_ENV=development to `vite build` and ship a
+ * development React bundle. Vite exposes a VITE_ variable from process.env as import.meta.env.
+ */
+function rootEnvValue(name: string): string | undefined {
+  const file = new URL("../../.env", import.meta.url);
+  return existsSync(file) ? parseEnv(readFileSync(file, "utf8"))[name] : undefined;
+}
+process.env.VITE_MAPBOX_TOKEN ??= rootEnvValue("VITE_MAPBOX_TOKEN") ?? "";
 
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 if (!html.includes(`<meta name="theme-color" content="${surface0}" />`)) {
@@ -58,6 +72,9 @@ export default defineConfig({
       workbox: {
         // App shell only. No runtimeCaching: API responses are never cached offline.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        // The map loads on demand: precached, mapbox-gl would add 1.9 MB to every install and update for a
+        // map whose tiles need the network anyway. Offline, RouteMap falls back to the route sketch.
+        globIgnores: ["**/mapbox-gl-*.js", "**/mapbox-route-*.{js,css}"],
         navigateFallback: "index.html",
         navigateFallbackDenylist: [/^\/api(\/|$)/, /^\/health$/],
         cleanupOutdatedCaches: true,

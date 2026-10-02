@@ -32,7 +32,7 @@ from garmin_service.errors import (
     unauthorized_response,
 )
 from garmin_service.log import configure_logging, request_id_var
-from garmin_service.routes import history, profile, sync
+from garmin_service.routes import activity_detail, history, profile, sync
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +168,7 @@ def create_app(settings: Settings, *, connect: Connect | None = None) -> FastAPI
     app.include_router(profile.router)
     app.include_router(sync.router)
     app.include_router(history.router)
+    app.include_router(activity_detail.router)
     app.add_middleware(GuardMiddleware, secret=settings.secret)
     return app
 

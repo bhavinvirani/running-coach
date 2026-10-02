@@ -1,5 +1,10 @@
 import {
   ErrorCode,
+  type GarminActivityDetailRequest,
+  garminActivityDetailRequestSchema,
+  type GarminActivityDetailResponse,
+  garminActivityDetailResponseSchema,
+  garminActivitySummarySchema,
   type GarminHistoryRequest,
   garminHistoryRequestSchema,
   type GarminHistoryResponse,
@@ -32,7 +37,8 @@ import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } fr
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
 // caller's onTokenBundle, awaited before the call returns, retries or throws; a retry sends the new one.
 
-// Sync and history pages list many activities; the api rule's 60 s covers both.
+// Sync and history pages list many activities, and an activity's detail is a login plus three paced calls:
+// 60 s for all three (api rule), 20 s for the rest.
 const SYNC_TIMEOUT_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 /** Garmin blocks last about an hour; the service sends 3600 when Garmin gives no delay. */
@@ -64,6 +70,12 @@ export interface GarminClient {
     request: GarminHistoryRequest,
     options: GarminCallOptions,
   ): Promise<GarminHistoryResponse>;
+  /** The laps, samples, route and HR zones of one run; not_found (404) when Garmin has no such activity. */
+  activityDetail(
+    garminActivityId: number,
+    request: GarminActivityDetailRequest,
+    options: GarminCallOptions,
+  ): Promise<GarminActivityDetailResponse>;
 }
 
 // Read before the full response schema, so a 2xx body that breaks the contract still hands its bundle over.
@@ -98,6 +110,10 @@ function toError(path: string, failed: FailedResponse<GarminProblem>): Error {
       502,
       "Garmin is not answering. Try again later.",
     );
+  }
+  if (code === ErrorCode.notFound) {
+    // Garmin answered that the item is gone (deleted on Garmin Connect); the caller words it for its item.
+    return new DomainError(ErrorCode.notFound, 404, "Garmin Connect has no such item.");
   }
   if (failed.status === 401) {
     // Our own misconfiguration, not the runner's: a 500 with the details in the log.
@@ -188,6 +204,17 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
         garminHistoryRequestSchema,
         request,
         garminHistoryResponseSchema,
+        SYNC_TIMEOUT_MS,
+        callOptions,
+      ),
+    // async, so a bad id rejects like a bad body instead of throwing synchronously.
+    activityDetail: async (garminActivityId, request, callOptions) =>
+      post(
+        // Parsed like a request body, so a bad id never reaches the URL.
+        `/activities/${garminActivitySummarySchema.shape.garminActivityId.parse(garminActivityId)}/detail`,
+        garminActivityDetailRequestSchema,
+        request,
+        garminActivityDetailResponseSchema,
         SYNC_TIMEOUT_MS,
         callOptions,
       ),

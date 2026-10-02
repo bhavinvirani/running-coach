@@ -160,6 +160,21 @@ describe("TodayScreen", () => {
     expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
   });
 
+  it("opens the latest run from its card", async () => {
+    fakeTodayApi();
+    const { router } = renderToday();
+
+    const run = await screen.findByRole("region", { name: "Latest run" });
+    const link = within(run).getByRole("link");
+    expect(link).toHaveAttribute("href", `/runs/${activityFixture().id}`);
+    expect(link).toHaveAccessibleName("Open the latest run, Sun 27 Sep, 07:12, 10.0 km, 52:18");
+
+    await userEvent.click(within(run).getByText("10.0"));
+
+    expect(await screen.findByText("Route not under test")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/runs/${activityFixture().id}`);
+  });
+
   it("converts distance and pace to mi when the runner uses miles", async () => {
     fakeTodayApi({ me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }) });
     renderToday();

@@ -79,6 +79,14 @@ describe("LapsChart", () => {
     expect(screen.getByText("1 lap left out as a GPS glitch.")).toBeInTheDocument();
   });
 
+  it("keeps the glitch caption but offers no table when the screen lists the laps itself", () => {
+    const laps = [...tempoLaps, toLapPoint({ index: 11, distanceM: 1000, durationS: 110 }, "km")];
+    render(<LapsChart laps={laps} unit="km" tableToggle={false} />);
+    expect(screen.getByRole("img", { name: "Lap pace chart" })).toBeInTheDocument();
+    expect(screen.getByText("1 lap left out as a GPS glitch.")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("switches between the chart and a table of every lap", async () => {
     render(<LapsChart laps={tempoLaps} unit="km" />);
     await userEvent.click(screen.getByRole("button", { name: "Show table" }));

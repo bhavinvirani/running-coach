@@ -91,6 +91,17 @@
                     }
                   ]
                 },
+                "calories": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "elevationGainM": {
                   "type": [
                     "number",
@@ -115,6 +126,7 @@
                 "avgHr",
                 "maxHr",
                 "cadence",
+                "calories",
                 "elevationGainM",
                 "isIndoor",
                 "isManual"

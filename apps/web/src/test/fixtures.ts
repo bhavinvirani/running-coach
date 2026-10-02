@@ -1,9 +1,11 @@
 import {
+  activityDetailSchema,
   activitySchema,
   activityWeekSchema,
   importProgressSchema,
   meResponseSchema,
   type Activity,
+  type ActivityDetail,
   type ActivityWeek,
   type ImportProgress,
   type MeResponse,
@@ -31,7 +33,7 @@ export function meFixture(overrides: Partial<MeResponse> = {}): MeResponse {
 }
 
 /**
- * A fictional outdoor run in London: 10.04 km in 52:18 at 148 bpm, 07:12 local (06:12 UTC, BST).
+ * A fictional outdoor run in London: 10.04 km in 52:18 at 148 bpm, 07:12 local (06:12 UTC, BST), 690 kcal.
  * Parsed with the shared contract like meFixture.
  */
 export function activityFixture(overrides: Partial<Activity> = {}): Activity {
@@ -46,9 +48,56 @@ export function activityFixture(overrides: Partial<Activity> = {}): Activity {
     avgHr: 148,
     maxHr: 171,
     cadence: 172,
+    calories: 690,
     elevationGainM: 64,
     isIndoor: false,
     isManual: false,
+    ...overrides,
+  });
+}
+
+/** Lap seconds of activityFixture's ten whole kilometers; an 11th lap of 40 m in 19 s ends the run at 52:18. */
+const KM_LAP_SECONDS = [318, 315, 312, 310, 312, 314, 313, 311, 309, 305];
+const SAMPLES = 101;
+
+/**
+ * What POST /api/activities/:id/detail answers for activityFixture: 11 laps, 101 row-aligned samples over
+ * 10.04 km, a fictional loop in open ocean as the route, and five zones adding up to 52:18.
+ */
+export function activityDetailFixture(overrides: Partial<ActivityDetail> = {}): ActivityDetail {
+  const laps = [
+    ...KM_LAP_SECONDS.map((durationS, position) => ({
+      index: position + 1,
+      distanceM: 1000,
+      durationS,
+      avgHr: 138 + 2 * position,
+      avgCadence: 170 + (position % 3),
+    })),
+    { index: 11, distanceM: 40, durationS: 19, avgHr: 158, avgCadence: 176 },
+  ];
+  const rows = Array.from({ length: SAMPLES }, (_, row) => row);
+  return activityDetailSchema.parse({
+    laps,
+    streams: {
+      elapsedS: rows.map((row) => row * 31.38),
+      distanceM: rows.map((row) => row * 100.4),
+      hr: rows.map((row) => (row === 0 ? null : 135 + (row % 25))),
+      cadence: rows.map((row) => 168 + (row % 7)),
+      elevationM: rows.map((row) => 30 + 8 * Math.sin(row / 8)),
+      speedMps: rows.map(() => 3.2),
+    },
+    route: Array.from({ length: 48 }, (_, point) => {
+      const angle = (2 * Math.PI * point) / 48;
+      // A loop in open ocean, like the Garmin fake's: fixtures hold no real place (tests rule).
+      return [0.0015 * Math.sin(angle), -30 + 0.0024 * Math.cos(angle)];
+    }),
+    hrZones: [
+      { zone: 1, lowBpm: 98, seconds: 120 },
+      { zone: 2, lowBpm: 118, seconds: 600 },
+      { zone: 3, lowBpm: 137, seconds: 1500 },
+      { zone: 4, lowBpm: 155, seconds: 800 },
+      { zone: 5, lowBpm: 172, seconds: 118 },
+    ],
     ...overrides,
   });
 }

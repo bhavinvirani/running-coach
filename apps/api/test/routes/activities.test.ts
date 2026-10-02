@@ -1,18 +1,46 @@
+import { randomUUID } from "node:crypto";
 import {
+  type ActivityResponse,
   type ActivityWeeksResponse,
+  activityResponseSchema,
   activityWeeksResponseSchema,
+  ErrorCode,
   latestActivityResponseSchema,
 } from "@running-coach/shared";
+import { eq } from "drizzle-orm";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
-import { activity, type NewActivity } from "../../src/db/schema";
+import {
+  activity,
+  activityLap,
+  activityStream,
+  garminConnection,
+  type NewActivity,
+} from "../../src/db/schema";
+import { decrypt } from "../../src/lib/crypto";
+import { activityDetailLimiter } from "../../src/routes/activities";
+import { upsertActivities } from "../../src/services/garmin-sync";
 import { importHistoryPage } from "../../src/services/history-import";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
-import { connectGarmin, createLongRun, createUser, FIXTURE_ACCOUNT, seedImport } from "../seed";
+import {
+  connectGarmin,
+  createLongRun,
+  createUser,
+  FIXTURE_ACCOUNT,
+  fixtureOf,
+  fixturesSentTo,
+  garminBundle,
+  seedImport,
+} from "../seed";
 
 const app = createTestApp();
 const PATH = "/api/activities/latest";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  activityDetailLimiter.reset();
+});
 
 type RunValues = Pick<NewActivity, "garminActivityId" | "startUtc" | "startLocal"> &
   Partial<Omit<NewActivity, "userId">>;
@@ -58,6 +86,7 @@ describe("GET /api/activities/latest", () => {
       avgHr: 148,
       maxHr: 166,
       cadence: 168,
+      calories: 1150,
       elevationGainM: 142,
       isIndoor: false,
       isManual: false,
@@ -345,5 +374,414 @@ describe("GET /api/activities", () => {
 
   it("returns 401 without a session", async () => {
     expectProblem(await request(app).get(WEEKS_PATH), 401, "unauthorized");
+  });
+});
+
+// Run detail against the Garmin service in fixture mode, which serves one sanitized detail for every run of
+// the fixture account and derives variants from the list item: 10000000006 a treadmill run (no route, no
+// elevation), 10000000004 a run without HR, 10000000003 a manual entry (no samples at all).
+const LONG_RUN = 10_000_000_007;
+const TREADMILL = 10_000_000_006;
+const NO_HR = 10_000_000_004;
+const MANUAL = 10_000_000_003;
+/** Not in the fixture account: Garmin answers 404, as for a run deleted on Garmin Connect. */
+const DELETED_ON_GARMIN = 123;
+
+type Agent = Awaited<ReturnType<typeof signedInAgent>>;
+
+const detailPath = (id: string) => `/api/activities/${id}/detail`;
+
+/** The owner, connected to the fixture Garmin with `bundle`, and one of their runs. */
+async function ownerWithRun(garminActivityId = LONG_RUN, bundle = garminBundle()) {
+  const agent = await signedInAgent(app);
+  const userId = await ownerId();
+  await connectGarmin(userId, bundle);
+  const run = await createLongRun(userId, garminActivityId);
+  return { agent, userId, run };
+}
+
+async function fetchDetail(agent: Agent, id: string): Promise<ActivityResponse> {
+  const response = await agent.post(detailPath(id));
+  expect(response.status).toBe(200);
+  return activityResponseSchema.parse(response.body);
+}
+
+async function stored() {
+  return {
+    laps: await db.select().from(activityLap),
+    streams: await db.select().from(activityStream),
+  };
+}
+
+async function storedConnection(userId: string) {
+  const [row] = await db.select().from(garminConnection).where(eq(garminConnection.userId, userId));
+  if (!row) throw new Error("no connection stored");
+  return row;
+}
+
+describe("GET /api/activities/:id", () => {
+  it("returns the run in the contract's shape with detail null before a fetch", async () => {
+    const agent = await signedInAgent(app);
+    const run = await createLongRun(await ownerId());
+
+    const response = await agent.get(`/api/activities/${run.id}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(activityResponseSchema.parse(response.body)).toEqual({
+      activity: {
+        id: run.id,
+        type: "running",
+        startUtc: "2026-09-27T06:00:00.000Z",
+        startLocal: "2026-09-27T08:00:00",
+        tz: null,
+        distanceM: 18_000,
+        durationS: 6120,
+        avgHr: 148,
+        maxHr: 166,
+        cadence: 168,
+        calories: 1150,
+        elevationGainM: 142,
+        isIndoor: false,
+        isManual: false,
+      },
+      detail: null,
+    });
+  });
+
+  it("returns the stored detail once it was fetched, without calling Garmin", async () => {
+    const { agent, run } = await ownerWithRun();
+    const fetched = await fetchDetail(agent, run.id);
+    const sent = fixturesSentTo("/detail");
+
+    const response = await agent.get(`/api/activities/${run.id}`);
+
+    expect(response.status).toBe(200);
+    expect(activityResponseSchema.parse(response.body)).toEqual(fetched);
+    expect(fetched.detail).not.toBeNull();
+    expect(sent()).toEqual([]);
+  });
+
+  it("returns 404 not_found for an unknown id", async () => {
+    const agent = await signedInAgent(app);
+
+    expectProblem(await agent.get(`/api/activities/${randomUUID()}`), 404, ErrorCode.notFound);
+  });
+
+  it("returns 404 not_found for another user's run", async () => {
+    const agent = await signedInAgent(app);
+    const other = await createLongRun(await createUser("other.runner@example.com"));
+
+    const response = await agent.get(`/api/activities/${other.id}`);
+
+    expectProblem(response, 404, ErrorCode.notFound);
+    expect(response.text).not.toContain("18000");
+  });
+
+  it("returns 400 validation for an id that is not a uuid", async () => {
+    const agent = await signedInAgent(app);
+
+    expectProblem(await agent.get("/api/activities/not-a-uuid"), 400, ErrorCode.validation);
+  });
+
+  it("still serves /api/activities/latest rather than reading latest as an id", async () => {
+    const agent = await signedInAgent(app);
+
+    const response = await agent.get(PATH);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ activity: null });
+  });
+
+  it("returns 401 without a session", async () => {
+    const response = await request(app).get(`/api/activities/${randomUUID()}`);
+
+    expectProblem(response, 401, ErrorCode.unauthorized);
+  });
+});
+
+describe("POST /api/activities/:id/detail", () => {
+  it("fetches the detail from Garmin, stores laps and samples once and answers them (run detail)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await connectGarmin(userId, garminBundle(), { lastError: ErrorCode.garminUnavailable });
+    const run = await createLongRun(userId);
+    const sent = fixturesSentTo("/detail");
+
+    const response = await agent.post(detailPath(run.id));
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    const body = activityResponseSchema.parse(response.body);
+    expect(body.activity.id).toBe(run.id);
+    const detail = body.detail;
+    if (!detail) throw new Error("no detail");
+    expect(detail.laps).toHaveLength(17);
+    expect(detail.laps.map((lap) => lap.index)).toEqual(
+      Array.from({ length: 17 }, (_, i) => i + 1),
+    );
+    expect(detail.laps[0]).toEqual({
+      index: 1,
+      distanceM: 1000,
+      durationS: 390.422,
+      avgHr: 167,
+      avgCadence: 145.515625,
+    });
+    const { streams } = detail;
+    expect(streams.elapsedS.length).toBeGreaterThan(500);
+    for (const series of Object.values(streams)) {
+      expect(series).toHaveLength(streams.elapsedS.length);
+    }
+    expect(detail.route?.length).toBeGreaterThan(0);
+    expect(detail.hrZones?.map((zone) => zone.zone)).toEqual([1, 2, 3, 4, 5]);
+    expect(sent()).toEqual([undefined]);
+    const rows = await stored();
+    expect(rows.laps).toHaveLength(17);
+    expect(rows.streams).toHaveLength(1);
+    // A finished Garmin call marks the login working, as a sync does.
+    expect(await storedConnection(userId)).toMatchObject({ status: "ok", lastError: null });
+  });
+
+  it("answers the stored detail on a second POST and calls Garmin no more (double tap)", async () => {
+    const { agent, run } = await ownerWithRun();
+    const first = await fetchDetail(agent, run.id);
+    const before = await stored();
+    const sent = fixturesSentTo("/detail");
+
+    const second = await fetchDetail(agent, run.id);
+
+    expect(second).toEqual(first);
+    expect(sent()).toEqual([]);
+    expect(await stored()).toEqual(before);
+  });
+
+  it("stores one stream row and calls Garmin once for two concurrent POSTs of one run (double tap)", async () => {
+    const { agent, run } = await ownerWithRun();
+    const sent = fixturesSentTo("/detail");
+
+    const [first, second] = await Promise.all([
+      agent.post(detailPath(run.id)),
+      agent.post(detailPath(run.id)),
+    ]);
+
+    expect([first.status, second.status]).toEqual([200, 200]);
+    expect(first.body).toEqual(second.body);
+    expect(sent()).toHaveLength(1);
+    const rows = await stored();
+    expect(rows.streams).toHaveLength(1);
+    expect(rows.laps).toHaveLength(17);
+  });
+
+  it("answers hr and zones null for a run without heart rate (missing HR)", async () => {
+    const { agent, run } = await ownerWithRun(NO_HR);
+
+    const { detail } = await fetchDetail(agent, run.id);
+
+    expect(detail?.streams.hr).toBeNull();
+    expect(detail?.hrZones).toBeNull();
+    expect(detail?.streams.elapsedS.length).toBeGreaterThan(0);
+    expect(detail?.laps.every((lap) => lap.avgHr === null)).toBe(true);
+  });
+
+  it("answers no route and no elevation for a treadmill run (indoor run)", async () => {
+    const { agent, run } = await ownerWithRun(TREADMILL);
+
+    const { detail } = await fetchDetail(agent, run.id);
+
+    expect(detail?.route).toBeNull();
+    expect(detail?.streams.elevationM).toBeNull();
+    expect(detail?.streams.elapsedS.length).toBeGreaterThan(0);
+    expect(detail?.laps.length).toBeGreaterThan(0);
+  });
+
+  it("stores empty samples for a manual entry and does not ask Garmin again (manual entry)", async () => {
+    const { agent, run } = await ownerWithRun(MANUAL);
+
+    const { detail } = await fetchDetail(agent, run.id);
+    const sent = fixturesSentTo("/detail");
+    const again = await fetchDetail(agent, run.id);
+
+    expect(detail).toEqual({
+      laps: [],
+      streams: {
+        elapsedS: [],
+        distanceM: [],
+        hr: null,
+        cadence: null,
+        elevationM: null,
+        speedMps: null,
+      },
+      route: null,
+      hrZones: null,
+    });
+    expect(again.detail).toEqual(detail);
+    expect(sent()).toEqual([]);
+    expect((await stored()).streams).toHaveLength(1);
+  });
+
+  it("keeps the detail when a sync rewrites the run edited on Garmin (edited activity)", async () => {
+    const { agent, userId, run } = await ownerWithRun();
+    const { detail } = await fetchDetail(agent, run.id);
+
+    const written = await upsertActivities(userId, [
+      {
+        garminActivityId: LONG_RUN,
+        type: "running",
+        startUtc: "2026-09-27T06:00:00Z",
+        startLocal: "2026-09-27T08:00:00",
+        tz: null,
+        distanceM: 18_250,
+        durationS: 6120,
+        avgHr: 148,
+        maxHr: 166,
+        cadence: 168,
+        calories: 1150,
+        elevationGainM: 142,
+        isIndoor: false,
+        isManual: false,
+      },
+    ]);
+
+    expect(written).toBe(1);
+    const response = await agent.get(`/api/activities/${run.id}`);
+    const body = activityResponseSchema.parse(response.body);
+    expect(body.activity.distanceM).toBe(18_250);
+    expect(body.detail).toEqual(detail);
+  });
+
+  it("deletes the stored detail with its run", async () => {
+    const { agent, run } = await ownerWithRun();
+    await fetchDetail(agent, run.id);
+
+    await db.delete(activity).where(eq(activity.id, run.id));
+
+    expect(await stored()).toEqual({ laps: [], streams: [] });
+    expectProblem(await agent.get(`/api/activities/${run.id}`), 404, ErrorCode.notFound);
+  });
+
+  it("returns 404 not_found and stores nothing when Garmin no longer has the run (deleted on Garmin)", async () => {
+    const { agent, userId, run } = await ownerWithRun(DELETED_ON_GARMIN);
+    // A first expiry strike stands until a call finishes; Garmin's 404 came from a working login.
+    await db
+      .update(garminConnection)
+      .set({ lastError: ErrorCode.garminAuthExpired })
+      .where(eq(garminConnection.userId, userId));
+
+    const response = await agent.post(detailPath(run.id));
+
+    const problem = expectProblem(response, 404, ErrorCode.notFound);
+    expect(problem.detail).toBe("That run is no longer on Garmin Connect.");
+    expect(await stored()).toEqual({ laps: [], streams: [] });
+    expect(await storedConnection(userId)).toMatchObject({ status: "ok", lastError: null });
+  });
+
+  it("returns 404 not_found for an unknown id or another user's run without calling Garmin", async () => {
+    const { agent } = await ownerWithRun();
+    const other = await createLongRun(await createUser("other.runner@example.com"));
+    const sent = fixturesSentTo("/detail");
+
+    expectProblem(await agent.post(detailPath(randomUUID())), 404, ErrorCode.notFound);
+    expectProblem(await agent.post(detailPath(other.id)), 404, ErrorCode.notFound);
+    expect(sent()).toEqual([]);
+    expect(await stored()).toEqual({ laps: [], streams: [] });
+  });
+
+  it("returns 400 validation for an id that is not a uuid", async () => {
+    const agent = await signedInAgent(app);
+
+    expectProblem(await agent.post(detailPath("not-a-uuid")), 400, ErrorCode.validation);
+  });
+
+  it("returns 409 garmin_not_connected without a Garmin connection", async () => {
+    const agent = await signedInAgent(app);
+    const run = await createLongRun(await ownerId());
+    const sent = fixturesSentTo("/detail");
+
+    expectProblem(await agent.post(detailPath(run.id)), 409, ErrorCode.garminNotConnected);
+    expect(sent()).toEqual([]);
+  });
+
+  it("returns 409 garmin_auth_expired and stores nothing when Garmin rejects the bundle (token expiry)", async () => {
+    const { agent, userId, run } = await ownerWithRun(LONG_RUN, garminBundle("expired"));
+
+    const response = await agent.post(detailPath(run.id));
+
+    expectProblem(response, 409, ErrorCode.garminAuthExpired);
+    expect(await stored()).toEqual({ laps: [], streams: [] });
+    expect((await storedConnection(userId)).lastError).toBe(ErrorCode.garminAuthExpired);
+  });
+
+  it("returns 429 with Retry-After and stores nothing, then refuses the next POST for the hour without calling Garmin (Garmin 429)", async () => {
+    const { agent, run } = await ownerWithRun(LONG_RUN, garminBundle("rate_limited"));
+    const sent = fixturesSentTo("/detail");
+
+    const first = await agent.post(detailPath(run.id));
+    const second = await agent.post(detailPath(run.id));
+
+    expect(expectProblem(first, 429, ErrorCode.garminRateLimited).retryAfterSeconds).toBe(3600);
+    expect(first.headers["retry-after"]).toBe("3600");
+    const refused = expectProblem(second, 429, ErrorCode.garminRateLimited);
+    expect(refused.retryAfterSeconds).toBeGreaterThan(3500);
+    expect(second.headers["retry-after"]).toBe(String(refused.retryAfterSeconds));
+    expect(sent()).toEqual(["rate_limited"]);
+    expect(await stored()).toEqual({ laps: [], streams: [] });
+  });
+
+  it("returns 502 garmin_unavailable and stores nothing when Garmin is down (Garmin outage)", async () => {
+    const { agent, userId, run } = await ownerWithRun(LONG_RUN, garminBundle("unavailable"));
+
+    const response = await agent.post(detailPath(run.id));
+
+    expectProblem(response, 502, ErrorCode.garminUnavailable);
+    expect(await stored()).toEqual({ laps: [], streams: [] });
+    expect((await storedConnection(userId)).lastError).toBe(ErrorCode.garminUnavailable);
+  });
+
+  it("writes the bundle Garmin rotated back, encrypted (rotated token)", async () => {
+    const { agent, userId, run } = await ownerWithRun(LONG_RUN, garminBundle("rotate"));
+
+    await fetchDetail(agent, run.id);
+
+    const { tokenBundleEnc } = await storedConnection(userId);
+    expect(tokenBundleEnc.startsWith("v1:")).toBe(true);
+    expect(fixtureOf(decrypt(tokenBundleEnc, userId))).toBe("rotated");
+  });
+
+  it("keeps the bundle Garmin rotated before a 502 and stores nothing (rotate then 502)", async () => {
+    const { agent, userId, run } = await ownerWithRun(
+      LONG_RUN,
+      garminBundle("rotate_then_unavailable"),
+    );
+
+    expectProblem(await agent.post(detailPath(run.id)), 502, ErrorCode.garminUnavailable);
+
+    const { tokenBundleEnc } = await storedConnection(userId);
+    expect(fixtureOf(decrypt(tokenBundleEnc, userId))).toBe("rotated");
+    expect(await stored()).toEqual({ laps: [], streams: [] });
+  });
+
+  it("returns 401 without a session and calls no Garmin", async () => {
+    const sent = fixturesSentTo("/detail");
+
+    const response = await request(app).post(detailPath(randomUUID()));
+
+    expectProblem(response, 401, ErrorCode.unauthorized);
+    expect(sent()).toEqual([]);
+  });
+
+  it("returns 429 rate_limited on the 7th call in a minute without calling Garmin", async () => {
+    const { agent, run } = await ownerWithRun();
+    for (let call = 0; call < 6; call += 1) {
+      expect((await agent.post(detailPath(run.id))).status).toBe(200);
+    }
+    const sent = fixturesSentTo("/detail");
+
+    const response = await agent.post(detailPath(run.id));
+
+    const problem = expectProblem(response, 429, ErrorCode.rateLimited);
+    expect(problem.retryAfterSeconds).toBeGreaterThan(0);
+    expect(problem.retryAfterSeconds).toBeLessThanOrEqual(60);
+    expect(response.headers["retry-after"]).toBe(String(problem.retryAfterSeconds));
+    expect(sent()).toEqual([]);
   });
 });

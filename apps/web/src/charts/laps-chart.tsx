@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from "recha
 import { Button } from "@/components/ui/button";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { downsample } from "@/lib/downsample";
-import { formatDistance, formatPaceValue, paceUnitLabel } from "@/lib/format";
+import { formatLapDistance, formatPaceValue, paceUnitLabel } from "@/lib/format";
 import type { LapPoint } from "./lap-point";
 
 export type PaceTarget = {
@@ -17,6 +17,8 @@ type LapsChartProps = {
   laps: readonly LapPoint[];
   unit: Units;
   target?: PaceTarget;
+  /** False when the screen lists every lap in a table of its own below the chart (the run screen). */
+  tableToggle?: boolean;
 };
 
 const chartConfig = {
@@ -57,7 +59,7 @@ function glitchCaption(count: number): string | null {
  * Lap paces as bars, faster drawn higher (inverted pace axis), against an optional target pace.
  * GPS glitches are left out of the chart and named in a caption; the table shows every lap.
  */
-export function LapsChart({ laps, unit, target }: LapsChartProps) {
+export function LapsChart({ laps, unit, target, tableToggle = true }: LapsChartProps) {
   const [showTable, setShowTable] = useState(false);
 
   if (laps.length === 0) {
@@ -80,12 +82,16 @@ export function LapsChart({ laps, unit, target }: LapsChartProps) {
       ) : (
         <PaceBars laps={charted} target={target} />
       )}
-      <div className="flex items-center justify-between gap-3">
+      {tableToggle ? (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-caption text-ink-2">{caption}</p>
+          <Button variant="ghost" onClick={() => setShowTable((shown) => !shown)}>
+            {showTable ? "Show chart" : "Show table"}
+          </Button>
+        </div>
+      ) : caption ? (
         <p className="text-caption text-ink-2">{caption}</p>
-        <Button variant="ghost" onClick={() => setShowTable((shown) => !shown)}>
-          {showTable ? "Show chart" : "Show table"}
-        </Button>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -173,7 +179,7 @@ function LapsTable({ laps, unit }: { laps: readonly LapPoint[]; unit: Units }) {
         {laps.map((lap) => (
           <tr key={lap.index} className="border-t border-line">
             <td className="py-2 text-ink-2">{lap.index}</td>
-            <td className="py-2 text-right">{formatDistance(lap.distanceInUnit, unit)}</td>
+            <td className="py-2 text-right">{formatLapDistance(lap.distanceInUnit, unit)}</td>
             <td className="py-2 text-right">
               {lap.gpsGlitch ? "GPS glitch" : formatPaceValue(lap.paceSecondsPerUnit)}
             </td>

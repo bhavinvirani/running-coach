@@ -11,6 +11,7 @@ export default defineProject({
     // Playwright specs in e2e/ run under Playwright, never Vitest.
     include: ["src/**/*.test.{ts,tsx}"],
     unstubGlobals: true,
+    unstubEnvs: true,
     restoreMocks: true,
   },
 });
