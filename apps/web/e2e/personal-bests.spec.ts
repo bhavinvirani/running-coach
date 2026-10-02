@@ -21,15 +21,29 @@ import {
 } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
-/** The badges of historyBestEfforts (seed.ts), shortest first, named as a screen reader reads them. */
+/** The badges of historyBestEfforts (seed.ts), longest first, named as a screen reader reads them. */
 const historyBadges = [
-  "1K, 4:58, 2 Sep 2026",
-  "1 mi, 8:12, 10 Sep 2026",
-  "2 mi, 17:21, 10 Sep 2026",
-  "5K, 27:29, 10 Sep 2026",
-  "5 mi, 45:10, 13 Sep 2026",
-  "10K, 56:41, 27 Sep 2026, New",
   "15K, 1:25:52, 27 Sep 2026, New",
+  "10K, 56:41, 27 Sep 2026, New",
+  "5 mi, 45:10, 13 Sep 2026",
+  "5K, 27:29, 10 Sep 2026",
+  "2 mi, 17:21, 10 Sep 2026",
+  "1 mi, 8:12, 10 Sep 2026",
+  "1K, 4:58, 2 Sep 2026",
+];
+/** The whole row for historyBestEfforts: its badges, then the distances no run reached, longest first. */
+const historyRow = [
+  "15K",
+  "10K",
+  "5 mi",
+  "5K",
+  "2 mi",
+  "1 mi",
+  "1K",
+  "Marathon",
+  "Half",
+  "20K",
+  "10 mi",
 ];
 
 /**
@@ -38,14 +52,28 @@ const historyBadges = [
  * mile 7:51, 5K 28:22, 10K 58:18, half 2:08:51). The samples reach 10 mi but not 20K.
  */
 const fixtureBadges = [
-  "1K, 5:54, 27 Sep 2026, Garmin 4:48, New",
-  "1 mi, 9:40, 27 Sep 2026, Garmin 7:51, New",
-  "2 mi, 19:54, 27 Sep 2026, New",
-  "5K, 31:22, 27 Sep 2026, Garmin 28:22, New",
-  "5 mi, 51:08, 27 Sep 2026, New",
-  "10K, 1:04:17, 27 Sep 2026, Garmin 58:18, New",
-  "15K, 1:36:46, 27 Sep 2026, New",
   "10 mi, 1:44:08, 27 Sep 2026, New",
+  "15K, 1:36:46, 27 Sep 2026, New",
+  "10K, 1:04:17, 27 Sep 2026, Garmin 58:18, New",
+  "5 mi, 51:08, 27 Sep 2026, New",
+  "5K, 31:22, 27 Sep 2026, Garmin 28:22, New",
+  "2 mi, 19:54, 27 Sep 2026, New",
+  "1 mi, 9:40, 27 Sep 2026, Garmin 7:51, New",
+  "1K, 5:54, 27 Sep 2026, Garmin 4:48, New",
+];
+/** The whole row after the sync: its badges, then the distances the samples do not reach. */
+const fixtureRow = [
+  "10 mi",
+  "15K",
+  "10K",
+  "5 mi",
+  "5K",
+  "2 mi",
+  "1 mi",
+  "1K",
+  "Marathon",
+  "Half",
+  "20K",
 ];
 const fixtureChip = "8 PBs";
 
@@ -80,9 +108,14 @@ function tileRow(card: Locator): Locator {
   return card.getByRole("list", { name: "Personal bests" });
 }
 
-/** A badge by its label ("5K", "Half"), whether it links to a run or says no run reached it. */
-function badge(card: Locator, label: string): Locator {
-  return card.getByRole("listitem").filter({ has: card.page().getByText(label, { exact: true }) });
+/**
+ * A tile by its label ("5K", "Half"), in Personal bests or a run's Best efforts: on Progress whether it
+ * links to a run or says no run reached it.
+ */
+function tile(section: Locator, label: string): Locator {
+  return section
+    .getByRole("listitem")
+    .filter({ has: section.page().getByText(label, { exact: true }) });
 }
 
 /** Every badge that opens a run, in order, by its accessible name. */
@@ -94,11 +127,20 @@ async function expectBadgeLinks(card: Locator, names: readonly string[]): Promis
   }
 }
 
+/** Every tile of the row, left to right, by the distance it shows. */
+async function expectRowOrder(card: Locator, labels: readonly string[]): Promise<void> {
+  const tiles = tileRow(card).getByRole("listitem");
+  await expect(tiles).toHaveCount(labels.length);
+  for (const [position, label] of labels.entries()) {
+    await expect(tiles.nth(position).getByText(label, { exact: true })).toHaveCount(1);
+  }
+}
+
 /** Distances no run has reached, and only those: each badge says so and opens nothing. */
 async function expectNoRunYet(card: Locator, labels: readonly string[]): Promise<void> {
   for (const label of labels) {
-    await expect(badge(card, label)).toContainText("No run yet");
-    await expect(badge(card, label).getByRole("link")).toHaveCount(0);
+    await expect(tile(card, label)).toContainText("No run yet");
+    await expect(tile(card, label).getByRole("link")).toHaveCount(0);
   }
   await expect(card.getByText("No run yet", { exact: true })).toHaveCount(labels.length);
 }
@@ -117,19 +159,23 @@ function startLine(page: Page): Locator {
 }
 
 /**
- * The run screen's Best efforts, row by row as shown: distance, time cut to the second, pace, and PB on a
- * current best. A screen reader hears each row as one sentence instead (run-screen.test.tsx).
+ * The run screen's Best efforts, tile by tile from the left: distance, time cut to the second, pace, and the
+ * PB chip on a current best. A screen reader hears each tile as one sentence instead (run-screen.test.tsx).
  */
 async function expectBestEfforts(
   page: Page,
-  rows: readonly (readonly [string, string, string, "PB" | ""])[],
+  tiles: readonly (readonly [string, string, string, "PB" | ""])[],
 ): Promise<void> {
   const items = section(page, "Best efforts")
     .getByRole("list", { name: "Best efforts" })
     .getByRole("listitem");
-  await expect(items).toHaveCount(rows.length);
-  for (const [position, cells] of rows.entries()) {
-    await expect(items.nth(position).locator(':scope > [aria-hidden="true"]')).toHaveText(cells);
+  await expect(items).toHaveCount(tiles.length);
+  for (const [position, [label, time, pace, chip]] of tiles.entries()) {
+    // The tile's lines as drawn, hidden from screen readers: the distance with the chip on its right, the
+    // time, the pace. The chip sits beside the distance with no space between, so the line reads "5KPB".
+    const lines = items.nth(position).locator(':scope > * > [aria-hidden="true"]');
+    await expect(lines).toHaveText([`${label}${chip}`, time, pace]);
+    await expect(lines.first().locator(":scope > span")).toHaveText(chip ? [label, chip] : [label]);
   }
 }
 
@@ -167,18 +213,22 @@ test("Progress shows a badge per distance with its time and date, and a badge op
   await expect(card).not.toContainText("best efforts");
   await expect(card.getByRole("alert")).toHaveCount(0);
 
-  // One row of tiles: 1K and 1 mi whole, 2 mi cut at the screen's edge to say the row goes on, the rest a
-  // swipe away. A sideways wheel over the row is the swipe: the desktop browser has no touch.
+  // One row of tiles, the longest best first and the distances no run has reached at the end, each kind
+  // longest first: the row reads one way.
+  await expectRowOrder(card, historyRow);
+
+  // 15K and 10K whole, 5 mi cut at the screen's edge to say the row goes on, the rest a swipe away. A
+  // sideways wheel over the row is the swipe: the desktop browser has no touch.
   const row = tileRow(card);
-  await expect(badge(card, "1K")).toBeInViewport({ ratio: 1 });
-  await expect(badge(card, "1 mi")).toBeInViewport({ ratio: 1 });
-  await expect(badge(card, "2 mi")).toBeInViewport();
-  await expect(badge(card, "2 mi")).not.toBeInViewport({ ratio: 1 });
-  await expect(badge(card, "Marathon")).not.toBeInViewport();
+  await expect(tile(card, "15K")).toBeInViewport({ ratio: 1 });
+  await expect(tile(card, "10K")).toBeInViewport({ ratio: 1 });
+  await expect(tile(card, "5 mi")).toBeInViewport();
+  await expect(tile(card, "5 mi")).not.toBeInViewport({ ratio: 1 });
+  await expect(tile(card, "10 mi")).not.toBeInViewport();
   await row.hover();
   await page.mouse.wheel(2000, 0);
-  await expect(badge(card, "Marathon")).toBeInViewport({ ratio: 1 });
-  await expect(badge(card, "1K")).not.toBeInViewport();
+  await expect(tile(card, "10 mi")).toBeInViewport({ ratio: 1 });
+  await expect(tile(card, "15K")).not.toBeInViewport();
   // The row scrolls on its own: the heading stays where it was.
   await expect(card.getByRole("heading", { name: "Personal bests", level: 2 })).toBeInViewport({
     ratio: 1,
@@ -221,16 +271,24 @@ test("Progress shows a badge per distance with its time and date, and a badge op
 
   await expect(page.getByRole("heading", { name: "Thu 10 Sep", level: 1 })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/runs/${race.activityId}$`));
-  // The race holds three bests: the chip counts them and the rows mark them. Its 1K (5:00) is beaten by
+  // The race holds three bests: the chip counts them and the tiles mark them. Its 1K (5:00) is beaten by
   // the 4:58 of Wed 2 Sep. Pace is worked out from the time as shown: 8:12 over a mile is 5:06 /km.
   await expect(startLine(page)).toHaveText("18:30Race3 PBs");
   await expect(startLine(page).getByText("3 PBs", { exact: true })).toBeVisible();
   await expectBestEfforts(page, [
-    ["1K", "5:00", "5:00 /km", ""],
-    ["1 mi", "8:12", "5:06 /km", "PB"],
-    ["2 mi", "17:21", "5:23 /km", "PB"],
     ["5K", "27:29", "5:30 /km", "PB"],
+    ["2 mi", "17:21", "5:23 /km", "PB"],
+    ["1 mi", "8:12", "5:06 /km", "PB"],
+    ["1K", "5:00", "5:00 /km", ""],
   ]);
+  // The same row as on Progress: 5K and 2 mi whole, 1 mi cut at the screen's edge. The tiles open nothing,
+  // as the runner is on the run already.
+  const efforts = section(page, "Best efforts");
+  await expect(tile(efforts, "5K")).toBeInViewport({ ratio: 1 });
+  await expect(tile(efforts, "2 mi")).toBeInViewport({ ratio: 1 });
+  await expect(tile(efforts, "1 mi")).toBeInViewport();
+  await expect(tile(efforts, "1 mi")).not.toBeInViewport({ ratio: 1 });
+  await expect(efforts.getByRole("link")).toHaveCount(0);
 
   await page.getByRole("link", { name: "Back" }).click();
   await expect(page.getByRole("heading", { name: "Progress", level: 1 })).toBeVisible();
@@ -267,8 +325,9 @@ test("Sync now flags the run that set new bests: its PB chip on Today, then its 
   await tab(page, "Progress").click();
   const card = bestsCard(page);
   await expectBadgeLinks(card, fixtureBadges);
+  await expectRowOrder(card, fixtureRow);
   await expectNoRunYet(card, ["20K", "Half", "Marathon"]);
-  await expect(badge(card, "Half")).toContainText("Garmin 2:08:51");
+  await expect(tile(card, "Half")).toContainText("Garmin 2:08:51");
   // Garmin's records are in, so the caption under the tiles says why 2 mi, 5 mi, 15K and 10 mi have none.
   await expect(card.getByText(garminCaption, { exact: true })).toBeVisible();
   // No pending line ("Checking N runs ...", "The next sync checks N runs ...") and no stopped alert.
@@ -343,6 +402,20 @@ test("a treadmill run as the latest run gets no PB chip on Today and no badge", 
   await openProgress(page);
   const card = bestsCard(page);
   await expect(card.getByRole("link")).toHaveCount(0);
+  // With no best at all, every tile says so, still longest first.
+  await expectRowOrder(card, [
+    "Marathon",
+    "Half",
+    "20K",
+    "10 mi",
+    "15K",
+    "10K",
+    "5 mi",
+    "5K",
+    "2 mi",
+    "1 mi",
+    "1K",
+  ]);
   await expectNoRunYet(card, [
     "1K",
     "1 mi",

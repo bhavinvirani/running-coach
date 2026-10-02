@@ -60,8 +60,8 @@ function startLine(page: Page): Locator {
   return section(page, "Summary").locator("p", { has: page.locator("time") });
 }
 
-/** The rows of Best efforts, one per distance the run covered, shortest first. */
-function effortRows(page: Page): Locator {
+/** The tiles of Best efforts, one per distance the run covered, longest first. */
+function effortTiles(page: Page): Locator {
   return section(page, "Best efforts")
     .getByRole("list", { name: "Best efforts" })
     .getByRole("listitem");
@@ -306,7 +306,7 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
 }) => {
   // From this cursor the sync stores the fixture's six runs of 6 to 27 Sep. Its best-efforts job finds the
   // same efforts in every outdoor run (the fixture serves one set of samples), so ties go to the earliest
-  // run, the race of Sun 6 Sep, which holds every best. Waiting for the job keeps the PB chips and rows
+  // run, the race of Sun 6 Sep, which holds every best. Waiting for the job keeps the PB chips and tiles
   // from depending on which side of it a screen opens.
   await connectGarmin(page.request, syncFromRaceDay);
   expect((await syncGarmin(page.request)).activitiesWritten).toBe(6);
@@ -343,9 +343,9 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
 
   await expect(stat(page, "Avg HR")).toHaveText("–");
   await expectSplitBar(page, 1, fixtureFirstPace, "");
-  // Its efforts tie the race's, which is earlier and holds the bests: the rows show, none marked PB.
+  // Its efforts tie the race's, which is earlier and holds the bests: the tiles show, none marked PB.
   await expect(startLine(page)).toHaveText("19:00");
-  await expect(effortRows(page)).toHaveCount(8);
+  await expect(effortTiles(page)).toHaveCount(8);
   await expect(section(page, "Best efforts").getByText("PB", { exact: true })).toHaveCount(0);
   // The table's Avg HR column shows the dash for every lap.
   await section(page, "Splits").getByRole("button", { name: "Show table" }).click();
@@ -380,10 +380,12 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
   await expect(startLine(page).getByText("Race", { exact: true })).toBeVisible();
   await expect(startLine(page).getByText("8 PBs", { exact: true })).toBeVisible();
   await expect(stat(page, "Distance")).toHaveText(/^10\.2\s*km$/);
-  // Every effort is a best, shortest first; the times are the fixture samples' (personal-bests.spec.ts).
-  await expect(effortRows(page)).toHaveCount(8);
-  await expect(effortRows(page).first()).toContainText("1K");
-  await expect(effortRows(page).last()).toContainText("10 mi");
+  // Every effort is a best, longest first; the times are the fixture samples' (personal-bests.spec.ts).
+  await expect(effortTiles(page)).toHaveCount(8);
+  await expect(effortTiles(page).first().getByText("10 mi", { exact: true })).toBeVisible();
+  await expect(effortTiles(page).first()).toContainText("1:44:08");
+  await expect(effortTiles(page).last().getByText("1K", { exact: true })).toBeVisible();
+  await expect(effortTiles(page).last()).toContainText("5:54");
   await expect(section(page, "Best efforts").getByText("PB", { exact: true })).toHaveCount(8);
   await expectSplitBar(page, 1, fixtureFirstPace, "");
   const stored = await getRun(page, runId(page));

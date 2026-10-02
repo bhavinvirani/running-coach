@@ -50,7 +50,7 @@ test("run shows the seeded long run as a race with its best efforts, route, spli
   await seedLongRun({ race: true });
   await seedRunDetail(fixtureRunIds.longRun, "outdoor");
   // An earlier, faster race beside it, so the long run holds only 15K and 10 mi and its Best efforts show
-  // both kinds of row. The race starts earlier, so the newest run is still the long run.
+  // both kinds of tile. The race starts earlier, so the newest run is still the long run.
   await seedRaceDayRun();
   await seedBestEfforts(longRunBestEfforts);
 
