@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { activityDetailSchema } from "./activity";
+import { garminRecordSchema } from "./personal-bests";
 import { problemSchema } from "./problem";
 
 /**
@@ -125,3 +126,49 @@ export const garminActivityDetailResponseSchema = z
   })
   .strict();
 export type GarminActivityDetailResponse = z.infer<typeof garminActivityDetailResponseSchema>;
+
+/** Runs per POST /activities/series: one login and one paced call per run stay inside the 60 s timeout. */
+export const GARMIN_SERIES_BATCH_MAX = 10;
+
+/**
+ * POST /activities/series: the timer and distance samples of up to GARMIN_SERIES_BATCH_MAX runs, one
+ * get_activity_details call each at Garmin's full rate (about one row a second), all under one login, so
+ * best efforts can be found in any stretch of a run. With `includeRecords`, Garmin's own running records
+ * (get_personal_record) come back too, for comparison.
+ */
+export const garminSeriesRequestSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    garminActivityIds: z.array(z.number().int().positive()).max(GARMIN_SERIES_BATCH_MAX),
+    includeRecords: z.boolean(),
+  })
+  .strict();
+export type GarminSeriesRequest = z.infer<typeof garminSeriesRequestSchema>;
+
+/**
+ * One run's samples, row-aligned. Both arrays are empty when Garmin holds no samples (a manual entry) or no
+ * longer knows the run (deleted on Garmin): either way the run has no best efforts.
+ */
+export const garminActivitySeriesSchema = z
+  .object({
+    garminActivityId: z.number().int().positive(),
+    /** Timer seconds from the start, non-decreasing. */
+    elapsedS: z.array(z.number().nonnegative()),
+    distanceM: z.array(z.number().nonnegative()),
+  })
+  .strict()
+  .refine((series) => series.distanceM.length === series.elapsedS.length, {
+    message: "distanceM must have the length of elapsedS",
+  });
+export type GarminActivitySeries = z.infer<typeof garminActivitySeriesSchema>;
+
+export const garminSeriesResponseSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    /** One entry per requested id, in request order. */
+    series: z.array(garminActivitySeriesSchema),
+    /** Garmin's running records at the distances the app knows; null unless `includeRecords` was set. */
+    records: z.array(garminRecordSchema).nullable(),
+  })
+  .strict();
+export type GarminSeriesResponse = z.infer<typeof garminSeriesResponseSchema>;

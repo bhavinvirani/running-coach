@@ -1,5 +1,6 @@
 export * from "./error-codes";
 export * from "./units";
+export * from "./distances";
 export * from "./contracts/problem";
 export * from "./contracts/auth";
 export * from "./contracts/me";
@@ -8,3 +9,4 @@ export * from "./contracts/activity";
 export * from "./contracts/sync";
 export * from "./contracts/garmin-connection";
 export * from "./contracts/import";
+export * from "./contracts/personal-bests";
