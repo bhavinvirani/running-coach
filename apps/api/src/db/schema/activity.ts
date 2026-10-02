@@ -5,6 +5,7 @@ import {
   index,
   jsonb,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -45,6 +46,9 @@ export const activity = pgTable(
     // Garmin's eventType.typeKey (race, training, uncategorized, ...); "race" is what the app reads. Null
     // until Import history rewrites the row (a sync re-reads only the day before its cursor).
     eventType: text("event_type"),
+    // The engine's BEST_EFFORTS_VERSION this run's best_effort rows were computed with. Null until they
+    // are, and again once a sync changes the run's distance or time, so a lower or null value is pending.
+    bestEffortsVersion: smallint("best_efforts_version"),
     garminUpdatedAt: timestamp("garmin_updated_at", { withTimezone: true }),
     summary: jsonb("summary"),
     ...timestamps(),

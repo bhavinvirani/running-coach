@@ -15,6 +15,10 @@ import {
   garminProfileRequestSchema,
   type GarminProfileResponse,
   garminProfileResponseSchema,
+  type GarminSeriesRequest,
+  garminSeriesRequestSchema,
+  type GarminSeriesResponse,
+  garminSeriesResponseSchema,
   type GarminSyncRequest,
   garminSyncRequestSchema,
   type GarminSyncResponse,
@@ -37,8 +41,8 @@ import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } fr
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
 // caller's onTokenBundle, awaited before the call returns, retries or throws; a retry sends the new one.
 
-// Sync and history pages list many activities, and an activity's detail is a login plus three paced calls:
-// 60 s for all three (api rule), 20 s for the rest.
+// Sync and history pages list many activities, an activity's detail is a login plus three paced calls, and a
+// series batch is a login plus up to eleven: 60 s for all four (api rule), 20 s for the rest.
 const SYNC_TIMEOUT_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 /** Garmin blocks last about an hour; the service sends 3600 when Garmin gives no delay. */
@@ -76,6 +80,11 @@ export interface GarminClient {
     request: GarminActivityDetailRequest,
     options: GarminCallOptions,
   ): Promise<GarminActivityDetailResponse>;
+  /**
+   * The timer and distance samples of up to GARMIN_SERIES_BATCH_MAX runs, one entry per id in request
+   * order (empty arrays for a run Garmin no longer has), and Garmin's own records when asked for.
+   */
+  series(request: GarminSeriesRequest, options: GarminCallOptions): Promise<GarminSeriesResponse>;
 }
 
 // Read before the full response schema, so a 2xx body that breaks the contract still hands its bundle over.
@@ -215,6 +224,15 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
         garminActivityDetailRequestSchema,
         request,
         garminActivityDetailResponseSchema,
+        SYNC_TIMEOUT_MS,
+        callOptions,
+      ),
+    series: (request, callOptions) =>
+      post(
+        "/activities/series",
+        garminSeriesRequestSchema,
+        request,
+        garminSeriesResponseSchema,
         SYNC_TIMEOUT_MS,
         callOptions,
       ),

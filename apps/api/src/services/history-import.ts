@@ -13,6 +13,7 @@ import { getBoss } from "../jobs/boss";
 import * as importQueue from "../jobs/import-history-queue";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
+import { queueBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess, requireGarminConnection } from "./garmin-account";
 import { upsertActivities } from "./garmin-sync";
 
@@ -180,7 +181,8 @@ export type ImportHistoryPageResult = { status: "skipped" } | ImportedPage;
  * missing or expired login and during the hour after a 429; a paused import that passes those gates is
  * running again before Garmin is called. Rethrows a failed Garmin call after recording it on the
  * connection; the job decides what each error means for the import. On success the runs, the cursor and
- * the connection's ok status commit in one transaction. Garmin's short page ends the import.
+ * the connection's ok status commit in one transaction. Garmin's short page ends the import. An imported
+ * page then queues the user's best efforts when runs are pending, outside the lock the batch also takes.
  */
 export async function importHistoryPage({
   userId,
@@ -192,7 +194,7 @@ export async function importHistoryPage({
     throw new RangeError(`pageSize must exceed the overlap of ${HISTORY_PAGE_OVERLAP}`);
   }
 
-  return withUserLock(userId, async () => {
+  const imported = await withUserLock(userId, async (): Promise<ImportHistoryPageResult> => {
     const progress = await readProgress(userId);
     if (!progress || progress.status === "done" || progress.status === "failed") {
       return { status: "skipped" } as const;
@@ -253,6 +255,8 @@ export async function importHistoryPage({
     log.info({ userId, ...result }, "history page imported");
     return result;
   });
+  if (imported.status !== "skipped") await queueBestEfforts(userId);
+  return imported;
 }
 
 const unfinished = inArray(importProgress.status, ["running", "paused"]);

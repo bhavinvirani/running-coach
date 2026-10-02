@@ -34,7 +34,7 @@ type ActivityRow = Pick<typeof activity.$inferSelect, keyof typeof activityColum
  * Postgres prints a timestamp without zone as "2026-09-27 08:00:00"; the contract wants ISO local time. No
  * zone math: the wall clock Garmin recorded is the date the runner sees.
  */
-function isoLocal(value: string): string {
+export function isoLocal(value: string): string {
   return value.replace(" ", "T").slice(0, "YYYY-MM-DDTHH:MM:SS".length);
 }
 

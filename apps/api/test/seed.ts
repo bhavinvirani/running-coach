@@ -174,6 +174,31 @@ export async function setSettings(
   if (!row) throw new Error("the user has no settings row");
 }
 
+/**
+ * A run of the user's with the values a test names: by default an outdoor 10 km on 2026-09-27 under the
+ * fixture account's long-run id, for which the fixture service serves its detail samples.
+ */
+export async function createRun(
+  userId: string,
+  values: Partial<Omit<typeof activity.$inferInsert, "userId">> = {},
+) {
+  const [row] = await db
+    .insert(activity)
+    .values({
+      userId,
+      garminActivityId: 10_000_000_007,
+      type: "running",
+      startUtc: new Date("2026-09-27T06:00:00Z"),
+      startLocal: "2026-09-27 08:00:00",
+      distanceM: 10_000,
+      durationS: 3000,
+      ...values,
+    })
+    .returning();
+  if (!row) throw new Error("insert returned nothing");
+  return row;
+}
+
 /** The fixture service's 18 km long run of 2026-09-27, as the sync stores it. */
 export async function createLongRun(userId: string, garminActivityId = 10_000_000_007) {
   const [row] = await db

@@ -8,6 +8,7 @@ import { db } from "../../src/db/client";
 import { activity, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
 import { enqueueSyncGarmin, startJobs, stopJobs } from "../../src/jobs";
+import * as bestEffortsJob from "../../src/jobs/best-efforts";
 import { getBoss } from "../../src/jobs/boss";
 import * as syncJob from "../../src/jobs/sync-garmin";
 import { decrypt } from "../../src/lib/crypto";
@@ -105,6 +106,9 @@ function runningJob(data: syncJob.SyncGarminData): Job<unknown> {
 
 beforeAll(async () => {
   await startJobs({ pollingIntervalSeconds: 0.5, clock: () => jobClock });
+  // Every sync queues best efforts; their batches would outlive the test and deadlock with the next one's
+  // truncation. test/jobs/best-efforts.test.ts runs that worker.
+  await getBoss().offWork(bestEffortsJob.name, { wait: true });
 });
 
 afterAll(async () => {

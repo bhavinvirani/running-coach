@@ -1,4 +1,5 @@
 import type { WorkOptions } from "pg-boss";
+import * as bestEfforts from "./best-efforts";
 import { getBoss, startBoss, stopBoss } from "./boss";
 import * as importHistory from "./import-history";
 import * as syncGarmin from "./sync-garmin";
@@ -35,6 +36,11 @@ export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
         })
       : undefined,
   );
+
+  await boss.createQueue(bestEfforts.name, bestEfforts.queue);
+  await boss.work(bestEfforts.name, work, async ([job]) =>
+    job ? bestEfforts.handle(boss, job) : undefined,
+  );
 }
 
 export async function stopJobs(): Promise<void> {
@@ -53,3 +59,6 @@ export async function enqueueSyncGarmin(data: syncGarmin.SyncGarminData): Promis
 
 /** Queues a page of the user's history import at its stored cursor (import-history-queue.ts). */
 export { enqueueImportHistory } from "./import-history-queue";
+
+/** Queues a batch of the user's best efforts unless one waits (best-efforts-queue.ts). */
+export { enqueueBestEfforts } from "./best-efforts-queue";

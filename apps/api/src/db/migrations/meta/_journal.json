@@ -57,6 +57,13 @@
       "when": 1790951594259,
       "tag": "0007_add_activity_event_type",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790956193729,
+      "tag": "0008_create_best_effort",
+      "breakpoints": true
     }
   ]
 }

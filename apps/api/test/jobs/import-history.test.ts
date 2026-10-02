@@ -13,6 +13,7 @@ import {
 } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
 import { startJobs, stopJobs } from "../../src/jobs";
+import * as bestEffortsJob from "../../src/jobs/best-efforts";
 import { getBoss, startBoss } from "../../src/jobs/boss";
 import * as importJob from "../../src/jobs/import-history";
 import { DomainError } from "../../src/lib/errors";
@@ -318,6 +319,9 @@ describe("import-history job handler", () => {
 describe("import-history job on pg-boss", () => {
   beforeAll(async () => {
     await startJobs({ pollingIntervalSeconds: 0.5, historyPageSize: PAGE_SIZE });
+    // Every page queues best efforts; their batches would outlive the test and deadlock with the next
+    // one's truncation. test/jobs/best-efforts.test.ts runs that worker.
+    await getBoss().offWork(bestEffortsJob.name, { wait: true });
   });
 
   it("imports the whole history through chained page jobs, one per page (imported count equals Garmin's)", async () => {
