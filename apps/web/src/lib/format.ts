@@ -4,6 +4,7 @@ import type { Units } from "@running-coach/shared";
 export const MISSING = "–";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function isFiniteNumber(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -41,10 +42,22 @@ export function formatDuration(seconds: number | null | undefined): string {
   return hours > 0 ? `${hours}:${pad2(minutes)}:${pad2(rest)}` : `${pad2(minutes)}:${pad2(rest)}`;
 }
 
+/** Distance already converted to the user's unit, for a figure that draws the unit itself: 10.04 → "10.0". */
+export function formatDistanceValue(distanceInUnit: number | null | undefined): string {
+  if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
+  return distanceInUnit.toFixed(1);
+}
+
 /** Distance already converted to the user's unit: 10.04, "km" → "10.0 km". */
 export function formatDistance(distanceInUnit: number | null | undefined, unit: Units): string {
-  if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
-  return `${distanceInUnit.toFixed(1)} ${unit}`;
+  const value = formatDistanceValue(distanceInUnit);
+  return value === MISSING ? MISSING : `${value} ${unit}`;
+}
+
+/** 147.6 → "148". Zero means the watch recorded no HR, not a stopped heart. */
+export function formatHeartRate(bpm: number | null | undefined): string {
+  if (!isFiniteNumber(bpm) || bpm <= 0) return MISSING;
+  return Math.round(bpm).toString();
 }
 
 /**
@@ -69,4 +82,29 @@ export function formatDateTime(isoUtc: string | null | undefined, timeZone: stri
     parts.find((item) => item.type === type)?.value ?? "";
   const month = MONTHS[Number(part("month")) - 1] ?? "";
   return `${part("weekday")} ${part("day")} ${month} ${part("year")}, ${part("hour")}:${part("minute")}`;
+}
+
+const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/;
+
+/**
+ * A run's start as its watch showed it, "2026-09-27T07:12:00" → "Sun 27 Sep, 07:12": the runner remembers
+ * the local time where they ran, even when the device is now in another zone. Read from the digits, never
+ * through a Date in the device's zone, which would shift or reject an hour that a DST change skips.
+ */
+export function formatLocalDateTime(local: string | null | undefined): string {
+  const match = local ? LOCAL_DATE_TIME.exec(local) : null;
+  if (!match) return MISSING;
+  // The pattern has exactly five groups, all digits.
+  const [year, month, day, hour, minute] = match.slice(1).map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  // Date.UTC only for the weekday: UTC has no DST, so the calendar day never moves.
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return MISSING;
+  const weekday = WEEKDAYS[date.getUTCDay()] ?? "";
+  return `${weekday} ${day} ${MONTHS[month - 1] ?? ""}, ${pad2(hour)}:${pad2(minute)}`;
 }

@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MISSING,
   formatDateTime,
   formatDistance,
+  formatDistanceValue,
   formatDuration,
+  formatHeartRate,
+  formatLocalDateTime,
   formatPace,
   formatPaceValue,
 } from "./format";
@@ -63,6 +66,57 @@ describe("formatDistance", () => {
   it("shows the missing mark for null and negative distances", () => {
     expect(formatDistance(null, "km")).toBe(MISSING);
     expect(formatDistance(-0.5, "km")).toBe(MISSING);
+  });
+});
+
+describe("formatDistanceValue", () => {
+  it("shows one decimal without the unit, for a figure whose unit is drawn smaller", () => {
+    expect(formatDistanceValue(10.04)).toBe("10.0");
+    expect(formatDistanceValue(6.25)).toBe("6.3");
+    expect(formatDistanceValue(null)).toBe(MISSING);
+    expect(formatDistanceValue(-1)).toBe(MISSING);
+  });
+});
+
+describe("formatHeartRate", () => {
+  it("rounds to whole beats per minute", () => {
+    expect(formatHeartRate(148)).toBe("148");
+    expect(formatHeartRate(147.6)).toBe("148");
+  });
+
+  it("shows the missing mark when the run has no HR", () => {
+    expect(formatHeartRate(null)).toBe(MISSING);
+    expect(formatHeartRate(undefined)).toBe(MISSING);
+    expect(formatHeartRate(0)).toBe(MISSING);
+  });
+});
+
+describe("formatLocalDateTime", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("shows the run's own wall-clock start", () => {
+    expect(formatLocalDateTime("2026-09-27T07:12:00")).toBe("Sun 27 Sep, 07:12");
+    expect(formatLocalDateTime("2026-01-01T00:05:59.500")).toBe("Thu 1 Jan, 00:05");
+  });
+
+  it("keeps a DST-day local time as wall-clock whatever the device's zone", () => {
+    // 01:30 on 29 Mar 2026 does not exist in London (clocks jump 01:00 to 02:00), and 01:30 on 25 Oct
+    // happens twice. A run recorded there at those times still reads as the runner's watch showed it.
+    vi.stubEnv("TZ", "Europe/London");
+    expect(new Date(2026, 2, 29, 1, 30).getHours()).toBe(2);
+    expect(formatLocalDateTime("2026-03-29T01:30:00")).toBe("Sun 29 Mar, 01:30");
+    expect(formatLocalDateTime("2026-10-25T01:30:00")).toBe("Sun 25 Oct, 01:30");
+
+    vi.stubEnv("TZ", "Pacific/Auckland");
+    expect(formatLocalDateTime("2026-03-29T01:30:00")).toBe("Sun 29 Mar, 01:30");
+  });
+
+  it("shows the missing mark for null and malformed values", () => {
+    expect(formatLocalDateTime(null)).toBe(MISSING);
+    expect(formatLocalDateTime("27/09/2026 07:12")).toBe(MISSING);
+    expect(formatLocalDateTime("2026-02-30T07:12:00")).toBe(MISSING);
   });
 });
 

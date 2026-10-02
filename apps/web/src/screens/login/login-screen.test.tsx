@@ -24,7 +24,7 @@ describe("LoginScreen", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("signs in with the trimmed email and goes to Settings", async () => {
+  it("signs in with the trimmed email and goes to Today", async () => {
     const calls = stubFetch(({ path }) =>
       path === "/api/auth/sign-in/email" ? json(signInFixture()) : notFound(),
     );
@@ -33,7 +33,7 @@ describe("LoginScreen", () => {
     await logIn("  runner@example.com ", "correct horse");
 
     expect(await screen.findByText("Route not under test")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/settings");
+    expect(router.state.location.pathname).toBe("/");
     expect(calls[0]).toMatchObject({
       method: "POST",
       path: "/api/auth/sign-in/email",

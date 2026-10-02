@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { AccountSection } from "./parts/account-section";
@@ -37,7 +38,7 @@ export function SettingsScreen() {
   return (
     <SettingsLayout>
       {screen.refetchError ? (
-        <RefetchFailed error={screen.refetchError} onRetry={() => void refetch()} />
+        <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
       ) : null}
       <Section>
         <UnitsField value={settings.units} onChange={(units) => screen.updateSettings({ units })} />
@@ -59,20 +60,6 @@ export function SettingsScreen() {
         logOutError={screen.logOutError}
       />
     </SettingsLayout>
-  );
-}
-
-/** A reload in the background failed: keep what was loaded and offer a quiet Retry above it. */
-function RefetchFailed({ error, onRetry }: { error: Error; onRetry: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <p role="alert" className="text-body text-ink">
-        {errorMessage(error)}
-      </p>
-      <Button variant="ghost" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
   );
 }
 
