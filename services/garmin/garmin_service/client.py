@@ -75,6 +75,9 @@ class GarminApi(Protocol):
     # Typed dict by the library; Garmin answers a list of zones ({} on 204 No Content).
     def get_activity_hr_in_timezones(self, activity_id: str) -> dict[str, Any] | list[Any]: ...
 
+    # Typed dict by the library; Garmin answers a list of records ({} on 204 No Content).
+    def get_personal_record(self) -> dict[str, Any] | list[Any]: ...
+
 
 class GarminSession:
     """One logged-in client for one request.

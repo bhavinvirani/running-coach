@@ -10,8 +10,12 @@ real run, sanitized and trimmed) for any activity of the account, with its id pa
 derive the variants from the account's list item: an indoor type has no route and no elevation, a
 run without heart rate has no HR series, no lap HR and no second in any zone, a manual entry has no
 laps, no samples and no zones. An outdoor run gets a fictional loop around 0.0, -30.0 (open
-ocean) as its route: the sanitizer removes the real one. An id outside the account is a 404, as
-Garmin answers.
+ocean) as its route, since the sanitizer removes the real one; with maxpoly 0 its polyline is
+empty, as Garmin answers. An id outside the account is a 404, as Garmin answers. The series route
+asks for the same details at maxchart 10000 and gets the same fixture rows.
+
+get_personal_record serves personal-records.json: made-up values in the shape captured from Garmin
+(distance records 1 to 5, the longest run 7, step and goal records 12 to 16).
 
 The token bundle drives the behaviour, so the API's integration tests and e2e reach every path
 through the real service. Base bundle:
@@ -46,6 +50,7 @@ ACTIVITY_FIXTURES = ("sync.json", "history.json")
 SPLITS_FIXTURE = "detail-splits.json"
 SERIES_FIXTURE = "detail-series.json"
 HR_ZONES_FIXTURE = "detail-hr-zones.json"
+RECORDS_FIXTURE = "personal-records.json"
 # The fictional route: a loop in open ocean, far from anyone's real runs.
 FAKE_ROUTE_CENTER = (0.0, -30.0)
 FAKE_ROUTE_RADIUS_DEG = 0.02
@@ -222,7 +227,7 @@ class FakeGarmin:
         if item["activityType"]["typeKey"] in INDOOR_TYPE_KEYS:
             _drop_metric(details, "directElevation")
         else:
-            details["geoPolylineDTO"] = _fake_route()
+            details["geoPolylineDTO"] = _fake_route() if maxpoly > 0 else {"polyline": []}
         return details
 
     def get_activity_hr_in_timezones(self, activity_id: str) -> list[dict[str, Any]]:
@@ -232,6 +237,11 @@ class FakeGarmin:
         if item.get("manualActivity") or not item.get("averageHR"):
             zones = [{**zone, "secsInZone": 0.0} for zone in zones]
         return zones
+
+    def get_personal_record(self) -> list[dict[str, Any]]:
+        self._fail_pending_call()
+        records: list[dict[str, Any]] = self._read(RECORDS_FIXTURE)
+        return records
 
     def _activity(self, activity_id: str) -> dict[str, Any]:
         for item in self._account():

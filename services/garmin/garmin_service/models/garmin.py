@@ -127,3 +127,23 @@ class GarminHrZone(GarminModel):
     zone_number: int
     secs_in_zone: float | None = None
     zone_low_boundary: float | None = None
+
+
+# 9999-12-31T23:59:59.999Z: a later epoch cannot become a datetime.
+MAX_EPOCH_MS = 253_402_300_799_999
+EpochMs = Annotated[int, Field(gt=0, le=MAX_EPOCH_MS)]
+
+
+class GarminPersonalRecord(GarminModel):
+    """One item of get_personal_record. typeId says which record: the distance records hold seconds
+    in `value`, the longest run meters, and the step and goal records carry activityId 0 and no
+    activity fields."""
+
+    type_id: int
+    value: float | None = None
+    # Epoch milliseconds, UTC: the start of the run that set the record, null for step records.
+    activity_start_date_time_in_gmt: EpochMs | None = Field(
+        default=None, alias="activityStartDateTimeInGMT"
+    )
+    # Epoch milliseconds, UTC: when Garmin says the record began.
+    pr_start_time_gmt: EpochMs | None = None

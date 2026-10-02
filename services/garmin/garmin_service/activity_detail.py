@@ -32,12 +32,15 @@ SPEED_MPS = "directSpeed"
 
 HR_ZONE_COUNT = 5
 
+# Timer seconds, distance in meters, and the whole row for the other series.
+TimedRow = tuple[float, float, Sequence[float | None]]
+
 _HR_ZONES = TypeAdapter(list[GarminHrZone])
 
 
 def to_detail(splits: object, details: object, hr_zones: object) -> ActivityDetail:
     """The three library answers, as Garmin sent them, mapped to the shared detail."""
-    parsed = _parse(GarminDetails, details, "details")
+    parsed = parse_details(details)
     return ActivityDetail(
         laps=to_laps(_parse(GarminSplits, splits, "splits")),
         streams=to_streams(parsed),
@@ -62,21 +65,34 @@ def to_laps(splits: GarminSplits) -> list[ActivityLap]:
     return laps
 
 
-def to_streams(details: GarminDetails) -> ActivityStreams:
-    """Rows without a time or a distance are dropped: a chart cannot place them."""
-    columns = {
-        descriptor.key: descriptor.metrics_index for descriptor in details.metric_descriptors or []
-    }
+def parse_details(raw: object) -> GarminDetails:
+    """get_activity_details as Garmin sent it; a shape this service cannot read is unavailable."""
+    return _parse(GarminDetails, raw, "details")
+
+
+def timed_rows(details: GarminDetails) -> list[TimedRow]:
+    """Every sample row with its timer seconds and distance, in Garmin's order.
+
+    Rows without a time or a distance are dropped: nothing can place them. None are left when
+    Garmin holds no samples (detailsAvailable false, as for a manual entry) or lacks either column.
+    """
+    columns = _columns(details)
     rows = details.activity_detail_metrics or []
     if details.details_available is False or ELAPSED_S not in columns or DISTANCE_M not in columns:
         rows = []
-    kept: list[tuple[float, float, Sequence[float | None]]] = []
+    kept: list[TimedRow] = []
     for row in rows:
         metrics = row.metrics or []
         elapsed = _at(metrics, columns[ELAPSED_S])
         distance = _at(metrics, columns[DISTANCE_M])
         if elapsed is not None and distance is not None and elapsed >= 0 and distance >= 0:
             kept.append((elapsed, distance, metrics))
+    return kept
+
+
+def to_streams(details: GarminDetails) -> ActivityStreams:
+    columns = _columns(details)
+    kept = timed_rows(details)
 
     def series(key: str, keep: float | None = None) -> list[float | None] | None:
         """None when the watch did not record it; values below `keep` become missing samples."""
@@ -124,6 +140,13 @@ def to_hr_zones(zones: list[GarminHrZone]) -> list[HrZoneTime] | None:
         for number, zone in sorted(by_number.items())
     ]
     return mapped if any(zone.seconds > 0 for zone in mapped) else None
+
+
+def _columns(details: GarminDetails) -> dict[str, int]:
+    """Column of each series by its descriptor key: rows are positional."""
+    return {
+        descriptor.key: descriptor.metrics_index for descriptor in details.metric_descriptors or []
+    }
 
 
 def _at(metrics: Sequence[float | None], index: int) -> float | None:

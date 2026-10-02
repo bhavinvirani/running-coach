@@ -112,6 +112,37 @@ def test_activity_detail_responses_match_garmin_activity_detail_response(
     assert_valid("activity-detail", response.json()["detail"])
 
 
+@pytest.mark.parametrize(
+    ("ids", "include_records", "behaviour"),
+    [
+        ([10_000_000_007, 10_000_000_004, 9_000_000_023], True, None),
+        ([10_000_000_007], False, None),
+        ([10_000_000_003, 12_345], True, None),  # a manual entry and a run Garmin does not have
+        ([], True, None),
+        ([], False, None),
+        ([10_000_000_006, 10_000_000_007], True, "rotate"),
+    ],
+)
+def test_series_responses_match_garmin_series_response(
+    client: TestClient, ids: list[int], include_records: bool, behaviour: str | None
+) -> None:
+    request = {
+        "tokenBundle": bundle() if behaviour is None else bundle(fixture=behaviour),
+        "garminActivityIds": ids,
+        "includeRecords": include_records,
+    }
+    assert_valid("garmin-series-request", request)
+
+    response = client.post("/activities/series", json=request)
+
+    assert response.status_code == 200
+    assert_valid("garmin-series-response", response.json())
+    for series in response.json()["series"]:
+        assert_valid("garmin-activity-series", series)
+    for record in response.json()["records"] or []:
+        assert_valid("garmin-record", record)
+
+
 def test_sync_requests_the_tests_send_match_garmin_sync_request() -> None:
     assert_valid("garmin-sync-request", {"tokenBundle": bundle(), **FULL_RANGE})
     assert_valid("garmin-profile-request", {"tokenBundle": bundle()})
@@ -150,6 +181,22 @@ def error_responses(make_client: AppFactory) -> dict[str, Any]:
             "/activities/10000000007/detail",
             json={"tokenBundle": bundle(fixture="rotate_then_unavailable")},
         ),
+        "series_rotate_then_rate_limited": client.post(
+            "/activities/series",
+            json={
+                "tokenBundle": bundle(fixture="rotate_then_rate_limited"),
+                "garminActivityIds": [10_000_000_007],
+                "includeRecords": True,
+            },
+        ),
+        "series_validation": client.post(
+            "/activities/series",
+            json={
+                "tokenBundle": bundle(),
+                "garminActivityIds": list(range(1, 12)),
+                "includeRecords": False,
+            },
+        ),
         "not_found": client.get("/nope"),
         "internal": make_client(connect=crashing).post("/profile", json={"tokenBundle": bundle()}),
     }
@@ -170,6 +217,8 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         "history_validation": 400,
         "detail_not_found": 404,
         "detail_rotate_then_unavailable": 502,
+        "series_rotate_then_rate_limited": 429,
+        "series_validation": 400,
         "not_found": 404,
         "internal": 500,
     }
@@ -182,6 +231,7 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         "rotate_then_unavailable",
         "history_rotate_then_rate_limited",
         "detail_rotate_then_unavailable",
+        "series_rotate_then_rate_limited",
     }
 
 
