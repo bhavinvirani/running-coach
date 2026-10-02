@@ -36,6 +36,17 @@ function importLine(page: Page): Locator {
   return page.getByRole("region", { name: "History import" });
 }
 
+/**
+ * The week ranges' headings, newest first: the heading of every region that lists runs, which leaves out
+ * Personal bests above the weeks.
+ */
+function weekRanges(page: Page): Locator {
+  return page
+    .getByRole("region")
+    .filter({ has: page.getByRole("list", { name: "Runs", exact: true }) })
+    .getByRole("heading", { level: 2 });
+}
+
 function week(page: Page, range: string): Locator {
   return page.getByRole("region", { name: range, exact: true });
 }
@@ -93,7 +104,7 @@ test("Import history brings in the fixture account's runs by week", async ({ pag
   await expect(page.getByRole("button", { name: "Import again" })).toBeEnabled();
 
   // The fixture's newest week: the 18 km run of Sun 27 Sep and the 8 km treadmill run of Thu 24 Sep.
-  await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText("21–27 Sep");
+  await expect(weekRanges(page).first()).toHaveText("21–27 Sep");
   const newest = week(page, "21–27 Sep");
   await expect(weekDistance(newest)).toHaveText(/^26\.0\s*km$/);
   await expect(newest.getByRole("listitem")).toHaveCount(2);
@@ -123,7 +134,7 @@ test("lists runs by week, newest first, and Show earlier weeks loads older ones"
   await seedRunHistory();
   await openProgress(page);
 
-  const ranges = page.getByRole("heading", { level: 2 });
+  const ranges = weekRanges(page);
   await expect(ranges).toHaveText(firstPageWeeks);
 
   const newest = week(page, "21–27 Sep");
@@ -200,12 +211,12 @@ test("says what failed when the runs do not load, and Retry recovers", async ({ 
   // The query retries server errors three times with jittered backoff (at most 1 + 2 + 4 s) before the
   // screen shows its error, so the wait covers that instead of the default 5 s.
   await expect(page.getByRole("alert")).toHaveText(errorMessages.internal, { timeout: 20_000 });
-  await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+  await expect(weekRanges(page)).toHaveCount(0);
 
   await page.unroute(isActivityWeeks);
   await page.getByRole("button", { name: "Retry" }).click();
 
-  await expect(page.getByRole("heading", { level: 2 })).toHaveText(firstPageWeeks);
+  await expect(weekRanges(page)).toHaveText(firstPageWeeks);
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 

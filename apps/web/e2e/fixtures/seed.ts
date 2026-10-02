@@ -4,6 +4,8 @@ import {
   connectGarminResponseSchema,
   meResponseSchema,
   syncResponseSchema,
+  type DistanceKey,
+  type GarminRecord,
   type MeResponse,
   type SyncResponse,
   type UpdateSettingsRequest,
@@ -512,6 +514,13 @@ export const runHistory: readonly SeededRun[] = [
 /** Garmin ids grow over time; these sit far from the fixture account's, so a sync never touches them. */
 const firstHistoryGarminId = 20_000_000_001;
 
+/** The Garmin id seedRunHistory gives the run of runHistory that starts at `startLocal`. */
+export function historyRunId(startLocal: string): number {
+  const index = [...runHistory].reverse().findIndex((run) => run.startLocal === startLocal);
+  if (index < 0) throw new Error(`runHistory has no run starting at ${startLocal}`);
+  return firstHistoryGarminId + index;
+}
+
 /** Stores runHistory as an import would, in one statement. */
 export async function seedRunHistory(): Promise<void> {
   const oldestFirst = [...runHistory].reverse();
@@ -597,4 +606,189 @@ export async function seedImportProgress(progress: SeededImport): Promise<void> 
       ],
     ),
   );
+}
+
+/**
+ * The engine's BEST_EFFORTS_VERSION (packages/engine/src/constants.ts), which the web app does not depend
+ * on: a run stored with it counts as checked. Bump it with the engine's; until then every seeded run counts
+ * as pending, and the specs that expect none fail on "Checking N runs for best efforts".
+ */
+const BEST_EFFORTS_VERSION = 1;
+
+/**
+ * The instant specs that show personal bests pin the browser clock to (page.clock.setFixedTime): Wed 30 Sep
+ * 2026, three days after the newest seeded and fixture run (Sun 27 Sep), so the bests that run holds read
+ * "New" and older ones do not, whatever the date.
+ */
+export const bestsCheckedAt = new Date("2026-09-30T12:00:00Z");
+
+/** One stored run's best efforts: timer seconds per distance, unrounded, as the best-efforts job writes them. */
+export type SeededEfforts = {
+  garminActivityId: number;
+  efforts: Partial<Record<DistanceKey, number>>;
+};
+
+/** The runs of runHistory that seeded best efforts sit on, by Garmin id. */
+export const historyRunIds = {
+  /** Sun 27 Sep, 16 km in 1:32:00: the newest run. */
+  longRun: historyRunId("2026-09-27T08:00:00"),
+  /** Thu 24 Sep, 6 km on a treadmill. */
+  treadmill: historyRunId("2026-09-24T18:45:00"),
+  /** Tue 22 Sep, 8 km in 44:00. */
+  tempo: historyRunId("2026-09-22T18:30:00"),
+  /** Thu 17 Sep, 5 km entered by hand. */
+  manual: historyRunId("2026-09-17T07:00:00"),
+  /** Sun 13 Sep, 12 km in 1:09:00, faster at the end. */
+  progression: historyRunId("2026-09-13T08:00:00"),
+  /** Thu 10 Sep, the 5 km race in 27:30. */
+  race: historyRunId("2026-09-10T18:30:00"),
+  /** Sun 6 Sep, 13 km in 1:14:45. */
+  sundaySixth: historyRunId("2026-09-06T08:00:00"),
+  /** Wed 2 Sep, 7 km in 38:30 with a fast last km. */
+  fastFinish: historyRunId("2026-09-02T18:30:00"),
+} as const;
+
+/**
+ * What a finished best-efforts pass could leave on runHistory, cut to the runs that matter: the ones that
+ * hold a best and a few slower ones they beat, newer ones among them, so the fastest wins rather than the
+ * newest. seedBestEfforts marks every other outdoor run checked with no efforts. The bests: 1K 4:58 (Wed
+ * 2 Sep); 1 mi 8:12, 2 mi 17:21 and 5K 27:29 (the race of Thu 10 Sep; its 1649.7 s shows a time is cut to
+ * the second, not rounded); 5 mi 45:10 (Sun 13 Sep); 10K 56:41 and 15K 1:25:52 (Sun 27 Sep, "New" at
+ * bestsCheckedAt). No run reaches 10 mi, so 10 mi, 20K, half and marathon have none.
+ */
+export const historyBestEfforts: readonly SeededEfforts[] = [
+  {
+    garminActivityId: historyRunIds.longRun,
+    efforts: {
+      "1k": 312.4,
+      "1mi": 511,
+      "2mi": 1064.2,
+      "5k": 1686.5,
+      "5mi": 2737.9,
+      "10k": 3401.8,
+      "15k": 5152.3,
+    },
+  },
+  {
+    garminActivityId: historyRunIds.tempo,
+    efforts: { "1k": 305.1, "1mi": 504.6, "2mi": 1050.8, "5k": 1655.8 },
+  },
+  {
+    garminActivityId: historyRunIds.progression,
+    efforts: {
+      "1k": 318,
+      "1mi": 515.2,
+      "2mi": 1062,
+      "5k": 1676.9,
+      "5mi": 2710.2,
+      "10k": 3436.4,
+    },
+  },
+  {
+    garminActivityId: historyRunIds.race,
+    efforts: { "1k": 300.2, "1mi": 492.9, "2mi": 1041.4, "5k": 1649.7 },
+  },
+  {
+    garminActivityId: historyRunIds.sundaySixth,
+    efforts: {
+      "1k": 320,
+      "1mi": 518.3,
+      "2mi": 1069.9,
+      "5k": 1702.2,
+      "5mi": 2765.1,
+      "10k": 3450.2,
+    },
+  },
+  {
+    garminActivityId: historyRunIds.fastFinish,
+    efforts: { "1k": 298.6, "1mi": 497.5, "2mi": 1047, "5k": 1660.4 },
+  },
+];
+
+/**
+ * Efforts on runHistory's treadmill run (Thu 24 Sep) and its run entered by hand (Thu 17 Sep), faster than
+ * every outdoor best. The job never computes either kind; rows like these are what a run changed in Garmin
+ * after its efforts were computed would keep (a sync clears them only when distance or time changes), so
+ * only the read keeps them out of the bests.
+ */
+export const indoorAndManualEfforts: readonly SeededEfforts[] = [
+  {
+    garminActivityId: historyRunIds.treadmill,
+    efforts: { "1k": 290, "1mi": 480, "2mi": 1010, "5k": 1630 },
+  },
+  {
+    garminActivityId: historyRunIds.manual,
+    efforts: { "1k": 285, "1mi": 475, "2mi": 1000, "5k": 1620 },
+  },
+];
+
+/**
+ * Stores best efforts on runs already stored, as the best-efforts job writes them, then marks runs checked
+ * as a finished pass leaves them: every outdoor, recorded run of 1 km or more, plus every run named here
+ * (so efforts on an indoor or manual run count as computed, and only the read can leave them out). Nothing
+ * is left pending, so the bests show no "Checking N runs" line and do not poll. start_s is 0: nothing on
+ * screen reads where in a run an effort starts.
+ */
+export async function seedBestEfforts(runs: readonly SeededEfforts[]): Promise<void> {
+  const rows = runs.flatMap(({ garminActivityId, efforts }) =>
+    Object.entries(efforts).flatMap(([distanceKey, timeS]) =>
+      timeS === undefined ? [] : [{ garminActivityId, distanceKey, timeS }],
+    ),
+  );
+  await withDatabase(async (db) => {
+    const inserted = await db.query(
+      `insert into best_effort (user_id, activity_id, distance_key, time_s, start_s)
+       select activity.user_id, activity.id, effort.distance_key, effort.time_s, 0
+       from unnest($2::bigint[], $3::text[], $4::float8[]) as effort(garmin_id, distance_key, time_s)
+       join activity on activity.user_id = ${runnerId} and activity.garmin_activity_id = effort.garmin_id`,
+      [
+        runner.email,
+        rows.map((row) => row.garminActivityId),
+        rows.map((row) => row.distanceKey),
+        rows.map((row) => row.timeS),
+      ],
+    );
+    if (inserted.rowCount !== rows.length) {
+      throw new Error("Seeding best efforts named a run that is not stored: seed the runs first");
+    }
+    await db.query(
+      `update activity set best_efforts_version = $2
+       where user_id = ${runnerId}
+         and ((not is_indoor and not is_manual and distance_m >= 1000)
+           or garmin_activity_id = any($3::bigint[]))`,
+      [runner.email, BEST_EFFORTS_VERSION, runs.map((run) => run.garminActivityId)],
+    );
+  });
+}
+
+/**
+ * Garmin's own records beside historyBestEfforts: the same where Garmin agrees (1 mi 8:12, 5K 27:29), a few
+ * seconds apart where it measures differently (1K 4:56, 10K 56:38), and a half of 2:05:20 from October 2025,
+ * before the imported history, at a distance where the app has no run yet.
+ */
+export const seededGarminRecords: readonly GarminRecord[] = [
+  { distanceKey: "1k", timeS: 296.82, achievedAt: "2026-09-02T16:30:00Z" },
+  { distanceKey: "1mi", timeS: 492.95, achievedAt: "2026-09-10T16:30:00Z" },
+  { distanceKey: "5k", timeS: 1649.9, achievedAt: "2026-09-10T16:30:00Z" },
+  { distanceKey: "10k", timeS: 3398, achievedAt: "2026-09-27T06:00:00Z" },
+  { distanceKey: "half", timeS: 7520.4, achievedAt: "2025-10-12T07:00:00Z" },
+];
+
+/**
+ * Stores Garmin's records on the runner's connection, as the best-efforts batch that empties the pending
+ * list does, fetched at a fixed time. Connect first: the records live on the connection.
+ */
+export async function seedGarminRecords(
+  records: readonly GarminRecord[] = seededGarminRecords,
+): Promise<void> {
+  const stored = await withDatabase((db) =>
+    db.query(
+      `update garmin_connection set garmin_records = $2::jsonb, garmin_records_at = $3
+       where user_id = ${runnerId}`,
+      [runner.email, JSON.stringify(records), "2026-09-28T06:02:00Z"],
+    ),
+  );
+  if (stored.rowCount !== 1) {
+    throw new Error("Seeding Garmin's records found no Garmin connection for the runner");
+  }
 }

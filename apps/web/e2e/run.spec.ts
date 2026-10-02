@@ -124,7 +124,7 @@ test("opens a stored race from Progress with its stats, splits, charts and route
 
   // 18 km in 6120 s: 1:42:00, or 5:40 per km, marked as a race in Garmin Connect.
   await expect(section(page, "Summary").locator("time")).toHaveText("08:00");
-  await expect(startLine(page)).toHaveText("08:00·Race");
+  await expect(startLine(page)).toHaveText("08:00Race");
   await expect(startLine(page).getByText("Race", { exact: true })).toBeVisible();
   await expect(stat(page, "Distance")).toHaveText(/^18\.0\s*km$/);
   await expect(stat(page, "Time")).toHaveText("1:42:00");
@@ -358,7 +358,7 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
   await openRun(page, "Sun 6 Sep");
   expect((await detail).ok()).toBe(true);
 
-  await expect(startLine(page)).toHaveText("07:30·Race");
+  await expect(startLine(page)).toHaveText("07:30Race");
   await expect(startLine(page).getByText("Race", { exact: true })).toBeVisible();
   await expect(stat(page, "Distance")).toHaveText(/^10\.2\s*km$/);
   await expectSplitBar(page, 1, fixtureFirstPace, "");
