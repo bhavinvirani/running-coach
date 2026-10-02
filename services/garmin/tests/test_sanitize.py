@@ -57,6 +57,24 @@ PROFILE: dict[str, Any] = {
     "profileImageUrlSmall": "https://img.example.org/jane-small.png",
     "favoriteActivityTypes": ["running"],
 }
+# Shaped like Garmin's user settings and device list.
+USER_DATA: dict[str, Any] = {
+    "userData": {
+        "birthDate": "1987-04-12",
+        "age": 39,
+        "gender": "MALE",
+        "weight": 81234.0,
+        "height": 183.5,
+        "vo2MaxRunning": 52.0,
+        "lactateThresholdHeartRate": None,
+    },
+    "biometricProfile": {"weight": None, "height": 183.5},
+}
+DEVICES: list[dict[str, Any]] = [
+    {"deviceId": 444555666, "serialNumber": "3XK912345", "unitId": 3_412_345_678},
+    {"deviceId": 444555667, "serialNumber": "3XK900001", "deviceSerial": 3_400_000_001},
+    {"deviceId": 444555666, "serialNumber": "3XK912345"},
+]
 
 
 def test_renumbers_ids_per_kind_keeping_order_and_links() -> None:
@@ -117,15 +135,41 @@ def test_sanitizes_a_social_profile() -> None:
     }
 
 
+def test_replaces_birth_date_age_gender_weight_and_height_with_fixed_fakes() -> None:
+    user = sanitize(USER_DATA)
+
+    assert user["userData"] == {
+        "birthDate": "1990-01-01",
+        "age": 36,
+        "gender": "FEMALE",
+        "weight": 70000.0,
+        "height": 175.0,
+        "vo2MaxRunning": 52.0,
+        "lactateThresholdHeartRate": None,
+    }
+    assert user["biometricProfile"] == {"weight": None, "height": 175.0}
+
+
+def test_renumbers_serial_numbers_like_uuids_keeping_order_and_links() -> None:
+    first, second, again = sanitize(DEVICES)
+
+    assert (second["serialNumber"], first["serialNumber"]) == ("0000000001", "0000000002")
+    assert again["serialNumber"] == first["serialNumber"]
+    assert second["deviceSerial"] == 7_000_000_001
+
+
 def test_leaves_nothing_of_the_raw_personal_values() -> None:
-    text = json.dumps([sanitize(RAW), sanitize(PROFILE)])
+    text = json.dumps([sanitize(RAW), sanitize(PROFILE), sanitize(USER_DATA), sanitize(DEVICES)])
 
     for value in ("Jane", "jane", "Springfield", "Sam", "sore", "12.345", "987654321", "444555666"):
         assert value not in text
+    for value in ("1987", '"MALE"', "81234", "183.5", "3XK9", "3412345678", "3400000001"):
+        assert value not in text
 
 
-def test_is_a_fixed_point_on_its_own_output() -> None:
-    once = sanitize(RAW)
+@pytest.mark.parametrize("raw", [RAW, PROFILE, USER_DATA, DEVICES])
+def test_is_a_fixed_point_on_its_own_output(raw: Any) -> None:
+    once = sanitize(raw)
 
     assert sanitize(once) == once
 

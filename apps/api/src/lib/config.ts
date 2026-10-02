@@ -18,7 +18,19 @@ const postgresUrl = z
   .string()
   .refine((value) => /^postgres(ql)?:\/\//.test(value), "must be a postgres:// URL");
 
-const configSchema = z.object({
+// Markers in the published dev, test and e2e secrets (.env.example, vitest.config.ts, playwright.config.ts).
+// MASTER_KEY is base64, so it is checked decoded too ("dev-only-master-key-...").
+const PUBLISHED_SECRET_MARKERS = ["dev-only", "test-only", "e2e-only"];
+const SECRETS = ["MASTER_KEY", "BETTER_AUTH_SECRET", "CRON_SECRET"] as const;
+
+function isPublishedSecret(value: string): boolean {
+  const decoded = Buffer.from(value, "base64").toString("latin1");
+  return PUBLISHED_SECRET_MARKERS.some(
+    (marker) => value.includes(marker) || decoded.includes(marker),
+  );
+}
+
+const configObject = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
@@ -47,6 +59,20 @@ const configSchema = z.object({
   // Tests point the coach at a local fake; production leaves it unset.
   CLAUDE_BASE_URL: optional(z.url()),
   CLAUDE_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(60_000),
+});
+
+const configSchema = configObject.superRefine((value, ctx) => {
+  if (value.NODE_ENV !== "production") return;
+  for (const key of SECRETS) {
+    const secret = value[key];
+    if (secret !== undefined && isPublishedSecret(secret)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [key],
+        message: "is a published dev or test value; set a new random secret in production",
+      });
+    }
+  }
 });
 
 // System variables the Garmin child process needs to run Python; the API's secrets never reach it.

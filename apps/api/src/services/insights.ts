@@ -29,12 +29,14 @@ export async function createRunInsight(userId: string, activityId: string): Prom
     })
     .from(userSettings)
     .where(eq(userSettings.userId, userId));
-  const apiKey = settings?.claudeKeyEnc ? decrypt(settings.claudeKeyEnc, userId) : null;
+  // The settings row is created with the user (src/auth/auth.ts).
+  if (!settings) throw new Error("The user has no settings row");
+  const apiKey = settings.claudeKeyEnc ? decrypt(settings.claudeKeyEnc, userId) : null;
 
   const result = await runInsight({
     apiKey,
     activity: run,
-    settings: { units: settings?.units ?? "km", coachDetail: settings?.coachDetail ?? "standard" },
+    settings: { units: settings.units, coachDetail: settings.coachDetail },
   });
 
   const [message] = await db

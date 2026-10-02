@@ -24,13 +24,23 @@ export interface GarminProcessOptions {
   log: ProcessLog;
   /** How long one start may take to answer /health; uvicorn imports curl_cffi slowly on 0.1 CPU. */
   startTimeoutMs?: number;
+  /** Ceiling of the first restart delay; it doubles with every restart up to maxRestartDelayMs. */
+  restartDelayMs?: number;
   maxRestartDelayMs?: number;
+  /** A child that answered /health and then stayed up this long starts the restart backoff over. */
+  stableAfterMs?: number;
+  /** How long the child may be down before health() stops reporting ready. */
+  downGraceMs?: number;
 }
+
+export type GarminProcessState = "starting" | "up" | "restarting" | "down" | "stopped";
 
 interface Running {
   child: ChildProcess;
   exited: Promise<void>;
   hasExited: () => boolean;
+  /** When it answered /health; unset for a child that never did. */
+  healthySince?: number;
 }
 
 const HEALTH_POLL_MS = 200;
@@ -38,8 +48,6 @@ const HEALTH_REQUEST_TIMEOUT_MS = 2000;
 // The service finishes in-flight requests for up to 10 s after SIGTERM.
 const STOP_GRACE_MS = 12_000;
 const START_ATTEMPTS = 3;
-// A child that stayed up this long resets the restart backoff.
-const STABLE_AFTER_MS = 60_000;
 
 export class GarminServiceProcess {
   readonly url: string;
@@ -49,11 +57,22 @@ export class GarminServiceProcess {
   #supervising = false;
   #stopping = false;
   #restartAttempts = 0;
-  #upSince = 0;
+  /** Since when the supervised child has been down; unset while it is up. */
+  #downSince: number | undefined;
   #restartTimer: NodeJS.Timeout | undefined;
 
   constructor(options: GarminProcessOptions) {
-    this.#options = { startTimeoutMs: 60_000, maxRestartDelayMs: 30_000, ...options };
+    this.#options = {
+      startTimeoutMs: 60_000,
+      restartDelayMs: 1000,
+      maxRestartDelayMs: 30_000,
+      stableAfterMs: 60_000,
+      // Render stops routing to an instance after 15 s of failed health checks and restarts it after 60 s.
+      // One restart takes up to about a minute on 0.1 CPU, so a short one keeps the app reachable, and a
+      // child still down after 3 minutes gets the whole instance restarted.
+      downGraceMs: 3 * 60_000,
+      ...options,
+    };
     this.url = `http://127.0.0.1:${options.port}`;
   }
 
@@ -62,9 +81,22 @@ export class GarminServiceProcess {
     return this.#running?.hasExited() === false ? this.#running.child.pid : undefined;
   }
 
-  /** True while the child runs and answered /health; /health of the API reports 503 otherwise. */
+  /** True while the child runs and answered /health. */
   isUp(): boolean {
     return this.#up;
+  }
+
+  /**
+   * For the API's /health: ready while the child is up, and while it restarts within downGraceMs. Not
+   * ready once it has been down longer, before the first start and after stop.
+   */
+  health(): { state: GarminProcessState; ready: boolean } {
+    if (this.#stopping) return { state: "stopped", ready: false };
+    if (this.#up) return { state: "up", ready: true };
+    if (this.#downSince === undefined) return { state: "starting", ready: false };
+    return Date.now() - this.#downSince < this.#options.downGraceMs
+      ? { state: "restarting", ready: true }
+      : { state: "down", ready: false };
   }
 
   /** Spawns the service and resolves once it answers /health; rejects (and kills it) when it does not. */
@@ -150,8 +182,9 @@ export class GarminServiceProcess {
       }
       throw err;
     }
+    running.healthySince = Date.now();
     this.#up = true;
-    this.#upSince = Date.now();
+    this.#downSince = undefined;
   }
 
   async #waitForHealth(running: Running): Promise<void> {
@@ -183,17 +216,27 @@ export class GarminServiceProcess {
     if (running !== this.#running) return;
     this.#up = false;
     if (!this.#supervising || this.#stopping) return;
-    this.#options.log.warn({ code, signal }, "garmin service exited; restarting");
-    this.#scheduleRestart();
+    this.#downSince ??= Date.now();
+    this.#scheduleRestart(running, code, signal);
   }
 
-  #scheduleRestart(): void {
-    if (Date.now() - this.#upSince > STABLE_AFTER_MS) this.#restartAttempts = 0;
-    const ceiling = Math.min(this.#options.maxRestartDelayMs, 1000 * 2 ** this.#restartAttempts);
+  #scheduleRestart(exited: Running, code: number | null, signal: NodeJS.Signals | null): void {
+    // Decided by the child that just exited: one that never answered /health, or died soon after, keeps
+    // the backoff growing, so a crash loop slows down however long an earlier child had been up.
+    const { healthySince } = exited;
+    if (healthySince !== undefined && Date.now() - healthySince > this.#options.stableAfterMs) {
+      this.#restartAttempts = 0;
+    }
+    const { restartDelayMs, maxRestartDelayMs } = this.#options;
+    const ceiling = Math.min(maxRestartDelayMs, restartDelayMs * 2 ** this.#restartAttempts);
     // Half fixed, half jitter: never instant, never in lockstep.
-    const delay = ceiling / 2 + Math.random() * (ceiling / 2);
+    const delayMs = Math.round(ceiling / 2 + Math.random() * (ceiling / 2));
     this.#restartAttempts += 1;
-    this.#restartTimer = setTimeout(() => void this.#restart(), delay);
+    this.#options.log.warn(
+      { code, signal, attempt: this.#restartAttempts, delayMs },
+      "garmin service exited; restarting",
+    );
+    this.#restartTimer = setTimeout(() => void this.#restart(), delayMs);
     this.#restartTimer.unref();
   }
 

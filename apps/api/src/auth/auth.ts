@@ -4,6 +4,7 @@ import { db } from "../db/client";
 import { account, session, user, verification } from "../db/schema";
 import { config } from "../lib/config";
 import { logger } from "../lib/logger";
+import { createDefaultSettings } from "../services/settings";
 
 const authLogger = logger.child({ module: "auth" });
 
@@ -24,6 +25,17 @@ export const auth = betterAuth({
     enabled: true,
     // The owner is created by `pnpm seed:owner`; nobody signs up.
     disableSignUp: true,
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        // Every user has a settings row from the start, so readers join it instead of re-declaring defaults.
+        // internalAdapter.createUser (seedOwner) runs this hook too.
+        after: async (created) => {
+          await createDefaultSettings(created.id);
+        },
+      },
+    },
   },
   session: {
     expiresIn: 60 * 60 * 24 * 30,

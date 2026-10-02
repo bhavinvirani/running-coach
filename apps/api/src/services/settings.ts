@@ -1,10 +1,22 @@
-import { ErrorCode, type MeResponse, type UpdateSettingsRequest } from "@running-coach/shared";
+import type { MeResponse, UpdateSettingsRequest } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { garminConnection, user, userSettings } from "../db/schema";
-import { DomainError } from "../lib/errors";
 
-async function readMe(userId: string): Promise<MeResponse | undefined> {
+/**
+ * Inserts the user's settings row with the column defaults (km, UTC, standard). Runs when the user is created
+ * (Better Auth's user.create.after hook) and for an existing owner at seed, so every reader can rely on the
+ * row; a second call is a no-op.
+ */
+export async function createDefaultSettings(userId: string): Promise<void> {
+  await db
+    .insert(userSettings)
+    .values({ userId })
+    .onConflictDoNothing({ target: userSettings.userId });
+}
+
+/** GET /api/me: the user, their settings and the Garmin connection state. */
+export async function getMe(userId: string): Promise<MeResponse> {
   const [row] = await db
     .select({
       id: user.id,
@@ -21,7 +33,8 @@ async function readMe(userId: string): Promise<MeResponse | undefined> {
     .innerJoin(userSettings, eq(userSettings.userId, user.id))
     .leftJoin(garminConnection, eq(garminConnection.userId, user.id))
     .where(eq(user.id, userId));
-  if (!row) return undefined;
+  // requireUser found the user, and its settings row is created with it.
+  if (!row) throw new Error("The signed-in user has no settings row");
   return {
     user: { id: row.id, email: row.email, name: row.name },
     settings: {
@@ -38,31 +51,11 @@ async function readMe(userId: string): Promise<MeResponse | undefined> {
   };
 }
 
-/** Creates the default settings row (km, UTC, standard). Two first reads at once still make one row. */
-async function ensureSettings(userId: string): Promise<void> {
-  const [exists] = await db.select({ id: user.id }).from(user).where(eq(user.id, userId));
-  if (!exists) throw new DomainError(ErrorCode.notFound, 404, "This account no longer exists.");
-  await db.insert(userSettings).values({ userId }).onConflictDoNothing({
-    target: userSettings.userId,
-  });
-}
-
-/** GET /api/me: the user, their settings and the Garmin connection state. */
-export async function getMe(userId: string): Promise<MeResponse> {
-  const me = await readMe(userId);
-  if (me) return me;
-  await ensureSettings(userId);
-  const created = await readMe(userId);
-  if (!created) throw new Error("Settings row missing after insert");
-  return created;
-}
-
 /** PATCH /api/me/settings: applies the given fields and returns the new state. */
 export async function updateSettings(
   userId: string,
   patch: UpdateSettingsRequest,
 ): Promise<MeResponse> {
-  await ensureSettings(userId);
   await db.update(userSettings).set(patch).where(eq(userSettings.userId, userId));
   return getMe(userId);
 }

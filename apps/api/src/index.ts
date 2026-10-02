@@ -23,6 +23,11 @@ async function seedOwnerFromConfig(): Promise<void> {
     password: config.OWNER_PASSWORD,
     name: config.OWNER_NAME,
   });
+  if (result === "password_differs") {
+    // Boot never rotates the password (that would revert a change and keep old sessions); the CLI does.
+    log.warn("OWNER_PASSWORD differs from the stored password; run pnpm seed:owner to apply it");
+    return;
+  }
   log.info({ result }, "owner account checked");
 }
 
@@ -37,8 +42,9 @@ async function startGarminService(): Promise<void> {
     log: logger.child({ module: "garmin-process" }),
   });
   onShutdown("garmin service", () => garmin.stop());
-  // After boot the child may die; it is restarted with backoff and /health says 503 meanwhile.
-  registerReadinessCheck("garmin", () => garmin.isUp());
+  // After boot the child may die and is restarted with backoff. /health stays 200 through a short restart
+  // and turns 503 once the child has been down for minutes, so Render restarts the instance.
+  registerReadinessCheck("garmin", () => garmin.health());
   await garmin.start();
   log.info(
     { port: config.GARMIN_SERVICE_PORT, fixtures: config.GARMIN_FIXTURES },

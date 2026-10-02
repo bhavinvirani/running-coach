@@ -8,8 +8,8 @@
           {
             "type": "text",
             "json": {
-              "headline": "18.00 km long run at 5:40 /km.",
-              "whatHappened": "18.00 km in 1:42:00 at 5:40 /km, average heart rate 148 bpm, max 166 bpm, 142 m of climbing.",
+              "headline": "18.0 km long run at 5:40 /km.",
+              "whatHappened": "18.0 km in 1:42:00 at 5:40 /km, average heart rate 148 bpm, max 166 bpm, 142 m of climbing.",
               "whatItMeans": "148 bpm at 5:40 /km over 1:42:00 is an aerobic effort; the long run did its job.",
               "nextStep": "Make the next run easy, around 30 to 40 minutes, then follow the plan.",
               "caution": "easy_next"

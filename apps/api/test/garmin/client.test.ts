@@ -26,11 +26,9 @@ function writeBack(): GarminCallOptions & { saved: string[] } {
 }
 
 /** Counts calls to the service while letting them through. */
-function countServiceCalls(path: string) {
-  const spy = vi.spyOn(globalThis, "fetch");
-  const href = (input: string | URL | Request) =>
-    typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  return () => spy.mock.calls.filter(([input]) => href(input).endsWith(path)).length;
+function countServiceCalls(path: string): () => number {
+  const sent = fixturesSentTo(path);
+  return () => sent().length;
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -107,7 +105,7 @@ describe("garminClient", () => {
     expect(calls()).toBe(1);
   });
 
-  it("retries garmin_unavailable twice, then throws it", async () => {
+  it("does not retry a garmin_unavailable answer: the service already retried inside its session", async () => {
     const calls = countServiceCalls("/sync");
 
     const error = await rejection(
@@ -115,7 +113,7 @@ describe("garminClient", () => {
     );
 
     expect(error).toMatchObject({ code: ErrorCode.garminUnavailable, status: 502 });
-    expect(calls()).toBe(3);
+    expect(calls()).toBe(1);
   });
 
   it("throws garmin_unavailable when the service is not running", async () => {
@@ -181,18 +179,20 @@ describe("garminClient", () => {
     expect(calls()).toBe(1);
   });
 
-  it("writes back the bundle Garmin rotated before a 502 and retries with it, not the stale one (rotate then 502)", async () => {
+  it("writes back the bundle Garmin rotated before a 502, then throws garmin_unavailable without a retry (rotate then 502)", async () => {
     const sent = fixturesSentTo("/sync");
     const options = writeBack();
 
-    const response = await garminClient.sync(
-      { tokenBundle: garminBundle("rotate_then_unavailable"), ...range },
-      options,
+    const error = await rejection(
+      garminClient.sync(
+        { tokenBundle: garminBundle("rotate_then_unavailable"), ...range },
+        options,
+      ),
     );
 
-    expect(sent()).toEqual(["rotate_then_unavailable", "rotated"]);
+    expect(error).toMatchObject({ code: ErrorCode.garminUnavailable, status: 502 });
+    expect(sent()).toEqual(["rotate_then_unavailable"]);
     expect(options.saved.map(fixtureOf)).toEqual(["rotated"]);
-    expect(response.tokenBundle).toBe(options.saved[0]);
   });
 
   it("throws the write-back failure and does not retry when storing a rotated bundle fails", async () => {
@@ -207,6 +207,39 @@ describe("garminClient", () => {
 
     expect(String(error)).toContain("database down");
     expect(calls()).toBe(1);
+  });
+
+  describe("against a service that drops the first connection, as while its process restarts", () => {
+    let server: Server;
+    let client: ReturnType<typeof createGarminClient>;
+    let requests = 0;
+
+    beforeAll(async () => {
+      server = createHttpServer((req, res) => {
+        requests += 1;
+        if (requests === 1) {
+          req.socket.destroy();
+          return;
+        }
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ tokenBundle: garminBundle(), profile: { displayName: "Alex" } }));
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address() as AddressInfo;
+      client = createGarminClient({ baseUrl: `http://127.0.0.1:${port}`, secret: "unused" });
+    });
+
+    afterAll(async () => {
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    it("retries a request that got no answer at all", async () => {
+      const response = await client.profile({ tokenBundle: garminBundle() }, writeBack());
+
+      expect(response.profile.displayName).toBe("Alex");
+      expect(requests).toBe(2);
+    });
   });
 
   describe("against a service that breaks the contract", () => {

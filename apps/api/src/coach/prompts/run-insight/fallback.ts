@@ -20,6 +20,9 @@ const WHY: Record<RunInsightFallbackReason, string> = {
     "No coach review: Claude is not answering right now. These are the run's numbers only.",
 };
 
+/** Every reason there is a fallback card for; the eval checks each one's card. */
+export const RUN_INSIGHT_FALLBACK_REASONS = Object.keys(WHY) as RunInsightFallbackReason[];
+
 export function buildRunInsightFallback(
   activity: InsightActivity,
   settings: InsightSettings,

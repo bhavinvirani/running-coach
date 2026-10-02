@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
-import { account, session, user } from "../../src/db/schema";
+import { account, session, user, userSettings } from "../../src/db/schema";
 import { seedOwner } from "../../src/services/owner";
-import { browserAgent, createTestApp, TEST_OWNER } from "../helpers";
+import { browserAgent, createTestApp, ownerId, signedInAgent, TEST_OWNER } from "../helpers";
+import { createUser } from "../seed";
 
 const app = createTestApp();
 
@@ -47,15 +48,62 @@ describe("seedOwner", () => {
     expect(owner?.name).toBe("runner");
   });
 
-  it("updates the password and name of an existing owner, keeping one user and one account", async () => {
+  it("creates the default settings row with the user", async () => {
     await seedOwner(TEST_OWNER);
-    const newPassword = "a-different-long-password";
+
+    const rows = await db
+      .select()
+      .from(userSettings)
+      .where(eq(userSettings.userId, await ownerId()));
+    expect(rows).toEqual([
+      expect.objectContaining({ units: "km", timezone: "UTC", coachDetail: "standard" }),
+    ]);
+  });
+
+  it("gives an existing owner without settings or a credential both, so the owner can sign in", async () => {
+    // An owner created before the settings hook existed: a user row and nothing else.
+    const userId = await createUser(TEST_OWNER.email);
+    await db.delete(userSettings).where(eq(userSettings.userId, userId));
+
+    const result = await seedOwner(TEST_OWNER);
+
+    expect(result).toBe("updated");
+    expect(
+      await db.select().from(userSettings).where(eq(userSettings.userId, userId)),
+    ).toHaveLength(1);
+    expect(await signIn(TEST_OWNER.email, TEST_OWNER.password)).toBe(200);
+  });
+
+  it("at boot leaves an existing owner's password and name alone, and its sessions signed in", async () => {
+    const agent = await signedInAgent(app);
 
     const result = await seedOwner({
       ...TEST_OWNER,
-      password: newPassword,
+      password: "a-different-long-password",
       name: "Renamed Runner",
     });
+
+    expect(result).toBe("password_differs");
+    const [owner] = await db.select().from(user);
+    expect(owner?.name).toBe(TEST_OWNER.name);
+    expect(await signIn(TEST_OWNER.email, TEST_OWNER.password)).toBe(200);
+    expect((await agent.get("/api/me")).status).toBe(200);
+  });
+
+  it("at boot reports unchanged when the env password still matches", async () => {
+    await signedInAgent(app);
+
+    expect(await seedOwner({ ...TEST_OWNER })).toBe("unchanged");
+  });
+
+  it("with reset updates the password and name of an existing owner, keeping one user and one account", async () => {
+    await seedOwner(TEST_OWNER);
+    const newPassword = "a-different-long-password";
+
+    const result = await seedOwner(
+      { ...TEST_OWNER, password: newPassword, name: "Renamed Runner" },
+      { reset: true },
+    );
 
     expect(result).toBe("updated");
     expect(await db.select().from(user)).toHaveLength(1);
@@ -66,7 +114,16 @@ describe("seedOwner", () => {
     expect(await signIn(TEST_OWNER.email, newPassword)).toBe(200);
   });
 
-  it("is idempotent: the same input changes nothing and keeps sessions valid", async () => {
+  it("with reset signs out every session of the owner when the password changes", async () => {
+    const agent = await signedInAgent(app);
+
+    await seedOwner({ ...TEST_OWNER, password: "a-different-long-password" }, { reset: true });
+
+    expect(await db.select().from(session)).toHaveLength(0);
+    expect((await agent.get("/api/me")).status).toBe(401);
+  });
+
+  it("is idempotent: the same input with reset changes nothing and keeps sessions valid", async () => {
     await seedOwner(TEST_OWNER);
     const [before] = await db.select().from(account);
     const agent = browserAgent(app);
@@ -74,7 +131,7 @@ describe("seedOwner", () => {
       .post("/api/auth/sign-in/email")
       .send({ email: TEST_OWNER.email, password: TEST_OWNER.password });
 
-    const result = await seedOwner(TEST_OWNER);
+    const result = await seedOwner(TEST_OWNER, { reset: true });
 
     expect(result).toBe("unchanged");
     const [after] = await db.select().from(account);
@@ -83,10 +140,10 @@ describe("seedOwner", () => {
     expect((await agent.get("/api/me")).status).toBe(200);
   });
 
-  it("keeps the existing name when none is given", async () => {
+  it("with reset keeps the existing name when none is given", async () => {
     await seedOwner(TEST_OWNER);
 
-    await seedOwner({ email: TEST_OWNER.email, password: TEST_OWNER.password });
+    await seedOwner({ email: TEST_OWNER.email, password: TEST_OWNER.password }, { reset: true });
 
     const [owner] = await db.select().from(user);
     expect(owner?.name).toBe(TEST_OWNER.name);

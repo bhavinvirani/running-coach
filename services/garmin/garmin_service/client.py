@@ -26,8 +26,9 @@ log = logging.getLogger(__name__)
 # At least this long between the end of one library call and the start of the next.
 GARMIN_CALL_GAP_S = 1.0
 # The library retries 5xx and network errors itself, with backoff and jitter, never 401 or 429.
-# Retrying inside the session keeps a refresh token that login() just rotated; a retry from the
-# API would start over with the old bundle.
+# Quick retries belong here: they reuse the session login() opened, while every request from the
+# API is a new Garmin login. The API retries only when this service gave no answer at all, never
+# an error answer; the sync job retries the whole sync minutes later.
 GARMIN_RETRY_ATTEMPTS = 2
 
 

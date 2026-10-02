@@ -11,7 +11,7 @@ describe("GET /health", () => {
     const response = await request(app).get("/health");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ status: "ok" });
+    expect(response.body).toMatchObject({ status: "ok" });
     expect(response.headers["x-request-id"]).toMatch(/^[\w.:-]+$/);
   });
 
@@ -23,19 +23,30 @@ describe("GET /health", () => {
     expect(replaced.headers["x-request-id"]).not.toContain("bad id");
   });
 
-  it("returns 503 problem+json naming the dependency that is down", async () => {
-    let up = true;
-    registerReadinessCheck("garmin", () => up);
-    up = false;
+  it("stays 200 and names the state while a dependency restarts within its grace period", async () => {
+    registerReadinessCheck("garmin", () => ({ state: "restarting", ready: true }));
+
+    const response = await request(app).get("/health");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ status: "ok", dependencies: { garmin: "restarting" } });
+  });
+
+  it("returns 503 problem+json naming the dependency that is down and its state", async () => {
+    let health = { state: "up", ready: true };
+    registerReadinessCheck("garmin", () => health);
+    health = { state: "down", ready: false };
 
     const response = await request(app).get("/health");
 
     expect(response.status).toBe(503);
     expect(response.headers["content-type"]).toContain("application/problem+json");
     const problem = problemSchema.parse(response.body);
-    expect(problem.detail).toContain("garmin");
+    expect(problem.detail).toContain("garmin (down)");
 
-    up = true;
-    expect((await request(app).get("/health")).status).toBe(200);
+    health = { state: "up", ready: true };
+    const recovered = await request(app).get("/health");
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toEqual({ status: "ok", dependencies: { garmin: "up" } });
   });
 });

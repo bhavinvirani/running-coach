@@ -1,19 +1,20 @@
+import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ErrorCode } from "@running-coach/shared";
 import { asc, eq } from "drizzle-orm";
-import type { JobWithMetadata } from "pg-boss";
+import type { Job, JobWithMetadata } from "pg-boss";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
 import { enqueueSyncGarmin, startJobs, stopJobs } from "../../src/jobs";
-import { deterministicJobId, getBoss } from "../../src/jobs/boss";
+import { getBoss } from "../../src/jobs/boss";
 import * as syncJob from "../../src/jobs/sync-garmin";
 import { decrypt } from "../../src/lib/crypto";
 import { DomainError } from "../../src/lib/errors";
 import { noonUtc } from "../../src/lib/local-date";
 import { syncGarmin } from "../../src/services/garmin-sync";
-import { connectGarmin, createSettings, createUser, fixturesSentTo, garminBundle } from "../seed";
+import { connectGarmin, createUser, fixturesSentTo, garminBundle, setSettings } from "../seed";
 
 // The sync job and service on the real Postgres, against the Garmin service in fixture mode. The fixture
 // runs lie between 2026-08-31 and 2026-09-27; "today" 2026-09-28 (NOW, midday in Berlin) makes the first
@@ -27,7 +28,7 @@ let jobClock = NOW;
 
 async function connectedUser(bundle = garminBundle()): Promise<string> {
   const userId = await createUser();
-  await createSettings(userId, { timezone: "Europe/Berlin" });
+  await setSettings(userId, { timezone: "Europe/Berlin" });
   await connectGarmin(userId, bundle);
   return userId;
 }
@@ -63,13 +64,30 @@ async function storedBundle(userId: string): Promise<{ fixture?: string }> {
   };
 }
 
-async function waitForJob(id: string): Promise<JobWithMetadata> {
+async function findJob(id: string | undefined): Promise<JobWithMetadata | undefined> {
+  if (!id) throw new Error("no job id");
+  const [job] = await getBoss().findJobs<object>(syncJob.name, { id });
+  return job;
+}
+
+async function waitForJob(id: string | null): Promise<JobWithMetadata> {
+  if (!id) throw new Error("not enqueued");
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const job = await getBoss().getJobById<object>(syncJob.name, id);
+    const job = await findJob(id);
     if (job && ["completed", "failed"].includes(job.state)) return job;
     await sleep(100);
   }
   throw new Error(`job ${id} did not finish`);
+}
+
+/** Ids of the user's syncs waiting to run (created or retry). */
+async function queuedJobs(userId: string): Promise<string[]> {
+  const jobs = await getBoss().findJobs(syncJob.name, { key: userId, queued: true });
+  return jobs.map((job) => job.id);
+}
+
+function secondsUntil(date: Date | undefined): number {
+  return ((date?.getTime() ?? 0) - Date.now()) / 1000;
 }
 
 beforeAll(async () => {
@@ -195,7 +213,7 @@ describe("syncGarmin", () => {
     expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);
   });
 
-  it("marks the connection expired and stores nothing when Garmin rejects the login", async () => {
+  it("keeps the connection ok on a first rejected login, in case a failed token refresh caused it", async () => {
     const userId = await connectedUser(garminBundle("expired"));
 
     await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
@@ -204,17 +222,49 @@ describe("syncGarmin", () => {
 
     expect(await runs(userId)).toHaveLength(0);
     expect(await connection(userId)).toMatchObject({
-      status: "expired",
+      status: "ok",
       lastError: ErrorCode.garminAuthExpired,
       lastSyncAt: null,
     });
+  });
 
-    // The dead login is not sent to Garmin again.
+  it("marks the connection expired on a second rejected login in a row, and then sends it no more", async () => {
+    const userId = await connectedUser(garminBundle("expired"));
     const { calls } = recordSyncCalls();
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
+        code: ErrorCode.garminAuthExpired,
+      });
+    }
+
+    // The third sync did not send the dead login to Garmin.
+    expect(calls).toHaveLength(2);
+    expect(await connection(userId)).toMatchObject({
+      status: "expired",
+      lastError: ErrorCode.garminAuthExpired,
+    });
+  });
+
+  it("does not mark the connection expired when another failure came between two rejected logins", async () => {
+    const userId = await connectedUser(garminBundle("expired"));
+    const { spy, original } = recordSyncCalls();
+
     await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
       code: ErrorCode.garminAuthExpired,
     });
-    expect(calls).toHaveLength(0);
+    spy.mockImplementationOnce(() => {
+      throw new DomainError(ErrorCode.garminUnavailable, 502, "Garmin is not answering.");
+    });
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
+      code: ErrorCode.garminUnavailable,
+    });
+    spy.mockImplementation(original);
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
+      code: ErrorCode.garminAuthExpired,
+    });
+
+    expect((await connection(userId)).status).toBe("ok");
   });
 
   it("writes a rotated bundle back, encrypted", async () => {
@@ -252,14 +302,17 @@ describe("syncGarmin", () => {
     expect(await runs(userId)).toHaveLength(0);
   });
 
-  it("writes back the bundle Garmin rotated before a 502 and retries with it, not the stale one (rotate then 502)", async () => {
+  it("writes back the bundle Garmin rotated before a 502, so the next sync sends the new one (rotate then 502)", async () => {
     const userId = await connectedUser(garminBundle("rotate_then_unavailable"));
     const sent = fixturesSentTo("/sync");
 
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
+      code: ErrorCode.garminUnavailable,
+    });
+    expect(await storedBundle(userId)).toMatchObject({ fixture: "rotated" });
     const result = await syncGarmin({ userId, now: NOW });
 
     expect(sent()).toEqual(["rotate_then_unavailable", ...Array<string>(5).fill("rotated")]);
-    expect(await storedBundle(userId)).toMatchObject({ fixture: "rotated" });
     expect(result.activitiesWritten).toBe(FIXTURE_RUNS);
   });
 
@@ -284,58 +337,126 @@ describe("syncGarmin", () => {
 });
 
 describe("sync-garmin job", () => {
-  it("runs once for a user and date, however often it is enqueued", async () => {
+  it("runs once for a user and date when the cron enqueues it, however often", async () => {
     const userId = await connectedUser();
-    const data = { userId, date: TODAY };
+    const data = { userId, trigger: "cron", date: TODAY } as const;
 
     const first = await enqueueSyncGarmin(data);
     const second = await enqueueSyncGarmin(data);
 
     expect(first).toBe(syncJob.jobId(data));
     expect(second).toBeNull();
-    const job = await waitForJob(syncJob.jobId(data));
+    const job = await waitForJob(first);
     expect(job.state).toBe("completed");
     expect(job.output).toMatchObject({ status: "ok", activitiesWritten: FIXTURE_RUNS });
-    // Enqueued again after it finished: still the same id, still a no-op.
+    // The cron firing again that day after it finished: still the same id, still a no-op.
     expect(await enqueueSyncGarmin(data)).toBeNull();
     expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);
   });
 
+  it("queues a sync on app open or Sync now even after a sync already ran that day", async () => {
+    const userId = await connectedUser();
+    const first = await enqueueSyncGarmin({ userId, trigger: "cron", date: TODAY });
+    expect((await waitForJob(first)).state).toBe("completed");
+    const { calls } = recordSyncCalls();
+
+    const later = await enqueueSyncGarmin({ userId, trigger: "user" });
+
+    const job = await waitForJob(later);
+    expect(job.output).toMatchObject({ status: "ok", activitiesWritten: 0 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("folds repeated taps into the one sync already queued for the user", async () => {
+    const userId = await connectedUser();
+    // Not due for a minute, so the worker leaves it queued while the taps come in.
+    const queued = await getBoss().send(
+      syncJob.name,
+      { userId, trigger: "user" },
+      {
+        ...syncJob.sendOptions({ userId, trigger: "user" }),
+        startAfter: 60,
+      },
+    );
+
+    const taps = await Promise.all([
+      enqueueSyncGarmin({ userId, trigger: "user" }),
+      enqueueSyncGarmin({ userId, trigger: "user" }),
+      enqueueSyncGarmin({ userId, trigger: "cron", date: TODAY }),
+    ]);
+
+    expect(queued).not.toBeNull();
+    expect(taps).toEqual([null, null, null]);
+    expect(await queuedJobs(userId)).toEqual([queued]);
+  });
+
   it("reschedules itself after retryAfterSeconds on a 429 without counting a failed attempt", async () => {
     const userId = await connectedUser(garminBundle("rate_limited"));
-    const data = { userId, date: TODAY };
+    const data = { userId, trigger: "user" } as const;
     const id = await enqueueSyncGarmin(data);
-    if (!id) throw new Error("not enqueued");
 
     const job = await waitForJob(id);
 
     expect(job.state).toBe("completed");
     expect(job.retryCount).toBe(0);
     expect(job.output).toMatchObject({ status: "rate_limited", retryAfterSeconds: 3600 });
-    const next = await getBoss().getJobById(syncJob.name, deterministicJobId(`${id}:rate-limited`));
+    const [nextId] = (job.output as { rescheduledJobIds: string[] }).rescheduledJobIds;
+    const next = await findJob(nextId);
     expect(next?.state).toBe("created");
     expect(next?.data).toEqual(data);
-    const delaySeconds = ((next?.startAfter.getTime() ?? 0) - Date.now()) / 1000;
-    expect(delaySeconds).toBeGreaterThan(3500);
-    expect(delaySeconds).toBeLessThanOrEqual(3600);
+    expect(secondsUntil(next?.startAfter)).toBeGreaterThan(3500);
+    expect(secondsUntil(next?.startAfter)).toBeLessThanOrEqual(3600);
     expect(await connection(userId)).toMatchObject({
       status: "ok",
       lastError: ErrorCode.garminRateLimited,
     });
     expect(await runs(userId)).toHaveLength(0);
+    // A tap while the successor waits does not reach Garmin before the delay.
+    expect(await enqueueSyncGarmin(data)).toBeNull();
+    expect(await queuedJobs(userId)).toEqual([nextId]);
+  });
+
+  it("pushes back the user's waiting sync on a 429 instead of queueing a successor beside it (429 with a queued job)", async () => {
+    const userId = await connectedUser(garminBundle("rate_limited"));
+    const data = { userId, trigger: "user" } as const;
+    // Queued while the 429 job ran: due in a minute, so it would call Garmin long before the delay.
+    const waiting = await getBoss().send(syncJob.name, data, {
+      ...syncJob.sendOptions(data),
+      startAfter: 60,
+    });
+    const running: Job<unknown> = {
+      id: randomUUID(),
+      name: syncJob.name,
+      data,
+      signal: new AbortController().signal,
+      expireInSeconds: 900,
+      heartbeatSeconds: null,
+      retryCount: 0,
+    };
+
+    const output = await syncJob.handle(getBoss(), running, () => NOW);
+
+    expect(output).toEqual({
+      status: "rate_limited",
+      retryAfterSeconds: 3600,
+      rescheduledJobIds: [waiting],
+    });
+    expect(await queuedJobs(userId)).toEqual([waiting]);
+    expect(secondsUntil((await findJob(waiting ?? undefined))?.startAfter)).toBeGreaterThan(3500);
+    // Handling the same 429 again only moves it again.
+    await syncJob.handle(getBoss(), running, () => NOW);
+    expect(await queuedJobs(userId)).toEqual([waiting]);
   });
 
   it("writes back the bundle Garmin rotated before a 429 and still reschedules (rotate then 429)", async () => {
     const userId = await connectedUser(garminBundle("rotate_then_rate_limited"));
-    const id = await enqueueSyncGarmin({ userId, date: TODAY });
-    if (!id) throw new Error("not enqueued");
+    const id = await enqueueSyncGarmin({ userId, trigger: "user" });
 
     const job = await waitForJob(id);
 
     expect(job).toMatchObject({ state: "completed", retryCount: 0 });
     expect(job.output).toMatchObject({ status: "rate_limited", retryAfterSeconds: 3600 });
-    const next = await getBoss().getJobById(syncJob.name, deterministicJobId(`${id}:rate-limited`));
-    expect(next?.state).toBe("created");
+    expect(await queuedJobs(userId)).toHaveLength(1);
     expect(await storedBundle(userId)).toMatchObject({ fixture: "rotated" });
   });
 
@@ -343,8 +464,7 @@ describe("sync-garmin job", () => {
     const userId = await connectedUser();
     // Queued on 2026-09-20; runs at 00:30 on 2026-09-29 in Berlin, which is still 2026-09-28 in UTC.
     jobClock = new Date("2026-09-28T22:30:00Z");
-    const id = await enqueueSyncGarmin({ userId, date: "2026-09-20" });
-    if (!id) throw new Error("not enqueued");
+    const id = await enqueueSyncGarmin({ userId, trigger: "cron", date: "2026-09-20" });
 
     const job = await waitForJob(id);
 
@@ -356,15 +476,17 @@ describe("sync-garmin job", () => {
     });
   });
 
-  it("completes without retrying when the Garmin login has expired", async () => {
+  it("completes without retrying when Garmin rejects the login", async () => {
     const userId = await connectedUser(garminBundle("expired"));
-    const id = await enqueueSyncGarmin({ userId, date: TODAY });
-    if (!id) throw new Error("not enqueued");
+    const id = await enqueueSyncGarmin({ userId, trigger: "user" });
 
     const job = await waitForJob(id);
 
     expect(job).toMatchObject({ state: "completed", retryCount: 0 });
     expect(job.output).toEqual({ status: ErrorCode.garminAuthExpired });
-    expect((await connection(userId)).status).toBe("expired");
+    expect(await connection(userId)).toMatchObject({
+      status: "ok",
+      lastError: ErrorCode.garminAuthExpired,
+    });
   });
 });

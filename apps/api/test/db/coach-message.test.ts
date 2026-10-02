@@ -2,27 +2,18 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, coachMessage, user } from "../../src/db/schema";
+import { postgresErrorCode } from "../helpers";
 import { createLongRun, createUser } from "../seed";
 
 // 0004_create_coach_message: what the coach wrote, tied to its user and (for insights) its run.
 
 const content = {
-  headline: "18.00 km in 1:42:00 at 5:40 /km.",
+  headline: "18.0 km in 1:42:00 at 5:40 /km.",
   whatHappened: "Average heart rate 148 bpm.",
   whatItMeans: "An aerobic long run.",
   nextStep: "Run easy next.",
   caution: "easy_next",
 };
-
-/** The SQLSTATE a query failed with (drizzle wraps the pg error as its cause). */
-async function postgresErrorCode(query: PromiseLike<unknown>): Promise<string | undefined> {
-  try {
-    await query;
-  } catch (error) {
-    return ((error as { cause?: { code?: string } }).cause ?? (error as { code?: string })).code;
-  }
-  return undefined;
-}
 
 describe("coach_message", () => {
   it("stores an insight with its prompt version, model, content and usage", async () => {

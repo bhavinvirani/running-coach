@@ -7,7 +7,7 @@ import { db } from "../../src/db/client";
 import { coachMessage, user } from "../../src/db/schema";
 import { config } from "../../src/lib/config";
 import { createRunInsight } from "../../src/services/insights";
-import { claudeKey, claudeRequests, createLongRun, createSettings, createUser } from "../seed";
+import { claudeKey, claudeRequests, createLongRun, createUser, setSettings } from "../seed";
 
 // The coach end to end against the fake Claude (global-setup.ts): the key names the fixture it replays.
 
@@ -19,7 +19,8 @@ const validOutput = validFixture.responses[0].body.content[0].json;
 async function insightFor(fixture: string | null, settings: { units?: "km" | "mi" } = {}) {
   const userId = await createUser();
   const key = fixture ? claudeKey(fixture) : undefined;
-  await createSettings(userId, { ...settings, ...(key ? { claudeKey: key } : {}) });
+  const changes = { ...settings, ...(key ? { claudeKey: key } : {}) };
+  if (Object.keys(changes).length > 0) await setSettings(userId, changes);
   const run = await createLongRun(userId);
   const message = await createRunInsight(userId, run.id);
   return { userId, key, run, message, requests: key ? await claudeRequests(key) : [] };
@@ -60,7 +61,7 @@ describe("createRunInsight", () => {
     const [owner] = await db.select().from(user).where(eq(user.id, userId));
 
     const sent = JSON.stringify(requests[0]?.body);
-    expect(sent).toContain("11.18 mi");
+    expect(sent).toContain("11.2 mi");
     expect(sent).not.toContain(key);
     expect(sent).not.toContain(owner?.email);
     expect(sent).not.toMatch(/fixture-token|di_token|v1:/);
@@ -79,7 +80,7 @@ describe("createRunInsight", () => {
       expect(message.model).toBeNull();
       expect(message.usage).toMatchObject({ inputTokens: 1180 });
       expect(message.content).toMatchObject({
-        headline: "18.00 km in 1:42:00 at 5:40 /km.",
+        headline: "18.0 km in 1:42:00 at 5:40 /km.",
         caution: "none",
       });
       expect(requests).toHaveLength(1);

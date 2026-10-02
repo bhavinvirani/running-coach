@@ -48,8 +48,13 @@ export interface FetchJsonOptions<T extends z.ZodType, P extends Problem = Probl
    */
   onErrorResponse?: (failed: FailedResponse<P>) => void | Promise<void>;
   timeoutMs: number;
-  /** Extra attempts after the first, only for network errors and 5xx. */
+  /** Extra attempts after the first, only for what `retryOn` names. */
   retries?: number;
+  /**
+   * "network_and_5xx" (default): no answer at all, or a 5xx. "network": no answer at all (refused, or the
+   * connection dropped before a response), for an upstream that already retried behind its own answers.
+   */
+  retryOn?: "network" | "network_and_5xx";
   baseDelayMs?: number;
   maxDelayMs?: number;
 }
@@ -98,15 +103,20 @@ async function readProblem<P extends Problem>(
 
 /**
  * JSON over fetch with a timeout per attempt and the retry policy from the api rule: retries with exponential
- * backoff and full jitter on network errors and 5xx only. 4xx (429 included) returns at once. A timeout is
- * not retried, because the callers' timeouts are already long and they hold a per-user lock meanwhile.
- * Forwards x-request-id from the current request or job.
+ * backoff and full jitter on network errors and, unless `retryOn` is "network", 5xx. 4xx (429 included)
+ * returns at once. A timeout is not retried, because the callers' timeouts are already long and they hold a
+ * per-user lock meanwhile. Forwards x-request-id from the current request or job.
  */
 export async function fetchJson<T extends z.ZodType, P extends Problem = Problem>(
   url: string,
   options: FetchJsonOptions<T, P>,
 ): Promise<FetchJsonResult<z.output<T>, P>> {
-  const { retries = 2, baseDelayMs = 250, maxDelayMs = 4000 } = options;
+  const {
+    retries = 2,
+    retryOn = "network_and_5xx",
+    baseDelayMs = 250,
+    maxDelayMs = 4000,
+  } = options;
   // Without a schema of its own, P is Problem.
   const errorSchema = options.problemSchema ?? (problemSchema as unknown as z.ZodType<P>);
   const headers: Record<string, string> = { accept: "application/json", ...options.headers };
@@ -145,7 +155,7 @@ export async function fetchJson<T extends z.ZodType, P extends Problem = Problem
         problem: await readProblem(response, errorSchema),
       };
       await options.onErrorResponse?.(failed);
-      if (response.status >= 500 && canRetry) {
+      if (response.status >= 500 && retryOn === "network_and_5xx" && canRetry) {
         await sleep(backoffDelay(attempt, baseDelayMs, maxDelayMs));
         continue;
       }

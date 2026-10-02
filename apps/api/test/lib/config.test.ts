@@ -57,4 +57,34 @@ describe("parseConfig", () => {
     expect(text).not.toContain("hunter2");
     expect(text).not.toContain("short-secret-value");
   });
+
+  it("refuses the published dev, test and e2e secrets in production", () => {
+    const result = parseConfig({
+      ...valid,
+      MASTER_KEY: "ZGV2LW9ubHktbWFzdGVyLWtleS0zMi1ieXRlcy1vayE=",
+      BETTER_AUTH_SECRET: "dev-only-better-auth-secret-not-for-production",
+      CRON_SECRET: "e2e-only-cron-secret-not-for-production",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.problems.map((problem) => problem.variable).sort()).toEqual([
+      "BETTER_AUTH_SECRET",
+      "CRON_SECRET",
+      "MASTER_KEY",
+    ]);
+    expect(JSON.stringify(result.problems)).not.toContain("dev-only");
+  });
+
+  it("accepts the published dev secrets outside production", () => {
+    const result = parseConfig({
+      ...valid,
+      NODE_ENV: "development",
+      MASTER_KEY: "ZGV2LW9ubHktbWFzdGVyLWtleS0zMi1ieXRlcy1vayE=",
+      BETTER_AUTH_SECRET: "dev-only-better-auth-secret-not-for-production",
+      CRON_SECRET: "dev-only-cron-secret",
+    });
+
+    expect(result.ok).toBe(true);
+  });
 });

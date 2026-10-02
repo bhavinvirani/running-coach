@@ -1,12 +1,20 @@
 """Turn a raw Garmin response into a committable fixture. The repo is public: no real data.
 
-    uv run python -m tests.sanitize raw.json -o tests/fixtures/<name>.json
+    uv run python -m tests.sanitize raw/<name>.json -o tests/fixtures/<name>.json
+
+Raw captures live only in services/garmin/raw/, which git ignores.
 
 Ids are renumbered per kind, keeping their order (a newer activity keeps the larger id) and the
-links between them (ownerId and profileId of one person stay equal). Person names, free text,
-emails and URLs are replaced; locations, coordinates, polylines and profile images are removed.
-Enumeration ids (typeId, *TypeId, timeZoneId) are kept. The output is a fixed point: sanitizing a
-fixture again returns it unchanged. Read the result before committing it.
+links between them (ownerId and profileId of one person stay equal); serial numbers are
+renumbered the same way. Person names, free text, emails and URLs are replaced; birthDate, age,
+gender, weight and height become fixed fakes wherever they appear; locations, coordinates,
+polylines and profile images are removed. The output is a fixed point: sanitizing a fixture again
+returns it unchanged.
+
+Kept as they are, so read the result for them before committing it: timestamps and dates
+(startTimeLocal, startTimeGMT, beginTimestamp, ...), heart rate, cadence, pace, speed, distance,
+duration, elevation, calories and every other metric, and enumeration ids (typeId, *TypeId,
+timeZoneId).
 """
 
 from __future__ import annotations
@@ -45,6 +53,14 @@ PERSON_NAMES = {
     "firstName": "Alex",
     "lastName": "Fixture",
 }
+# Garmin reports weight in grams and height in centimetres.
+PROFILE_FAKES: dict[str, Any] = {
+    "birthDate": "1990-01-01",
+    "age": 36,
+    "gender": "FEMALE",
+    "weight": 70000.0,
+    "height": 175.0,
+}
 _FREE_TEXT_KEYS = frozenset({"description", "bio", "motivation", "notes", "comment"})
 _REMOVED_KEYS = frozenset({"location", "locationName", "lat", "lon", "lng"})
 _REMOVED_FRAGMENTS = ("latitude", "longitude", "polyline", "profileimage", "email")
@@ -67,11 +83,15 @@ def _id_kind(key: str, value: Any) -> str | None:
         return None
     if key in _KIND_OF:
         return _KIND_OF[key]
-    return "other" if key.endswith(("Id", "ID", "Pk", "PK")) else None
+    return "other" if key.endswith(("Id", "ID", "Pk", "PK")) or _is_serial_key(key) else None
 
 
 def _is_uuid_key(key: str) -> bool:
     return key.endswith(("UUID", "Uuid", "GUID", "Guid"))
+
+
+def _is_serial_key(key: str) -> bool:
+    return key.lower().endswith(("serialnumber", "serial"))
 
 
 def _walk(node: Any, visit: Callable[[str, Any], None], key: str | None = None) -> None:
@@ -91,6 +111,7 @@ def sanitize(raw: Any) -> Any:
     """Return a sanitized deep copy of a raw Garmin JSON value."""
     ids: dict[str, set[int]] = {}
     uuids: set[str] = set()
+    serials: set[str] = set()
 
     def collect(key: str, value: Any) -> None:
         kind = _id_kind(key, value)
@@ -98,6 +119,8 @@ def sanitize(raw: Any) -> Any:
             ids.setdefault(kind, set()).add(value)
         elif _is_uuid_key(key) and isinstance(value, str):
             uuids.add(value)
+        elif _is_serial_key(key) and isinstance(value, str):
+            serials.add(value)
 
     _walk(raw, collect)
     id_map = {
@@ -107,6 +130,7 @@ def sanitize(raw: Any) -> Any:
     uuid_map = {
         old: f"00000000-0000-4000-8000-{i:012d}" for i, old in enumerate(sorted(uuids), start=1)
     }
+    serial_map = {old: f"{i:010d}" for i, old in enumerate(sorted(serials), start=1)}
     activity_names = 0
 
     def clean(key: str | None, value: Any) -> Any:
@@ -120,10 +144,14 @@ def sanitize(raw: Any) -> Any:
         kind = _id_kind(key, value)
         if kind is not None:
             return id_map[kind][value]
+        if key in PROFILE_FAKES and value is not None:
+            return PROFILE_FAKES[key]
         if not isinstance(value, str):
             return value
         if _is_uuid_key(key):
             return uuid_map[value]
+        if _is_serial_key(key):
+            return serial_map[value]
         if key in PERSON_NAMES:
             return PERSON_NAMES[key]
         if key == "activityName":

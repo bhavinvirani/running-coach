@@ -1,38 +1,22 @@
-import { meResponseSchema, problemSchema } from "@running-coach/shared";
+import { meResponseSchema } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
-import { garminConnection, user, userSettings } from "../../src/db/schema";
+import { garminConnection, userSettings } from "../../src/db/schema";
 import { encrypt } from "../../src/lib/crypto";
-import { createTestApp, signedInAgent, TEST_OWNER } from "../helpers";
+import { createTestApp, expectProblem, ownerId, signedInAgent, TEST_OWNER } from "../helpers";
 
 const app = createTestApp();
 
-async function ownerId(): Promise<string> {
-  const [row] = await db.select({ id: user.id }).from(user).where(eq(user.email, TEST_OWNER.email));
-  if (!row) throw new Error("owner missing");
-  return row.id;
-}
-
-function expectProblem(response: request.Response, status: number, code: string) {
-  expect(response.status).toBe(status);
-  expect(response.headers["content-type"]).toContain("application/problem+json");
-  const problem = problemSchema.parse(response.body);
-  expect(problem.code).toBe(code);
-  expect(problem.requestId).toBe(response.headers["x-request-id"]);
-  return problem;
-}
-
 describe("GET /api/me", () => {
-  it("returns the user with default settings, creating the settings row once", async () => {
+  it("returns the user with the default settings created with the account", async () => {
     const agent = await signedInAgent(app);
 
-    const first = await agent.get("/api/me");
-    const second = await agent.get("/api/me");
+    const response = await agent.get("/api/me");
 
-    expect(first.status).toBe(200);
-    const me = meResponseSchema.parse(first.body);
+    expect(response.status).toBe(200);
+    const me = meResponseSchema.parse(response.body);
     expect(me.user).toMatchObject({ email: TEST_OWNER.email, name: TEST_OWNER.name });
     expect(me.settings).toEqual({
       units: "km",
@@ -41,27 +25,24 @@ describe("GET /api/me", () => {
       hasClaudeKey: false,
     });
     expect(me.garmin).toEqual({ status: "not_connected", lastSyncAt: null });
-    expect(second.body).toEqual(first.body);
     const rows = await db.select().from(userSettings).where(eq(userSettings.userId, me.user.id));
     expect(rows).toHaveLength(1);
   });
 
-  it("creates one settings row when two first reads race", async () => {
+  it("tells the browser not to store the response, signed in or not", async () => {
     const agent = await signedInAgent(app);
 
-    const responses = await Promise.all([agent.get("/api/me"), agent.get("/api/me")]);
+    const signedIn = await agent.get("/api/me");
+    const signedOut = await request(app).get("/api/me");
+    const unknown = await agent.get("/api/nothing-here");
 
-    expect(responses.map((response) => response.status)).toEqual([200, 200]);
-    const rows = await db
-      .select()
-      .from(userSettings)
-      .where(eq(userSettings.userId, await ownerId()));
-    expect(rows).toHaveLength(1);
+    expect(signedIn.headers["cache-control"]).toBe("no-store");
+    expect(signedOut.headers["cache-control"]).toBe("no-store");
+    expect(unknown.headers["cache-control"]).toBe("no-store");
   });
 
   it("reports the Garmin connection and whether a Claude key exists, never a secret", async () => {
     const agent = await signedInAgent(app);
-    await agent.get("/api/me");
     const userId = await ownerId();
     const claudeKeyEnc = encrypt("sk-ant-fake-test-key", userId);
     const tokenBundleEnc = encrypt('{"di_token":"fixture-token"}', userId);

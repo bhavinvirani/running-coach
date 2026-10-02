@@ -3,13 +3,15 @@ import { check, index, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
 import type { CoachUsage } from "../../coach/client";
 import { activity } from "./activity";
 import { user } from "./auth";
-import { id, timestamps } from "./columns";
+import { id, inList, timestamps } from "./columns";
 
 // Everything the coach wrote: run insights now, weekly reviews and race plans later. plan_id arrives
-// with the plan table in slice 6.
+// with the plan table in slice 6. Kinds and feedback move to shared zod enums when a route exposes them.
 
-export type CoachMessageKind = "insight" | "weekly_review" | "race_plan";
-export type CoachMessageFeedback = "up" | "down";
+const COACH_MESSAGE_KINDS = ["insight", "weekly_review", "race_plan"] as const;
+const COACH_MESSAGE_FEEDBACK = ["up", "down"] as const;
+export type CoachMessageKind = (typeof COACH_MESSAGE_KINDS)[number];
+export type CoachMessageFeedback = (typeof COACH_MESSAGE_FEEDBACK)[number];
 
 export const coachMessage = pgTable(
   "coach_message",
@@ -35,11 +37,11 @@ export const coachMessage = pgTable(
   (table) => [
     index("coach_message_user_id_idx").on(table.userId),
     index("coach_message_activity_id_idx").on(table.activityId),
+    check("coach_message_kind_check", sql`${table.kind} in (${inList(COACH_MESSAGE_KINDS)})`),
     check(
-      "coach_message_kind_check",
-      sql`${table.kind} in ('insight', 'weekly_review', 'race_plan')`,
+      "coach_message_feedback_check",
+      sql`${table.feedback} in (${inList(COACH_MESSAGE_FEEDBACK)})`,
     ),
-    check("coach_message_feedback_check", sql`${table.feedback} in ('up', 'down')`),
   ],
 );
 

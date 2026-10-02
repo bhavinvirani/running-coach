@@ -1,12 +1,14 @@
+import { garminStatusSchema } from "@running-coach/shared";
 import { sql } from "drizzle-orm";
 import { check, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
-import { id, timestamps } from "./columns";
+import { id, inList, timestamps } from "./columns";
 
 // A user's Garmin login: the encrypted token bundle, written back after every call because the refresh
-// token rotates. No row means not connected.
+// token rotates. No row means not connected, so the column holds every shared status but that one.
 
-export type GarminConnectionStatus = "ok" | "expired";
+const connectionStatusSchema = garminStatusSchema.exclude(["not_connected"]);
+type GarminConnectionStatus = (typeof connectionStatusSchema.options)[number];
 
 export const garminConnection = pgTable(
   "garmin_connection",
@@ -25,5 +27,10 @@ export const garminConnection = pgTable(
     lastError: text("last_error"),
     ...timestamps(),
   },
-  (table) => [check("garmin_connection_status_check", sql`${table.status} in ('ok', 'expired')`)],
+  (table) => [
+    check(
+      "garmin_connection_status_check",
+      sql`${table.status} in (${inList(connectionStatusSchema.options)})`,
+    ),
+  ],
 );

@@ -7,12 +7,10 @@ import {
 import { sql } from "drizzle-orm";
 import { check, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
-import { id, timestamps } from "./columns";
+import { id, inList, timestamps } from "./columns";
 
-// One row per user, created with these defaults on the first GET /api/me (services/settings.ts).
-
-const inList = (values: readonly string[]) =>
-  sql.raw(values.map((value) => `'${value.replaceAll("'", "''")}'`).join(", "));
+// One row per user with these defaults, inserted when the user is created (Better Auth's user.create.after
+// hook in src/auth/auth.ts), so every reader can inner join it.
 
 export const userSettings = pgTable(
   "user_settings",

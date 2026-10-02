@@ -138,7 +138,8 @@ async function readConnection(userId: string) {
       timezone: userSettings.timezone,
     })
     .from(garminConnection)
-    .leftJoin(userSettings, eq(userSettings.userId, garminConnection.userId))
+    // Every user gets a settings row at creation (auth.ts), so the join never drops a connection.
+    .innerJoin(userSettings, eq(userSettings.userId, garminConnection.userId))
     .where(eq(garminConnection.userId, userId));
   return row;
 }
@@ -154,13 +155,23 @@ async function saveTokenBundle(userId: string, tokenBundle: string): Promise<voi
     .where(eq(garminConnection.userId, userId));
 }
 
+/**
+ * Stores the error code. Only a second garmin_auth_expired in a row marks the login expired: the library
+ * swallows a failed token refresh (a 429 or a block on the token endpoint) and reports it as the same 401,
+ * and an expired connection is never tried again until the runner reconnects with 2FA. The next sync
+ * confirms it with one token login. A success in between clears lastError (saveChunk).
+ */
 async function recordFailure(userId: string, error: unknown): Promise<void> {
   const code = error instanceof DomainError ? error.code : ErrorCode.internal;
   await db
     .update(garminConnection)
     .set({
       lastError: code,
-      ...(code === ErrorCode.garminAuthExpired ? { status: "expired" as const } : {}),
+      ...(code === ErrorCode.garminAuthExpired
+        ? {
+            status: sql`case when ${garminConnection.lastError} = ${code} then 'expired' else ${garminConnection.status} end`,
+          }
+        : {}),
     })
     .where(eq(garminConnection.userId, userId));
 }
@@ -207,7 +218,7 @@ export async function syncGarmin({
     // A known-dead login is not sent again: failed logins are what Garmin rate-limits hardest.
     if (connection.status === "expired") throw expired();
 
-    const timeZone = connection.timezone ?? "UTC";
+    const timeZone = connection.timezone;
     const today = localDateOf(now ?? new Date(), timeZone);
     const startDate = syncStartDate(connection.lastSyncAt, timeZone, today);
     const chunks = dateChunks(startDate, today, SYNC_CHUNK_DAYS);

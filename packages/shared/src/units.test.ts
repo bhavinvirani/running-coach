@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  METERS_PER_FOOT,
   METERS_PER_MILE,
   distanceInUnits,
+  elevationInUnits,
   isGpsGlitch,
   paceSecondsPerUnit,
   speedToPaceSecondsPerUnit,
@@ -11,6 +13,17 @@ describe("distanceInUnits", () => {
   it("converts meters to kilometers and miles", () => {
     expect(distanceInUnits(21097.5, "km")).toBeCloseTo(21.0975);
     expect(distanceInUnits(METERS_PER_MILE * 10, "mi")).toBeCloseTo(10);
+  });
+});
+
+describe("elevationInUnits", () => {
+  it("keeps meters when distances are in kilometers", () => {
+    expect(elevationInUnits(142, "km")).toBe(142);
+  });
+
+  it("converts meters to feet when distances are in miles", () => {
+    expect(elevationInUnits(METERS_PER_FOOT * 500, "mi")).toBeCloseTo(500);
+    expect(elevationInUnits(88, "mi")).toBeCloseTo(288.71, 2);
   });
 });
 

@@ -149,6 +149,34 @@ describe("fetchJson", () => {
     });
   });
 
+  it("with retryOn network, returns a 5xx problem at once", async () => {
+    const problem = {
+      type: "about:blank",
+      title: "Bad Gateway",
+      status: 502,
+      code: "garmin_unavailable",
+    };
+    replies = [json(502, problem), json(200, { status: "ok" })];
+
+    const result = await fetchJson(`${baseUrl}/sync`, { ...fast, retryOn: "network" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 502,
+      problem: { code: "garmin_unavailable" },
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("with retryOn network, retries a connection dropped before any answer", async () => {
+    replies = [(req) => req.socket.destroy(), json(200, { status: "ok" })];
+
+    const result = await fetchJson(`${baseUrl}/sync`, { ...fast, retryOn: "network" });
+
+    expect(result.ok).toBe(true);
+    expect(seen).toHaveLength(2);
+  });
+
   it("awaits onErrorResponse for every failed answer, retried ones included, before the next attempt", async () => {
     const problem = { type: "about:blank", title: "Bad Gateway", status: 502, code: "internal" };
     replies = [json(502, problem), json(503, {}), json(200, { status: "ok" })];

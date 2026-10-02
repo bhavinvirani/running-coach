@@ -7,7 +7,7 @@ import { pinoHttp } from "pino-http";
 import { authHandler } from "./auth/handler";
 import { config } from "./lib/config";
 import { errorHandler, notFoundHandler } from "./lib/errors";
-import { logger, requestIdMiddleware } from "./lib/logger";
+import { errSerializer, logger, requestIdMiddleware } from "./lib/logger";
 import { paths } from "./lib/paths";
 import { registerRoutes } from "./routes";
 
@@ -73,11 +73,18 @@ export function createApp(options: AppOptions = {}): Express {
           path: req.url.split("?")[0],
         }),
         res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
+        // pino-http replaces the logger's err serializer with pino's own unless given one.
+        err: errSerializer,
       },
       autoLogging: { ignore: (req) => req.url === "/health" },
     }),
   );
   app.use(cors({ origin: config.APP_URL, credentials: true }));
+  // API bodies (email, settings, Garmin state) must not stay in the browser's disk cache after sign-out.
+  app.use("/api", (_req, res, next) => {
+    res.setHeader("cache-control", "no-store");
+    next();
+  });
 
   // Better Auth reads the raw body, so it comes before express.json().
   app.use("/api/auth", authHandler);

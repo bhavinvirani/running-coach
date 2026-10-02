@@ -16,8 +16,8 @@
     "settings": { "units": "km", "coachDetail": "short" }
   },
   "output": {
-    "headline": "8.00 km on the treadmill in 45:00.",
-    "whatHappened": "8.00 km indoors at 5:38 /km by the watch's estimate, cadence 172.",
+    "headline": "8.0 km on the treadmill in 45:00.",
+    "whatHappened": "8.0 km indoors at 5:38 /km by the watch's estimate, cadence 172.",
     "whatItMeans": "No heart rate was recorded, so the effort is unknown; treadmill pace is an estimate.",
     "nextStep": "Run the next planned session as written.",
     "caution": "none"

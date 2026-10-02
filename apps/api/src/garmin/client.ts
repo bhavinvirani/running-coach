@@ -17,10 +17,12 @@ import { config } from "../lib/config";
 import { DomainError } from "../lib/errors";
 import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } from "../lib/http";
 
-// The only caller of the Garmin service (api rule). Timeouts and retries come from lib/http: two retries
-// with jittered backoff on network errors and 5xx, never on 4xx, so a 429 comes back at once as
-// garmin_rate_limited and only a job reschedules itself. 409 rather than 401 for an expired Garmin login:
-// the web app reads 401 as "signed out".
+// The only caller of the Garmin service (api rule). Timeouts come from lib/http, and two retries with
+// jittered backoff only when the service gave no answer at all (refused or dropped, as while its process
+// restarts). Any answer, a 5xx included, comes back at once: the service already retried Garmin inside one
+// session, and every new request here is another Garmin login. A 429 throws garmin_rate_limited and only a
+// job reschedules itself; slower retries belong to the job too. 409 rather than 401 for an expired Garmin
+// login: the web app reads 401 as "signed out".
 //
 // Token rotation: login can refresh the tokens, and the old refresh token then stops working. Every bundle
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
@@ -133,6 +135,7 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
         problemSchema: garminProblemSchema,
         onErrorResponse: (failed) => adopt(failed.problem?.tokenBundle),
         timeoutMs,
+        retryOn: "network",
       });
     } catch (error) {
       if (error instanceof FetchFailure) throw noAnswer(error);

@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { inject, vi } from "vitest";
+import { auth } from "../src/auth/auth";
 import { db } from "../src/db/client";
-import { activity, garminConnection, user, userSettings } from "../src/db/schema";
+import { activity, garminConnection, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 
 // Fictional rows for integration tests. Bundles and keys steer the two fakes (global-setup.ts).
@@ -65,24 +67,35 @@ export async function claudeRequests(
   }[];
 }
 
+/**
+ * Creates a user through Better Auth, as production does, so its user.create.after hook adds the default
+ * settings row (km, UTC, standard) and tests cannot drift from that.
+ */
 export async function createUser(email = "runner@example.com"): Promise<string> {
-  const [row] = await db.insert(user).values({ email, name: "Test Runner" }).returning();
-  if (!row) throw new Error("insert returned nothing");
-  return row.id;
+  const ctx = await auth.$context;
+  const created = await ctx.internalAdapter.createUser(
+    { email, name: "Test Runner" },
+    { method: "email-password" },
+  );
+  return created.id;
 }
 
 export async function connectGarmin(userId: string, bundle = garminBundle()): Promise<void> {
   await db.insert(garminConnection).values({ userId, tokenBundleEnc: encrypt(bundle, userId) });
 }
 
-export async function createSettings(
+/** Changes the settings row createUser made; `claudeKey` is stored encrypted. */
+export async function setSettings(
   userId: string,
-  values: Partial<typeof userSettings.$inferInsert> & { claudeKey?: string } = {},
+  values: Partial<Omit<typeof userSettings.$inferInsert, "userId">> & { claudeKey?: string },
 ): Promise<void> {
   const { claudeKey: key, ...rest } = values;
-  await db
-    .insert(userSettings)
-    .values({ userId, ...rest, ...(key ? { claudeKeyEnc: encrypt(key, userId) } : {}) });
+  const [row] = await db
+    .update(userSettings)
+    .set({ ...rest, ...(key ? { claudeKeyEnc: encrypt(key, userId) } : {}) })
+    .where(eq(userSettings.userId, userId))
+    .returning({ userId: userSettings.userId });
+  if (!row) throw new Error("the user has no settings row");
 }
 
 /** The fixture service's 18 km long run of 2026-09-27, as the sync stores it. */
