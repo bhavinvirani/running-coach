@@ -49,7 +49,7 @@ A mobile-first PWA that replaces a Runna subscription for one runner first, more
 - **Tokens and lint:** shadcn CLI 4 on Tailwind 4.3 with the default palette, text scale and radii removed so only token utilities exist; eslint-plugin-better-tailwindcss bans unknown classes and arbitrary values. Details in `.claude/skills/ui-component/tailwind-tokens.md`.
 - **Tooling:** ESLint 10 flat config, typescript-eslint, Prettier; eslint-plugin-boundaries (web never imports api; engine and shared import no I/O); eslint-plugin-check-file kebab-case; lefthook pre-commit; Node 24 LTS, pnpm 10, Python 3.12 with uv, ruff, mypy, pytest. Exact pins; Dependabot auto-merges patch and minor except garminconnect.
 - **CI:** typecheck, lint, unit and integration on a Postgres service container, Playwright e2e and screenshots in the official container with seeded fake data at an iPhone viewport, Python checks when its files change, build; auto-merge when green.
-- **History:** full Garmin history, newest first, one job per page of 100 by offset in Garmin's running list (one call per page, an exact end); each page re-reads 5 runs and commits its cursor. **License:** MIT. **Domain:** host subdomain only.
+- **History:** full Garmin history, newest first, one job per page of 100 by offset in Garmin's running list (one call per page, an exact end); each page re-reads 5 list items and commits its cursor. **License:** MIT. **Domain:** host subdomain only.
 
 ## Out of scope for v1
 
