@@ -1,8 +1,9 @@
-import type { APIRequestContext } from "@playwright/test";
+import { expect, type APIRequestContext } from "@playwright/test";
 import {
   RACE_EVENT_TYPE,
   connectGarminResponseSchema,
   meResponseSchema,
+  personalBestsResponseSchema,
   syncResponseSchema,
   type DistanceKey,
   type GarminRecord,
@@ -79,17 +80,46 @@ async function withDatabase<T>(work: (client: pg.Client) => Promise<T>): Promise
   }
 }
 
+/** The runner's batches on the best-efforts queue (apps/api/src/jobs/best-efforts-queue.ts), keyed by user. */
+const runnerBatches = `from pgboss.job where name = 'best-efforts'
+  and singleton_key = (select id::text from "user" where email = $1)`;
+
+/**
+ * The queue keeps one batch waiting per user and folds every later send into it, and an import queues its
+ * next batch 30 s ahead: left over from an earlier test, that batch would take in this test's sync and
+ * hold its runs back until it starts. Called once the runs are deleted, so a batch still running finds
+ * nothing left to queue a successor for; when none runs, the waiting ones are deleted as pg-boss's
+ * deleteJob does. A fixture batch runs in milliseconds.
+ */
+async function clearBestEffortsBatches(db: pg.Client): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const { rows } = await db.query<{ running: number }>(
+          `select count(*)::int as running ${runnerBatches} and state = 'active'`,
+          [runner.email],
+        );
+        return rows[0]?.running;
+      },
+      { message: "A best-efforts batch of the runner is still running", timeout: 10_000 },
+    )
+    .toBe(0);
+  await db.query(`delete ${runnerBatches} and state in ('created', 'retry')`, [runner.email]);
+}
+
 /**
  * Every test starts from "no runs, no history import, Garmin not connected, default settings": the
  * runner's runs, import progress and Garmin connection are deleted first, then the settings go back to the
  * defaults through the API, the way the app changes them, so the MeResponse returned already shows the
- * reset state. An import page job left queued by an earlier test finds no progress row and does nothing.
+ * reset state. An import page job left queued by an earlier test finds no progress row and does nothing;
+ * a best-efforts batch left waiting is deleted (clearBestEffortsBatches).
  */
 export async function resetRunner(request: APIRequestContext): Promise<MeResponse> {
   await withDatabase(async (db) => {
     await db.query(`delete from activity where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from import_progress where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from garmin_connection where user_id = ${runnerId}`, [runner.email]);
+    await clearBestEffortsBatches(db);
   });
   const response = await request.patch("/api/me/settings", { data: defaultSettings });
   if (!response.ok()) {
@@ -163,6 +193,19 @@ export async function seedLongRun({ race = false }: { race?: boolean } = {}): Pr
        values (${runnerId}, $2, 'running', '2026-09-27T06:00:00Z', '2026-09-27 08:00:00', 18000,
          6120, 148, 166, 168, 1150, 142, $3)`,
       [runner.email, fixtureRunIds.longRun, race ? RACE_EVENT_TYPE : UNCATEGORIZED],
+    ),
+  );
+}
+
+/** Stores the fixture's 10.2 km race of Sun 6 Sep 2026, 07:30, directly, as a sync stores it. */
+export async function seedRaceDayRun(): Promise<void> {
+  await withDatabase((db) =>
+    db.query(
+      `insert into activity (user_id, garmin_activity_id, type, start_utc, start_local, distance_m,
+         duration_s, avg_hr, max_hr, cadence, calories, elevation_gain_m, event_type)
+       values (${runnerId}, $2, 'running', '2026-09-06T05:30:00Z', '2026-09-06 07:30:00', 10200,
+         3300, 158, 181, 176, 700, 40, $3)`,
+      [runner.email, fixtureRunIds.race, RACE_EVENT_TYPE],
     ),
   );
 }
@@ -721,6 +764,58 @@ export const indoorAndManualEfforts: readonly SeededEfforts[] = [
     efforts: { "1k": 285, "1mi": 475, "2mi": 1000, "5k": 1620 },
   },
 ];
+
+/**
+ * Best efforts on seedLongRun's 18 km and seedRaceDayRun's race, for the run screen's capture. The long
+ * run's are what its seeded laps give (seedRunDetail, outdoor: 1 km laps at even pace, the last one 5:06
+ * after 5:35 and 5:34): 1K is that last km, 5K and 10K the last 5 and 10 laps, 15K all but the first three.
+ * The race three weeks earlier is faster at every distance it covers, so the long run holds only 15K and
+ * 10 mi, and its rows show both a best and a slower effort.
+ */
+export const longRunBestEfforts: readonly SeededEfforts[] = [
+  {
+    garminActivityId: fixtureRunIds.longRun,
+    efforts: {
+      "1k": 306,
+      "1mi": 509.52,
+      "2mi": 1048.48,
+      "5k": 1652,
+      "5mi": 2677.1,
+      "10k": 3367,
+      "15k": 5076,
+      "10mi": 5452.52,
+    },
+  },
+  {
+    garminActivityId: fixtureRunIds.race,
+    efforts: {
+      "1k": 297.4,
+      "1mi": 486.2,
+      "2mi": 1004.8,
+      "5k": 1608.3,
+      "5mi": 2601.9,
+      "10k": 3237.6,
+    },
+  },
+];
+
+/**
+ * Waits until the best-efforts job a sync queued has checked every stored run and stopped, so a screen
+ * opened next reads the bests as they end up, never whichever side of the job it lands on. The worker takes
+ * the job within 2 s of the sync and checks up to ten runs in one batch.
+ */
+export async function waitForBestEfforts(request: APIRequestContext): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get("/api/personal-bests");
+        const { pendingRuns, checking } = personalBestsResponseSchema.parse(await response.json());
+        return pendingRuns === 0 && !checking;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+}
 
 /**
  * Stores best efforts on runs already stored, as the best-efforts job writes them, then marks runs checked

@@ -13,6 +13,7 @@ import {
   seedRunDetail,
   syncFromRaceDay,
   syncGarmin,
+  waitForBestEfforts,
 } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
@@ -52,11 +53,18 @@ function stat(page: Page, label: string): Locator {
 }
 
 /**
- * The line above the stats: start time, Race chip, Indoor. The dots between them are items spaced by a gap,
- * so the text reads "18:30·Indoor".
+ * The line above the stats: start time, Race chip, PB chip, Indoor. The dots between them are items spaced
+ * by a gap, so the text reads "18:30·Indoor"; a chip leads with its own dot instead, "07:30Race8 PBs".
  */
 function startLine(page: Page): Locator {
   return section(page, "Summary").locator("p", { has: page.locator("time") });
+}
+
+/** The rows of Best efforts, one per distance the run covered, shortest first. */
+function effortRows(page: Page): Locator {
+  return section(page, "Best efforts")
+    .getByRole("list", { name: "Best efforts" })
+    .getByRole("listitem");
 }
 
 /** The pace bars' rows, one per lap shown. */
@@ -296,9 +304,13 @@ test("the first open fetches the detail from Garmin: a failure keeps the stats, 
 test("a treadmill run has no route or elevation, a run without heart rate has no zones, and a race says so", async ({
   page,
 }) => {
-  // From this cursor the sync stores the fixture's six runs of 6 to 27 Sep.
+  // From this cursor the sync stores the fixture's six runs of 6 to 27 Sep. Its best-efforts job finds the
+  // same efforts in every outdoor run (the fixture serves one set of samples), so ties go to the earliest
+  // run, the race of Sun 6 Sep, which holds every best. Waiting for the job keeps the PB chips and rows
+  // from depending on which side of it a screen opens.
   await connectGarmin(page.request, syncFromRaceDay);
   expect((await syncGarmin(page.request)).activitiesWritten).toBe(6);
+  await waitForBestEfforts(page.request);
   const fetched = () => page.waitForResponse((response) => isDetailPost(response.request()));
 
   await openProgress(page);
@@ -306,10 +318,12 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
   await openRun(page, "Thu 24 Sep");
   expect((await detail).ok()).toBe(true);
 
-  // Garmin has the treadmill run uncategorized: no Race chip.
+  // Garmin has the treadmill run uncategorized: no Race chip. The job never computes an indoor run's
+  // efforts, so no PB chip and no Best efforts either.
   await expect(section(page, "Summary").locator("time")).toHaveText("18:30");
   await expect(startLine(page)).toHaveText("18:30·Indoor");
   await expect(section(page, "Summary").getByText("Race", { exact: true })).toHaveCount(0);
+  await expect(section(page, "Best efforts")).toHaveCount(0);
   await expect(stat(page, "Elevation gain")).toHaveText("–");
   await expectSplitBar(page, 1, fixtureFirstPace, "");
   const route = section(page, "Route");
@@ -329,6 +343,10 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
 
   await expect(stat(page, "Avg HR")).toHaveText("–");
   await expectSplitBar(page, 1, fixtureFirstPace, "");
+  // Its efforts tie the race's, which is earlier and holds the bests: the rows show, none marked PB.
+  await expect(startLine(page)).toHaveText("19:00");
+  await expect(effortRows(page)).toHaveCount(8);
+  await expect(section(page, "Best efforts").getByText("PB", { exact: true })).toHaveCount(0);
   // The table's Avg HR column shows the dash for every lap.
   await section(page, "Splits").getByRole("button", { name: "Show table" }).click();
   await expect(split(page, 1)).toHaveText(["1", "1.0 km", "6:30", "–"]);
@@ -349,7 +367,7 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
   await page.getByRole("link", { name: "Back" }).click();
   await expect(page.getByRole("heading", { name: "Progress", level: 1 })).toBeVisible();
   const raceRow = page.getByRole("link", { name: /^Sun 6 Sep,/ });
-  await expect(raceRow).toHaveAccessibleName("Sun 6 Sep, Race, 10.2 km, 55:00, 5:24 /km");
+  await expect(raceRow).toHaveAccessibleName("Sun 6 Sep, Race · 8 PBs, 10.2 km, 55:00, 5:24 /km");
   await expect(raceRow.getByText("Race", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /^Thu 24 Sep,/ })).toHaveAccessibleName(
     "Thu 24 Sep, Indoor, 8.0 km, 45:00, 5:38 /km",
@@ -358,9 +376,15 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
   await openRun(page, "Sun 6 Sep");
   expect((await detail).ok()).toBe(true);
 
-  await expect(startLine(page)).toHaveText("07:30Race");
+  await expect(startLine(page)).toHaveText("07:30Race8 PBs");
   await expect(startLine(page).getByText("Race", { exact: true })).toBeVisible();
+  await expect(startLine(page).getByText("8 PBs", { exact: true })).toBeVisible();
   await expect(stat(page, "Distance")).toHaveText(/^10\.2\s*km$/);
+  // Every effort is a best, shortest first; the times are the fixture samples' (personal-bests.spec.ts).
+  await expect(effortRows(page)).toHaveCount(8);
+  await expect(effortRows(page).first()).toContainText("1K");
+  await expect(effortRows(page).last()).toContainText("10 mi");
+  await expect(section(page, "Best efforts").getByText("PB", { exact: true })).toHaveCount(8);
   await expectSplitBar(page, 1, fixtureFirstPace, "");
   const stored = await getRun(page, runId(page));
   expect(stored.activity.eventType).toBe(RACE_EVENT_TYPE);

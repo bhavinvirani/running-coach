@@ -1,7 +1,15 @@
 import { latestActivityResponseSchema } from "@running-coach/shared";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../fixtures/login";
-import { fixtureRunIds, seedLongRun, seedRunDetail, seedTreadmillRun } from "../fixtures/seed";
+import {
+  fixtureRunIds,
+  longRunBestEfforts,
+  seedBestEfforts,
+  seedLongRun,
+  seedRaceDayRun,
+  seedRunDetail,
+  seedTreadmillRun,
+} from "../fixtures/seed";
 
 /** Opens the one seeded run by its address: the screen under test is the run, not the way there. */
 async function openSeededRun(page: Page): Promise<void> {
@@ -36,11 +44,15 @@ async function fitViewportToPage(page: Page): Promise<void> {
 // Nothing on the run screen depends on the clock: the day and time are the run's own start, fixed by the
 // seed, and the laps, samples, route and zones are synthetic and deterministic (seedRunDetail).
 
-test("run shows the seeded long run as a race with its route, split bars, zones, cadence and elevation", async ({
+test("run shows the seeded long run as a race with its best efforts, route, split bars, zones, cadence and elevation", async ({
   page,
 }) => {
   await seedLongRun({ race: true });
   await seedRunDetail(fixtureRunIds.longRun, "outdoor");
+  // An earlier, faster race beside it, so the long run holds only 15K and 10 mi and its Best efforts show
+  // both kinds of row. The race starts earlier, so the newest run is still the long run.
+  await seedRaceDayRun();
+  await seedBestEfforts(longRunBestEfforts);
 
   await openSeededRun(page);
   // The last section on the screen: once its line is drawn, every section above it has rendered.
@@ -51,6 +63,10 @@ test("run shows the seeded long run as a race with its route, split bars, zones,
   ).toBeVisible();
   await expect(section(page, "Route").getByRole("img", { name: "Route sketch" })).toBeVisible();
   await expect(section(page, "Summary").getByText("Race", { exact: true })).toBeVisible();
+  await expect(section(page, "Summary").getByText("PB 15K, 10 mi", { exact: true })).toBeVisible();
+  const efforts = section(page, "Best efforts");
+  await expect(efforts.getByRole("listitem")).toHaveCount(8);
+  await expect(efforts.getByText("PB", { exact: true })).toHaveCount(2);
   await expect(splitBars(page)).toHaveCount(12);
   await expect(
     section(page, "Splits").getByRole("button", { name: "Show all 18 laps" }),

@@ -49,6 +49,9 @@ const fixtureBadges = [
 ];
 const fixtureChip = "8 PBs";
 
+/** Under the tiles once Garmin's records are in. */
+const garminCaption = "Garmin keeps records for 1K, 1 mi, 5K, 10K, half and marathon only.";
+
 const isPersonalBests = (url: URL) => url.pathname === "/api/personal-bests";
 
 test.beforeEach(async ({ page }) => {
@@ -70,6 +73,11 @@ function tab(page: Page, name: string): Locator {
 
 function bestsCard(page: Page): Locator {
   return page.getByRole("region", { name: "Personal bests" });
+}
+
+/** The badges as one row of tiles that scrolls sideways under the heading. */
+function tileRow(card: Locator): Locator {
+  return card.getByRole("list", { name: "Personal bests" });
 }
 
 /** A badge by its label ("5K", "Half"), whether it links to a run or says no run reached it. */
@@ -97,6 +105,32 @@ async function expectNoRunYet(card: Locator, labels: readonly string[]): Promise
 
 function week(page: Page, range: string): Locator {
   return page.getByRole("region", { name: range, exact: true });
+}
+
+function section(page: Page, title: string): Locator {
+  return page.getByRole("region", { name: title, exact: true });
+}
+
+/** The run screen's line above the stats: start time, then the Race and PB chips, each with its own dot. */
+function startLine(page: Page): Locator {
+  return section(page, "Summary").locator("p", { has: page.locator("time") });
+}
+
+/**
+ * The run screen's Best efforts, row by row as shown: distance, time cut to the second, pace, and PB on a
+ * current best. A screen reader hears each row as one sentence instead (run-screen.test.tsx).
+ */
+async function expectBestEfforts(
+  page: Page,
+  rows: readonly (readonly [string, string, string, "PB" | ""])[],
+): Promise<void> {
+  const items = section(page, "Best efforts")
+    .getByRole("list", { name: "Best efforts" })
+    .getByRole("listitem");
+  await expect(items).toHaveCount(rows.length);
+  for (const [position, cells] of rows.entries()) {
+    await expect(items.nth(position).locator(':scope > [aria-hidden="true"]')).toHaveText(cells);
+  }
 }
 
 /** A run's row link on Progress by its local day ("Thu 10 Sep"), which starts its accessible name. */
@@ -133,6 +167,23 @@ test("Progress shows a badge per distance with its time and date, and a badge op
   await expect(card).not.toContainText("best efforts");
   await expect(card.getByRole("alert")).toHaveCount(0);
 
+  // One row of tiles: 1K and 1 mi whole, 2 mi cut at the screen's edge to say the row goes on, the rest a
+  // swipe away. A sideways wheel over the row is the swipe: the desktop browser has no touch.
+  const row = tileRow(card);
+  await expect(badge(card, "1K")).toBeInViewport({ ratio: 1 });
+  await expect(badge(card, "1 mi")).toBeInViewport({ ratio: 1 });
+  await expect(badge(card, "2 mi")).toBeInViewport();
+  await expect(badge(card, "2 mi")).not.toBeInViewport({ ratio: 1 });
+  await expect(badge(card, "Marathon")).not.toBeInViewport();
+  await row.hover();
+  await page.mouse.wheel(2000, 0);
+  await expect(badge(card, "Marathon")).toBeInViewport({ ratio: 1 });
+  await expect(badge(card, "1K")).not.toBeInViewport();
+  // The row scrolls on its own: the heading stays where it was.
+  await expect(card.getByRole("heading", { name: "Personal bests", level: 2 })).toBeInViewport({
+    ratio: 1,
+  });
+
   // The runs holding a best carry its chip in the weeks below; a newer, slower run does not.
   await expect(runRow(week(page, "21–27 Sep"), "Sun 27 Sep")).toHaveAccessibleName(
     "Sun 27 Sep, PB 10K, 15K, 16.0 km, 1:32:00, 5:45 /km",
@@ -165,11 +216,21 @@ test("Progress shows a badge per distance with its time and date, and a badge op
   const race = stored.bests.find((best) => best.distanceKey === "5k");
   if (!race) throw new Error("No 5K best stored");
 
+  // Swiped to the end, the 5K tile is off the left edge; the tap brings it back into view first.
   await card.getByRole("link", { name: "5K, 27:29, 10 Sep 2026" }).click();
 
   await expect(page.getByRole("heading", { name: "Thu 10 Sep", level: 1 })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/runs/${race.activityId}$`));
-  await expect(page.getByRole("region", { name: "Summary", exact: true })).toContainText("Race");
+  // The race holds three bests: the chip counts them and the rows mark them. Its 1K (5:00) is beaten by
+  // the 4:58 of Wed 2 Sep. Pace is worked out from the time as shown: 8:12 over a mile is 5:06 /km.
+  await expect(startLine(page)).toHaveText("18:30Race3 PBs");
+  await expect(startLine(page).getByText("3 PBs", { exact: true })).toBeVisible();
+  await expectBestEfforts(page, [
+    ["1K", "5:00", "5:00 /km", ""],
+    ["1 mi", "8:12", "5:06 /km", "PB"],
+    ["2 mi", "17:21", "5:23 /km", "PB"],
+    ["5K", "27:29", "5:30 /km", "PB"],
+  ]);
 
   await page.getByRole("link", { name: "Back" }).click();
   await expect(page.getByRole("heading", { name: "Progress", level: 1 })).toBeVisible();
@@ -208,6 +269,8 @@ test("Sync now flags the run that set new bests: its PB chip on Today, then its 
   await expectBadgeLinks(card, fixtureBadges);
   await expectNoRunYet(card, ["20K", "Half", "Marathon"]);
   await expect(badge(card, "Half")).toContainText("Garmin 2:08:51");
+  // Garmin's records are in, so the caption under the tiles says why 2 mi, 5 mi, 15K and 10 mi have none.
+  await expect(card.getByText(garminCaption, { exact: true })).toBeVisible();
   // No pending line ("Checking N runs ...", "The next sync checks N runs ...") and no stopped alert.
   await expect(card).not.toContainText("best efforts");
   await expect(card.getByRole("alert")).toHaveCount(0);
@@ -236,6 +299,7 @@ test("treadmill and manual runs never get a badge or a PB chip, even with faster
 }) => {
   await seedRunHistory();
   await seedBestEfforts([...historyBestEfforts, ...indoorAndManualEfforts]);
+  await seedRunDetail(historyRunIds.treadmill, "treadmill");
 
   await openProgress(page);
 
@@ -251,6 +315,16 @@ test("treadmill and manual runs never get a badge or a PB chip, even with faster
   );
   await expect(week(page, "21–27 Sep").getByText(/\bPBs?\b/)).toHaveText(["PB 10K, 15K"]);
   await expect(week(page, "14–20 Sep").getByText(/\bPBs?\b/)).toHaveCount(0);
+
+  // Opened, the treadmill run shows neither its stored efforts nor a PB chip. Both come with the run, so
+  // once its start line reads Indoor the section's absence is final.
+  await runRow(week(page, "21–27 Sep"), "Thu 24 Sep").click();
+  await expect(page.getByRole("heading", { name: "Thu 24 Sep", level: 1 })).toBeVisible();
+  await expect(startLine(page)).toHaveText("18:45·Indoor");
+  await expect(section(page, "Best efforts")).toHaveCount(0);
+  await expect(section(page, "Splits")).toBeVisible();
+  await page.getByRole("link", { name: "Back" }).click();
+  await expect(page.getByRole("heading", { name: "Progress", level: 1 })).toBeVisible();
 
   const stored = await personalBests(page.request);
   const excluded = new Set(["2026-09-24T18:45:00", "2026-09-17T07:00:00"]);

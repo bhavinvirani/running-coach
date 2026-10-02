@@ -1,7 +1,13 @@
 import { ErrorCode, importProgressSchema, type Problem } from "@running-coach/shared";
 import type { Locator, Page } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
-import { connectGarmin, importStalled, seedImportProgress, seedRunHistory } from "./fixtures/seed";
+import {
+  connectGarmin,
+  importStalled,
+  seedBestEfforts,
+  seedImportProgress,
+  seedRunHistory,
+} from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
 const emptySentence = "Import your Garmin history to see your runs by week.";
@@ -192,6 +198,9 @@ test("shows the week totals in miles once Settings switches units", async ({ pag
 
 test("says what failed when the runs do not load, and Retry recovers", async ({ page }) => {
   await seedRunHistory();
+  // Checked, with no efforts: runs left pending without Garmin would put the bests' own "not connected"
+  // alert beside the weeks' one, and this test is about the weeks.
+  await seedBestEfforts([]);
   const failure = {
     type: "about:blank",
     title: "Internal Server Error",
