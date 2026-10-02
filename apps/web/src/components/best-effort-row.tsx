@@ -53,7 +53,7 @@ export function BestEffortRow({ label, children }: BestEffortRowProps) {
 }
 
 type TileCaption = {
-  /** Already formatted: "6 Apr 2025", "Garmin 27:05", "5:30 /km". */
+  /** Already formatted: "6 Apr 2025", "5:30 /km". */
   text: string;
   /** For a date: its ISO value, so the line is a <time>. */
   dateTime?: string;

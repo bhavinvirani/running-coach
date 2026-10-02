@@ -38,7 +38,7 @@ export function personalBestsPollInterval(
   return response.errorCode === null ? PERSONAL_BESTS_POLL_MS : PERSONAL_BESTS_HELD_POLL_MS;
 }
 
-/** GET /api/personal-bests: the runner's bests, Garmin's records and the runs still waiting to be checked. */
+/** GET /api/personal-bests: the runner's bests and the runs still waiting to be checked. */
 export function personalBestsQueryOptions() {
   return queryOptions({
     queryKey: personalBestsKey,

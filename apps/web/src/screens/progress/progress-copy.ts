@@ -25,8 +25,6 @@ export const progressCopy = {
   noRunYet: "No run yet",
   /** On a best set within the last week. */
   newBest: "New",
-  /** Under the bests when Garmin's records are in: why only some tiles carry one. */
-  garminRecordsNote: "Garmin keeps records for 1K, 1 mi, 5K, 10K, half and marathon only.",
 } as const;
 
 /** The button each import status offers, named for what it does; none while the import moves by itself. */
@@ -85,7 +83,8 @@ export type PendingBestsLine = { text: string; stopped: boolean };
  * what to do ("Reconnect in Settings"): with no job it is why the check stopped, and with a job held back
  * (a 429's hour, a retry's backoff) the failure that holds it, so the line never counts runs that nothing
  * checks for an hour. Otherwise a job counts them as it checks, or, with no job and no reason known, the
- * line says the next sync, which queues the work again, checks them.
+ * line only says they are still to check: a later sync queues them, but a run that just failed waits up
+ * to 6 h first, so the line promises no time.
  */
 export function pendingBestsLine({
   pendingRuns,
@@ -95,10 +94,5 @@ export function pendingBestsLine({
   if (pendingRuns === 0) return null;
   if (errorCode !== null) return { text: errorCodeMessage(errorCode), stopped: true };
   if (checking) return { text: `Checking ${runs(pendingRuns)} for best efforts`, stopped: false };
-  return { text: `The next sync checks ${runs(pendingRuns)} for best efforts.`, stopped: false };
-}
-
-/** Garmin's own record for a distance, already formatted, beside the app's: "Garmin 27:05". */
-export function garminRecordLine(time: string): string {
-  return `Garmin ${time}`;
+  return { text: `${runs(pendingRuns)} still to check for best efforts.`, stopped: false };
 }

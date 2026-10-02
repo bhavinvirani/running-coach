@@ -38,7 +38,8 @@ function stat(label: string, value: string, unit?: string) {
 }
 
 /**
- * The run's summary from the stored activity, in two columns so "1:32:10" fits at text-figure on a phone.
+ * The run's summary from the stored activity, three stats to a row like Runna's; at 390 px "1:32:10" at
+ * text-figure fills its third with under 2 px to spare, so the column gap stays at spacing step 3.
  * Above it the start time, the Race chip for a run marked as a race in Garmin Connect, the PB chip for a
  * run that holds a current best, and Indoor or Manual. Pace is derived from distance and time; anything
  * Garmin did not record shows the dash.
@@ -77,7 +78,7 @@ export function RunStats({ activity, units, bests }: RunStatsProps) {
         {activity.isIndoor ? "Indoor" : null}
         {activity.isManual ? "Manual" : null}
       </DotLine>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-5">
+      <div className="grid grid-cols-3 gap-x-3 gap-y-5">
         {stats.map(({ label, value, unit }) => (
           <Stat key={label} label={label} value={value} unit={unit} />
         ))}

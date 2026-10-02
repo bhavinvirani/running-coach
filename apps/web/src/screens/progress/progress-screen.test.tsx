@@ -1037,9 +1037,9 @@ describe("ProgressScreen personal bests", () => {
       expect(within(item).queryByRole("link")).not.toBeInTheDocument();
     }
     expect(within(bestsRegion()).getAllByRole("link")).toHaveLength(5);
-    // Heard as one sentence, Garmin's record included where it has one.
+    // Heard as one sentence.
     expect(within(badge("Marathon")).getByText("Marathon, No run yet")).toHaveClass("sr-only");
-    expect(within(badge("1 mi")).getByText("1 mi, No run yet, Garmin 8:00")).toHaveClass("sr-only");
+    expect(within(badge("1 mi")).getByText("1 mi, No run yet")).toHaveClass("sr-only");
   });
 
   it("shows every distance as No run yet before any best is found", async () => {
@@ -1054,40 +1054,13 @@ describe("ProgressScreen personal bests", () => {
     expect(within(bestsRegion()).queryByText(/Garmin/)).not.toBeInTheDocument();
   });
 
-  it("shows Garmin's record, cut to the second, only for the distances Garmin has one for", async () => {
-    fakeProgressApi({ bests: bestsFound });
-    renderProgress();
-    await findBadges();
-
-    expect(within(badge("5K")).getByText("Garmin 27:05")).toHaveClass("text-caption", "text-ink-2");
-    expect(within(badge("10K")).getByText("Garmin 54:41")).toBeInTheDocument();
-    expect(within(badge("Half")).getByText("Garmin 1:56:12")).toBeInTheDocument();
-    // Garmin has a mile the app has not found yet: both are worth seeing.
-    expect(within(badge("1 mi")).getByText("Garmin 8:00")).toBeInTheDocument();
-    expect(within(badge("1 mi")).getByText("No run yet")).toBeInTheDocument();
-    for (const label of ["1K", "2 mi", "5 mi", "15K", "10 mi", "20K", "Marathon"]) {
-      expect(within(badge(label)).queryByText(/Garmin/)).not.toBeInTheDocument();
-    }
-  });
-
-  it("says under the row which distances Garmin keeps records for, when Garmin's records are in", async () => {
-    fakeProgressApi({ bests: bestsFound });
-    renderProgress();
-    await findBadges();
-
-    const note = within(bestsRegion()).getByText(
-      "Garmin keeps records for 1K, 1 mi, 5K, 10K, half and marathon only.",
-    );
-    expect(note).toHaveClass("text-caption", "text-ink-2");
-    const list = within(bestsRegion()).getByRole("list", { name: "Personal bests" });
-    expect(list.nextElementSibling).toBe(note);
-  });
-
   it.each([
     { when: "Garmin's records not fetched", garmin: null },
-    { when: "Garmin has no records", garmin: { records: [], fetchedAt: "2026-10-02T06:00:00Z" } },
-  ])("leaves the Garmin note out with no Garmin record to explain ($when)", async ({ garmin }) => {
-    fakeProgressApi({ bests: personalBestsFixture({ ...bestsFound, garmin }) });
+    { when: "Garmin's records fetched", garmin: undefined },
+  ])("shows no Garmin record on the tiles or under the row ($when)", async ({ garmin }) => {
+    fakeProgressApi({
+      bests: garmin === undefined ? bestsFound : personalBestsFixture({ ...bestsFound, garmin }),
+    });
     renderProgress();
     await findBadges();
 
@@ -1125,7 +1098,7 @@ describe("ProgressScreen personal bests", () => {
     await findBadges();
 
     const fiveK = within(badge("5K")).getByRole("link");
-    expect(fiveK).toHaveAccessibleName("5K, 27:05, 27 Sep 2026, Garmin 27:05, New");
+    expect(fiveK).toHaveAccessibleName("5K, 27:05, 27 Sep 2026, New");
     expect(fiveK).toHaveAttribute("href", `/runs/${sundayRun.id}`);
     const tenMile = within(badge("10 mi")).getByRole("link");
     expect(tenMile).toHaveAccessibleName("10 mi, 1:28:26, 6 Apr 2025");
@@ -1162,7 +1135,7 @@ describe("ProgressScreen personal bests", () => {
     expect(calls.filter((call) => call.path === "/api/personal-bests")).toHaveLength(3);
   });
 
-  it("stops polling when the check stops with runs still pending, and says the next sync checks them (no job, no reason)", async () => {
+  it("stops polling when the check stops with runs still pending, and says they are still to check (no job, no reason)", async () => {
     const { api } = fakeProgressApi({
       bests: personalBestsFixture({ ...bestsFound, pendingRuns: 340, checking: true }),
     });
@@ -1173,9 +1146,7 @@ describe("ProgressScreen personal bests", () => {
     api.bests = personalBestsFixture({ ...bestsFound, pendingRuns: 12 });
     act(() => polls.fire());
 
-    const line = await within(bestsRegion()).findByText(
-      "The next sync checks 12 runs for best efforts.",
-    );
+    const line = await within(bestsRegion()).findByText("12 runs still to check for best efforts.");
     expect(line).toHaveClass("text-caption", "text-ink-2");
     expect(polls.delays()).toEqual([]);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
