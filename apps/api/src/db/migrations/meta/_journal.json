@@ -43,6 +43,13 @@
       "when": 1790942064797,
       "tag": "0005_create_import_progress",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790948139469,
+      "tag": "0006_create_activity_detail",
+      "breakpoints": true
     }
   ]
 }

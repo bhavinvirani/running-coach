@@ -9,7 +9,8 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { activity } from "../db/schema";
 
-const columns = {
+/** The activity columns the contract's activitySchema carries; read with toActivity. */
+export const activityColumns = {
   id: activity.id,
   type: activity.type,
   startUtc: activity.startUtc,
@@ -20,12 +21,13 @@ const columns = {
   avgHr: activity.avgHr,
   maxHr: activity.maxHr,
   cadence: activity.cadence,
+  calories: activity.calories,
   elevationGainM: activity.elevationGainM,
   isIndoor: activity.isIndoor,
   isManual: activity.isManual,
 };
 
-type ActivityRow = Pick<typeof activity.$inferSelect, keyof typeof columns>;
+type ActivityRow = Pick<typeof activity.$inferSelect, keyof typeof activityColumns>;
 
 /**
  * Postgres prints a timestamp without zone as "2026-09-27 08:00:00"; the contract wants ISO local time. No
@@ -35,14 +37,14 @@ function isoLocal(value: string): string {
   return value.replace(" ", "T").slice(0, "YYYY-MM-DDTHH:MM:SS".length);
 }
 
-function toActivity(row: ActivityRow): Activity {
+export function toActivity(row: ActivityRow): Activity {
   return { ...row, startUtc: row.startUtc.toISOString(), startLocal: isoLocal(row.startLocal) };
 }
 
 /** GET /api/activities/latest: the user's run with the latest start, or null before the first sync. */
 export async function getLatestActivity(userId: string): Promise<LatestActivityResponse> {
   const [row] = await db
-    .select(columns)
+    .select(activityColumns)
     .from(activity)
     .where(eq(activity.userId, userId))
     // Garmin ids grow over time, so they break a tie between two runs saved with the same start.
@@ -79,7 +81,7 @@ export async function listActivityWeeks(
   if (oldest === undefined) return { weeks: [], nextBefore: null };
 
   const rows = await db
-    .select({ ...columns, weekStart: weekStartOf })
+    .select({ ...activityColumns, weekStart: weekStartOf })
     .from(activity)
     .where(and(ofUser, beforeWeek, sql`${weekOf} >= ${oldest}::date`))
     // Garmin ids grow over time, so they break a tie between two runs saved with the same start.
