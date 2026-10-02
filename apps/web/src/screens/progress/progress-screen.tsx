@@ -19,7 +19,11 @@ export function ProgressScreen() {
   const { data, status, error, refetch, settings } = screen;
 
   if (status === "pending" || settings === undefined) {
-    return <ProgressSkeleton />;
+    return (
+      <ProgressLayout busy>
+        <ProgressSkeleton />
+      </ProgressLayout>
+    );
   }
 
   if (status === "error") {
@@ -39,7 +43,11 @@ export function ProgressScreen() {
 
   // Waits for the import too, so its line never pops in above weeks already on screen.
   if (screen.importLoading) {
-    return <ProgressSkeleton />;
+    return (
+      <ProgressLayout busy>
+        <ProgressSkeleton />
+      </ProgressLayout>
+    );
   }
 
   const backgroundError = screen.refetchError ?? screen.importError;
@@ -115,6 +123,8 @@ export function ProgressScreen() {
   );
 }
 
+// Every branch renders ProgressLayout at the root, so React keeps the title in place when data arrives
+// instead of remounting the whole screen.
 function ProgressLayout({ children, busy }: { children: ReactNode; busy?: boolean }) {
   return (
     <div className="flex flex-col gap-4 px-4 pt-4 pb-8" aria-busy={busy}>
@@ -127,14 +137,12 @@ function ProgressLayout({ children, busy }: { children: ReactNode; busy?: boolea
 /** The import line and two weeks at their loaded heights, so nothing jumps when the runs arrive. */
 function ProgressSkeleton() {
   return (
-    <ProgressLayout busy>
-      <div role="status" aria-label={progressCopy.loading} className="flex flex-col gap-4">
-        <div className="flex h-5.5 items-center">
-          <div className="h-4 w-64 rounded-sm bg-surface-2" />
-        </div>
-        <WeekSkeleton />
-        <WeekSkeleton />
+    <div role="status" aria-label={progressCopy.loading} className="flex flex-col gap-4">
+      <div className="flex h-5.5 items-center">
+        <div className="h-4 w-64 rounded-sm bg-surface-2" />
       </div>
-    </ProgressLayout>
+      <WeekSkeleton />
+      <WeekSkeleton />
+    </div>
   );
 }
