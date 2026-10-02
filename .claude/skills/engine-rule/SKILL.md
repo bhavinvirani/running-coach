@@ -11,4 +11,4 @@ Copy `packages/engine/src/rules/weekly-volume.ts` and `packages/engine/src/rules
 2. The rule in `src/rules/<rule>.ts`, pure functions only, exported from `src/index.ts`; its constants in `src/constants.ts` with a source comment.
 3. Once `src/plan/` exists (slice 6), wire it into plan generation or `validateDelta` and add it to the whole-plan property test.
 4. Conflicts the user must see are returned, never thrown.
-5. `pnpm --filter @running-coach/engine test` green: the script runs `--coverage` with 100% branches and lines on `src/rules/**`. Thresholds sit in `vitest.config.ts` outside `defineProject`, so the root `pnpm test` ignores them.
+5. `pnpm --filter @running-coach/engine test` green: the script runs `--coverage` with 100% branches and lines on `src/rules/**`. Thresholds sit in `vitest.config.ts` outside `defineProject`, so the root `pnpm test` ignores them; the root `pnpm check` (CI) runs this script after `pnpm test`.
