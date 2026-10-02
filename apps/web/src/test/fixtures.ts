@@ -62,7 +62,7 @@ const SAMPLES = 101;
 
 /**
  * What POST /api/activities/:id/detail answers for activityFixture: 11 laps, 101 row-aligned samples over
- * 10.04 km, a fictional 1 km loop in Regent's Park as the route, and five zones adding up to 52:18.
+ * 10.04 km, a fictional loop in open ocean as the route, and five zones adding up to 52:18.
  */
 export function activityDetailFixture(overrides: Partial<ActivityDetail> = {}): ActivityDetail {
   const laps = [

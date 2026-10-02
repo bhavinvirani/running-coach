@@ -323,6 +323,17 @@ describe("RunScreen", () => {
     },
   );
 
+  it("says a run deleted on Garmin Connect is gone, keeps the stats and offers no Retry (deleted on Garmin)", async () => {
+    const calls = fakeRunApi({ fetchDetail: () => problem(404, ErrorCode.notFound) });
+    renderRun();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(errorMessages.not_found);
+    expect(figure("Distance")).toHaveTextContent("10.0km");
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(detailFetches(calls)).toHaveLength(1);
+  });
+
   it("shows no map for an indoor run and says why, without a skeleton map while fetching (indoor run)", async () => {
     let answer!: (response: Response) => void;
     const treadmill = activityFixture({
@@ -417,7 +428,9 @@ describe("RunScreen", () => {
     await detailLoaded();
 
     const glitch = within(section("Splits")).getByRole("row", { name: /^12 / });
-    expect(within(glitch).getByText("GPS glitch")).toHaveClass("text-caption", "text-ink-2");
+    // Body size like every table cell (web-ui rule), ink-2 like the lap numbers.
+    expect(within(glitch).getByText("GPS glitch")).toHaveClass("text-ink-2");
+    expect(within(glitch).getByText("GPS glitch")).not.toHaveClass("text-caption");
     expect(lapBars()).toHaveLength(11);
     expect(
       within(section("Splits")).getByText("1 lap left out as a GPS glitch."),

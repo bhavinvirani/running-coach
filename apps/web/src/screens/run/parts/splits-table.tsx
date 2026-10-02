@@ -52,7 +52,7 @@ export function SplitsTable({ laps, units }: SplitsTableProps) {
               </td>
               <td className="py-2 text-right">
                 {point.gpsGlitch ? (
-                  <span className="text-caption text-ink-2">GPS glitch</span>
+                  <span className="text-ink-2">GPS glitch</span>
                 ) : (
                   formatPaceValue(point.paceSecondsPerUnit)
                 )}

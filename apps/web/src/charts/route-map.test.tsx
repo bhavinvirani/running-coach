@@ -26,13 +26,16 @@ vi.mock("./mapbox-route", () => ({
   },
 }));
 
-/** A fictional square of 0.01° at 60°N, where a degree of longitude is half a degree of latitude. */
+/**
+ * A fictional square of 0.01° at 60°N, where a degree of longitude is half a degree of latitude, in the
+ * North Atlantic: fixtures hold no real place (tests rule).
+ */
 const square: RoutePoint[] = [
-  [60, 10],
-  [60, 10.01],
-  [60.01, 10.01],
-  [60.01, 10],
-  [60, 10],
+  [60, -30],
+  [60, -29.99],
+  [60.01, -29.99],
+  [60.01, -30],
+  [60, -30],
 ];
 
 const box = { width: 300, height: 200, padding: 10 };
@@ -59,8 +62,8 @@ describe("projectRoute", () => {
   it("centers a route with no extent, one repeated point, instead of dividing by zero", () => {
     const points = projectRoute(
       [
-        [51.5, -0.1],
-        [51.5, -0.1],
+        [0, -30],
+        [0, -30],
       ],
       box,
     );
@@ -72,8 +75,8 @@ describe("projectRoute", () => {
 
   it("returns the route's west-south and east-north corners for fitting a map", () => {
     expect(routeBounds(square)).toEqual([
-      [10, 60],
-      [10.01, 60.01],
+      [-30, 60],
+      [-29.99, 60.01],
     ]);
   });
 });

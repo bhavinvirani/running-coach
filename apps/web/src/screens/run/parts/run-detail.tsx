@@ -1,4 +1,5 @@
 import type { Activity, Units } from "@running-coach/shared";
+import { isApiError } from "@/api/client";
 import { HrZonesChart } from "@/charts/hr-zones-chart";
 import { toLapPoint } from "@/charts/lap-point";
 import { LapsChart } from "@/charts/laps-chart";
@@ -30,14 +31,18 @@ export function RunDetail({ state, activity, units, onRetry }: RunDetailProps) {
   }
 
   if (state.status === "error") {
+    // A run deleted on Garmin Connect answers 404 every time: Retry would only ask again.
+    const gone = isApiError(state.error) && state.error.status === 404;
     return (
       <div className="flex flex-col items-start gap-4 border-t border-line pt-4">
         <p role="alert" className="text-body text-ink">
           {errorMessage(state.error)}
         </p>
-        <Button variant="secondary" onClick={onRetry}>
-          Retry
-        </Button>
+        {gone ? null : (
+          <Button variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        )}
       </div>
     );
   }

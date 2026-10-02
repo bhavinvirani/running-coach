@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from "recha
 import { Button } from "@/components/ui/button";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { downsample } from "@/lib/downsample";
-import { formatDistance, formatPaceValue, paceUnitLabel } from "@/lib/format";
+import { formatLapDistance, formatPaceValue, paceUnitLabel } from "@/lib/format";
 import type { LapPoint } from "./lap-point";
 
 export type PaceTarget = {
@@ -179,7 +179,7 @@ function LapsTable({ laps, unit }: { laps: readonly LapPoint[]; unit: Units }) {
         {laps.map((lap) => (
           <tr key={lap.index} className="border-t border-line">
             <td className="py-2 text-ink-2">{lap.index}</td>
-            <td className="py-2 text-right">{formatDistance(lap.distanceInUnit, unit)}</td>
+            <td className="py-2 text-right">{formatLapDistance(lap.distanceInUnit, unit)}</td>
             <td className="py-2 text-right">
               {lap.gpsGlitch ? "GPS glitch" : formatPaceValue(lap.paceSecondsPerUnit)}
             </td>

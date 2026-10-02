@@ -83,9 +83,10 @@ const detail = {
     elevationM: [12.4, 12.6, 12.9],
     speedMps: [3.1, 3.2, 3.2],
   },
+  // Open ocean: fixtures hold no real place (tests rule).
   route: [
-    [51.5, -0.12],
-    [51.5001, -0.1201],
+    [0, -30],
+    [0.0001, -30.0001],
   ],
   hrZones: [1, 2, 3, 4, 5].map((zone) => ({ zone, lowBpm: 90 + zone * 18, seconds: 60 })),
 };
