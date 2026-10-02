@@ -147,11 +147,13 @@ export type GarminSeriesRequest = z.infer<typeof garminSeriesRequestSchema>;
 
 /**
  * What became of one run in a series batch. "ok": Garmin answered, with samples or with none (a run it
- * holds no detail for); "gone": Garmin no longer knows the run (404, deleted on Garmin); "failed": this run
- * alone could not be read (an error or an unreadable answer for it while other runs worked), so the API
- * leaves it pending and tries it again later. A 429 or a dead login fails the whole request instead.
+ * holds no detail for); "gone": Garmin no longer knows the run (404, deleted on Garmin); "failed": Garmin
+ * was asked and this run could not be read (an error or an unreadable answer), so the API counts an
+ * attempt; "skipped": never asked, because the service stopped early (failures in a row or its time
+ * budget, so an outage fits the API's timeout), so the API leaves it pending without counting. A 429 or a
+ * dead login fails the whole request instead.
  */
-export const garminSeriesOutcomeSchema = z.enum(["ok", "gone", "failed"]);
+export const garminSeriesOutcomeSchema = z.enum(["ok", "gone", "failed", "skipped"]);
 export type GarminSeriesOutcome = z.infer<typeof garminSeriesOutcomeSchema>;
 
 /** One run's samples, row-aligned; both arrays are empty unless the outcome is "ok". */

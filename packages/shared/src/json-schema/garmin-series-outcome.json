@@ -4,6 +4,7 @@
   "enum": [
     "ok",
     "gone",
-    "failed"
+    "failed",
+    "skipped"
   ]
 }
