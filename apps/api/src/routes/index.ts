@@ -1,8 +1,11 @@
 import { type Express, Router } from "express";
 import { requireUser } from "../auth/require-user";
 import { notFoundHandler } from "../lib/errors";
+import { activitiesRouter } from "./activities";
+import { garminRouter } from "./garmin";
 import { healthRouter } from "./health";
 import { meRouter } from "./me";
+import { syncRouter } from "./sync";
 
 /**
  * Registers every router. /api/auth/* is served by Better Auth before this (src/app.ts). Public /api routes
@@ -14,6 +17,9 @@ export function registerRoutes(app: Express): void {
   const api = Router();
   api.use(requireUser);
   api.use(meRouter);
+  api.use(garminRouter);
+  api.use(syncRouter);
+  api.use(activitiesRouter);
   api.use(notFoundHandler);
   app.use("/api", api);
 }

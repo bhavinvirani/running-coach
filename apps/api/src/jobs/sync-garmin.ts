@@ -7,7 +7,9 @@ import { logger, withRequestId } from "../lib/logger";
 import { syncGarmin, type SyncGarminResult } from "../services/garmin-sync";
 import { deterministicJobId } from "./boss";
 
-// Pulls a user's new Garmin runs. Enqueued by the daily cron, app open and the Sync button (slice 5).
+// Pulls a user's new Garmin runs in the background, enqueued on app open and by the daily cron (slice 5).
+// The Sync button does not come through here: POST /api/sync calls the service directly, so its 409, 429
+// or 502 reaches the screen that asked.
 
 export const name = "sync-garmin";
 
@@ -23,9 +25,9 @@ export const data = z.discriminatedUnion("trigger", [
 export type SyncGarminData = z.infer<typeof data>;
 
 /**
- * The cron's id is keyed on user and date, so the cron firing twice runs once. App open and Sync now get
- * no id: a run saved at 18:00 must still sync after the 07:00 one, and the stately queue already folds
- * repeated taps into the one queued job.
+ * The cron's id is keyed on user and date, so the cron firing twice runs once. App open gets no id: a
+ * run saved at 18:00 must still sync after the 07:00 one, and the stately queue already folds repeated
+ * opens into the one queued job.
  */
 export function jobId(job: SyncGarminData): string | undefined {
   return job.trigger === "cron"

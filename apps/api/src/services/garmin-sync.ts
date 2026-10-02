@@ -3,6 +3,7 @@ import {
   ErrorCode,
   type GarminActivitySummary,
   type GarminSyncResponse,
+  type SyncResponse,
 } from "@running-coach/shared";
 import { type Column, eq, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
@@ -266,4 +267,20 @@ export async function syncGarmin({
     log.info({ userId, ...result }, "garmin sync finished");
     return result;
   });
+}
+
+/**
+ * POST /api/sync: Sync now. Runs in the request instead of the job queue, so a 409, 429 or 502 reaches the
+ * runner who tapped rather than hiding behind the job's retries minutes later. A 429 is not deferred here:
+ * the runner sees it and decides when to try again.
+ */
+export async function syncNow({ userId }: { userId: string }): Promise<SyncResponse> {
+  const { activitiesWritten } = await syncGarmin({ userId });
+  const [row] = await db
+    .select({ lastSyncAt: garminConnection.lastSyncAt })
+    .from(garminConnection)
+    .where(eq(garminConnection.userId, userId));
+  // Every finished chunk moves the cursor, and a sync that returns finished at least one.
+  if (!row?.lastSyncAt) throw new Error("The sync finished without saving its cursor");
+  return { lastSyncAt: row.lastSyncAt.toISOString(), activitiesWritten };
 }

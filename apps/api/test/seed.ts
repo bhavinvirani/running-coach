@@ -80,8 +80,20 @@ export async function createUser(email = "runner@example.com"): Promise<string> 
   return created.id;
 }
 
-export async function connectGarmin(userId: string, bundle = garminBundle()): Promise<void> {
-  await db.insert(garminConnection).values({ userId, tokenBundleEnc: encrypt(bundle, userId) });
+/**
+ * `values` sets the rest of the row, such as a lastSyncAt that keeps a sync's window on the fixture runs
+ * (2026-08-31 to 2026-09-27) whatever today's date.
+ */
+export async function connectGarmin(
+  userId: string,
+  bundle = garminBundle(),
+  values: Partial<
+    Pick<typeof garminConnection.$inferInsert, "status" | "lastSyncAt" | "lastError">
+  > = {},
+): Promise<void> {
+  await db
+    .insert(garminConnection)
+    .values({ userId, tokenBundleEnc: encrypt(bundle, userId), ...values });
 }
 
 /** Changes the settings row createUser made; `claudeKey` is stored encrypted. */
