@@ -89,20 +89,41 @@ describe("SettingsScreen", () => {
     expect(within(account).getByRole("button", { name: "Log out" })).toBeInTheDocument();
   });
 
-  it("says Garmin is not connected without offering a fake action", async () => {
+  it("shows no laptop connect instructions while Garmin is connected", async () => {
+    fakeMeApi(meFixture());
+    renderSettings();
+
+    const garmin = await screen.findByRole("region", { name: "Garmin" });
+    expect(within(garmin).getByText("Connected")).toBeInTheDocument();
+    expect(garmin).not.toHaveTextContent("garmin:connect");
+  });
+
+  it("says Garmin is not connected and how to connect it from the laptop, without offering a fake action", async () => {
     fakeMeApi(meFixture({ garmin: { status: "not_connected", lastSyncAt: null } }));
     renderSettings();
 
     const garmin = await screen.findByRole("region", { name: "Garmin" });
     expect(within(garmin).getByText("Not connected.")).toBeInTheDocument();
+    const help = within(garmin).getByText("pnpm garmin:connect").closest("p");
+    expect(help).toHaveTextContent(
+      /^To connect, run pnpm garmin:connect with this app's address on your laptop\.$/,
+    );
+    expect(help).toHaveClass("text-caption", "text-ink-2");
     expect(within(garmin).queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("says the Garmin login expired", async () => {
+  it("says the Garmin login expired and how to reconnect it from the laptop", async () => {
     fakeMeApi(meFixture({ garmin: { status: "expired", lastSyncAt: "2026-09-20T05:00:00Z" } }));
     renderSettings();
+
     const garmin = await screen.findByRole("region", { name: "Garmin" });
     expect(within(garmin).getByText("Login expired")).toBeInTheDocument();
+    const help = within(garmin).getByText("pnpm garmin:connect").closest("p");
+    expect(help).toHaveTextContent(
+      /^To reconnect, run pnpm garmin:connect with this app's address on your laptop\.$/,
+    );
+    expect(help).toHaveClass("text-caption", "text-ink-2");
+    expect(within(garmin).queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("saves a new unit with one PATCH, shows it and does not load /api/me again", async () => {

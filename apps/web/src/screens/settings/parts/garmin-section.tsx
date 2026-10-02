@@ -12,7 +12,10 @@ export function GarminSection({ garmin, timeZone }: GarminSectionProps) {
   if (garmin.status === "not_connected") {
     return (
       <Section title="Garmin">
-        <p className="py-3 text-body text-ink-2">Not connected.</p>
+        <div className="flex flex-col gap-1 py-3">
+          <p className="text-body text-ink-2">Not connected.</p>
+          <LaptopConnectHelp verb="connect" />
+        </div>
       </Section>
     );
   }
@@ -29,6 +32,23 @@ export function GarminSection({ garmin, timeZone }: GarminSectionProps) {
       <Row label="Last sync">
         {garmin.lastSyncAt ? formatDateTime(garmin.lastSyncAt, timeZone) : "Never"}
       </Row>
+      {garmin.status === "expired" ? (
+        <div className="py-3">
+          <LaptopConnectHelp verb="reconnect" />
+        </div>
+      ) : null}
     </Section>
+  );
+}
+
+/**
+ * Today's Garmin errors send the runner here, so this says how to act. Static copy: printing the page's
+ * own address would make the screenshot depend on the host.
+ */
+function LaptopConnectHelp({ verb }: { verb: "connect" | "reconnect" }) {
+  return (
+    <p className="text-caption text-ink-2">
+      To {verb}, run <code>pnpm garmin:connect</code> with this app&apos;s address on your laptop.
+    </p>
   );
 }
