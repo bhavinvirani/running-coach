@@ -1,7 +1,7 @@
 import { ErrorCode, importProgressSchema, type Problem } from "@running-coach/shared";
 import type { Locator, Page } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
-import { connectGarmin, importPaused, seedImportProgress, seedRunHistory } from "./fixtures/seed";
+import { connectGarmin, importStalled, seedImportProgress, seedRunHistory } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
 const emptySentence = "No runs yet. Import your Garmin history to see them by week.";
@@ -201,7 +201,20 @@ test("says what failed when the runs do not load, and Retry recovers", async ({ 
 });
 
 test("says when a paused import continues, in the runner's time zone", async ({ page }) => {
-  await seedImportProgress(importPaused);
+  // A real pause needs Garmin's 429 and a deferred page job; the API tests cover that path, so this one
+  // answers GET /api/import with the paused import and checks what the line says.
+  const paused = importProgressSchema.parse({
+    status: "paused",
+    runsStored: 0,
+    oldestDate: null,
+    startedAt: "2026-09-28T06:00:00.000Z",
+    finishedAt: null,
+    resumeAt: "2036-01-15T14:05:00.000Z",
+    errorCode: ErrorCode.garminRateLimited,
+  });
+  await page.route("**/api/import", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ json: paused }) : route.continue(),
+  );
   // 14:05 UTC on 15 Jan is 09:05 in New York (EST, UTC-5).
   const zone = await page.request.patch("/api/me/settings", {
     data: { timezone: "America/New_York" },
@@ -215,11 +228,20 @@ test("says when a paused import continues, in the runner's time zone", async ({ 
   );
   await expect(importButtons(page)).toHaveCount(0);
   await expect(page.getByText("No runs yet.", { exact: true })).toBeVisible();
+});
 
-  const progress = importProgressSchema.parse(await (await page.request.get("/api/import")).json());
-  expect(progress).toMatchObject({
-    status: "paused",
-    resumeAt: "2036-01-15T14:05:00.000Z",
-    errorCode: ErrorCode.garminRateLimited,
+test("Resume import finishes an import whose job chain died", async ({ page }) => {
+  await connectGarmin(page.request);
+  await seedImportProgress(importStalled);
+
+  await openProgress(page);
+  await expect(importLine(page)).toContainText("The import stopped making progress.");
+
+  await page.getByRole("button", { name: "Resume import" }).click();
+
+  await expect(importLine(page)).toContainText(`${fixtureRunCount} runs · history imported`, {
+    timeout: 15_000,
   });
+  const progress = importProgressSchema.parse(await (await page.request.get("/api/import")).json());
+  expect(progress).toMatchObject({ status: "done", runsStored: fixtureRunCount, errorCode: null });
 });

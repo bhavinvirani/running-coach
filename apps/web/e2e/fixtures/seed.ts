@@ -232,10 +232,9 @@ export type SeededImport =
       nextOffset: number;
     }
   | {
-      status: "paused";
+      /** With no page job queued, which the API reports as stalled. */
+      status: "running";
       startedAt: string;
-      /** When the paused page runs; keep it in the future, or the API reads the import as stalled. */
-      resumeAt: string;
       oldestDate: string | null;
       nextOffset: number;
     };
@@ -250,13 +249,12 @@ export const importDone = {
 } as const satisfies SeededImport;
 
 /**
- * A first import stopped by Garmin's 429 before any page. It continues at 14:05 UTC on a winter day years
- * ahead (no DST change near it), so it is paused, never stalled, whenever the suite runs.
+ * A first import whose job chain died before any page: the row says running, but seedImportProgress queues
+ * no page, so the API reports it stalled and Resume import picks it up from offset 0.
  */
-export const importPaused = {
-  status: "paused",
+export const importStalled = {
+  status: "running",
   startedAt: "2026-09-28T06:00:00Z",
-  resumeAt: "2036-01-15T14:05:00Z",
   oldestDate: null,
   nextOffset: 0,
 } as const satisfies SeededImport;
@@ -264,20 +262,15 @@ export const importPaused = {
 /** Writes the runner's import_progress row as the import would have left it; queues no page. */
 export async function seedImportProgress(progress: SeededImport): Promise<void> {
   const finishedAt = progress.status === "done" ? progress.finishedAt : null;
-  const resumeAt = progress.status === "paused" ? progress.resumeAt : null;
-  const lastError = progress.status === "paused" ? "garmin_rate_limited" : null;
   await withDatabase((db) =>
     db.query(
-      `insert into import_progress (user_id, status, next_offset, cursor_date, last_error, resume_at,
-         started_at, finished_at)
-       values (${runnerId}, $2, $3, $4, $5, $6, $7, $8)`,
+      `insert into import_progress (user_id, status, next_offset, cursor_date, started_at, finished_at)
+       values (${runnerId}, $2, $3, $4, $5, $6)`,
       [
         runner.email,
         progress.status,
         progress.nextOffset,
         progress.oldestDate,
-        lastError,
-        resumeAt,
         progress.startedAt,
         finishedAt,
       ],
