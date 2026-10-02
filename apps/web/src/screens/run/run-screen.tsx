@@ -4,7 +4,7 @@ import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { formatLocalDay } from "@/lib/format";
-import { BackLink } from "./parts/back-link";
+import { BackLink } from "@/components/back-link";
 import { BestEfforts } from "./parts/best-efforts";
 import { currentBests } from "./parts/current-bests";
 import { RunDetail } from "./parts/run-detail";
@@ -80,7 +80,7 @@ function RunLayout({
   return (
     <div className="flex flex-col gap-4 px-4 pt-4 pb-8" aria-busy={busy}>
       <header className="relative flex min-h-11 items-center justify-center">
-        <BackLink />
+        <BackLink to="/progress" />
         {title === null ? (
           <div className="h-5 w-24 rounded-sm bg-surface-2" />
         ) : (

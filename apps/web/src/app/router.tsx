@@ -51,6 +51,29 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               },
             },
             {
+              path: "plan",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () => (await import("@/screens/plan/plan-screen")).PlanScreen,
+              },
+            },
+            {
+              // Detail screens of the plan inside the shell, like a run, so the tabs stay one tap away.
+              path: "plan/goal",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () => (await import("@/screens/goal/goal-screen")).GoalScreen,
+              },
+            },
+            {
+              path: "plan/weeks/:number",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () =>
+                  (await import("@/screens/plan-week/plan-week-screen")).PlanWeekScreen,
+              },
+            },
+            {
               path: "progress",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {

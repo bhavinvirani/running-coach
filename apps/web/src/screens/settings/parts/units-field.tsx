@@ -1,5 +1,5 @@
 import type { Units } from "@running-coach/shared";
-import { SegmentedField, type SegmentOption } from "./segmented-field";
+import { SegmentedField, type SegmentOption } from "@/components/segmented-field";
 
 const options: readonly SegmentOption<Units>[] = [
   { value: "km", label: "km" },

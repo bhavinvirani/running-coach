@@ -3,20 +3,31 @@ import {
   activityResponseSchema,
   activitySchema,
   activityWeekSchema,
+  goalSchema,
   importProgressSchema,
   meResponseSchema,
   personalBestSchema,
   personalBestsResponseSchema,
+  planResponseSchema,
+  planSchema,
   runBestEffortSchema,
   type Activity,
   type ActivityDetail,
   type ActivityResponse,
   type ActivityWeek,
+  type Goal,
   type ImportProgress,
   type MeResponse,
   type PersonalBest,
   type PersonalBestsResponse,
+  type Plan,
+  type PlanResponse,
+  type PlanSession,
   type RunBestEffort,
+  type SessionSteps,
+  type SessionTarget,
+  type SessionType,
+  type Step,
 } from "@running-coach/shared";
 
 const RUNNER_ID = "5b1f0c9e-3d2a-4f6b-8c7d-9e0a1b2c3d4e";
@@ -213,4 +224,177 @@ export function signInFixture() {
       updatedAt: "2026-09-01T08:00:00.000Z",
     },
   };
+}
+
+const GOAL_ID = "3c2f7f2b-1e7d-4b5c-8b1f-7c8b3f1d2e33";
+
+/**
+ * A 10K on Sun 25 Oct 2026 in 49:00, on 4 runs a week with the long run on Sunday, no time typed in.
+ * Parsed with the shared contract like meFixture.
+ */
+export function goalFixture(overrides: Partial<Goal> = {}): Goal {
+  return goalSchema.parse({
+    id: GOAL_ID,
+    kind: "race",
+    distanceKey: "10k",
+    raceDate: "2026-10-25",
+    targetTimeS: 2940,
+    daysPerWeek: 4,
+    longRunDay: "sun",
+    recentTime: null,
+    updatedAt: "2026-10-02T08:00:00Z",
+    ...overrides,
+  });
+}
+
+function easyFor(durationS: number): Step {
+  return { kind: "run", zone: "easy", distanceM: null, durationS };
+}
+
+/** A planned session; its id is built from its date, which no two fixture sessions share. */
+function session(
+  date: string,
+  type: Exclude<SessionType, "rest">,
+  target: SessionTarget,
+  steps: SessionSteps,
+): PlanSession {
+  const id = `00000000-0000-4000-8000-${date.replaceAll("-", "")}0000`;
+  return { id, date, type, target, steps, status: "planned", activityId: null };
+}
+
+/**
+ * planFixture's three weeks: base, build, then the race week as the down week, with every session type the
+ * plan shows: easy, intervals, tempo, long, race practice, strength and the race itself. Mondays,
+ * Wednesdays (but for strength) and Saturdays are rest days.
+ */
+function planWeeksFixture(): Plan["weeks"] {
+  return [
+    {
+      number: 1,
+      startDate: "2026-10-05",
+      phase: "base",
+      distanceM: 38030,
+      sessions: [
+        session("2026-10-06", "easy", { distanceM: 7450, durationS: 2700, zone: "easy" }, [
+          easyFor(2700),
+        ]),
+        session("2026-10-07", "strength", { distanceM: 0, durationS: 1800, zone: null }, []),
+        session(
+          "2026-10-08",
+          "intervals",
+          { distanceM: 11610, durationS: 3840, zone: "interval" },
+          [
+            { kind: "warmup", zone: "easy", distanceM: null, durationS: 900 },
+            {
+              repeat: 5,
+              steps: [
+                { kind: "work", zone: "interval", distanceM: 1000, durationS: null },
+                { kind: "recovery", zone: "easy", distanceM: null, durationS: 180 },
+              ],
+            },
+            { kind: "cooldown", zone: "easy", distanceM: null, durationS: 600 },
+          ],
+        ),
+        session("2026-10-09", "easy", { distanceM: 4970, durationS: 1800, zone: "easy" }, [
+          easyFor(1800),
+        ]),
+        session("2026-10-11", "long", { distanceM: 14000, durationS: 5070, zone: "easy" }, [
+          { kind: "run", zone: "easy", distanceM: 14000, durationS: null },
+        ]),
+      ],
+    },
+    {
+      number: 2,
+      startDate: "2026-10-12",
+      phase: "build",
+      distanceM: 38600,
+      sessions: [
+        session("2026-10-13", "easy", { distanceM: 7450, durationS: 2700, zone: "easy" }, [
+          easyFor(2700),
+        ]),
+        session("2026-10-14", "strength", { distanceM: 0, durationS: 1800, zone: null }, []),
+        session("2026-10-15", "tempo", { distanceM: 8180, durationS: 2716, zone: "threshold" }, [
+          { kind: "warmup", zone: "easy", distanceM: null, durationS: 900 },
+          { kind: "work", zone: "threshold", distanceM: 4000, durationS: null },
+          { kind: "cooldown", zone: "easy", distanceM: null, durationS: 600 },
+        ]),
+        session("2026-10-16", "easy", { distanceM: 4970, durationS: 1800, zone: "easy" }, [
+          easyFor(1800),
+        ]),
+        session("2026-10-18", "long", { distanceM: 18000, durationS: 6520, zone: "easy" }, [
+          { kind: "run", zone: "easy", distanceM: 18000, durationS: null },
+        ]),
+      ],
+    },
+    {
+      number: 3,
+      startDate: "2026-10-19",
+      phase: "race",
+      distanceM: 27250,
+      sessions: [
+        session("2026-10-20", "easy", { distanceM: 6630, durationS: 2400, zone: "easy" }, [
+          easyFor(2400),
+        ]),
+        session("2026-10-22", "race_practice", { distanceM: 7310, durationS: 2448, zone: "race" }, [
+          { kind: "warmup", zone: "easy", distanceM: null, durationS: 600 },
+          {
+            repeat: 3,
+            steps: [
+              { kind: "work", zone: "race", distanceM: 1000, durationS: null },
+              { kind: "recovery", zone: "easy", distanceM: null, durationS: 120 },
+            ],
+          },
+          { kind: "cooldown", zone: "easy", distanceM: null, durationS: 600 },
+        ]),
+        session("2026-10-23", "easy", { distanceM: 3310, durationS: 1200, zone: "easy" }, [
+          easyFor(1200),
+        ]),
+        session("2026-10-25", "race", { distanceM: 10000, durationS: 2960, zone: "race" }, [
+          { kind: "run", zone: "race", distanceM: 10000, durationS: null },
+        ]),
+      ],
+    },
+  ];
+}
+
+/**
+ * goalFixture's plan, version 1, from Mon 5 Oct to race day on Sun 25 Oct: three weeks, under the 8 a 10K
+ * plan usually takes, hence its one warning. Paces from a 50:00 10K (VDOT about 41): easy 5:45-6:20,
+ * threshold 5:00-5:07, interval 4:45-4:52 and race 4:54-4:58 per km. Parsed with the shared contract.
+ */
+export function planFixture(overrides: Partial<Plan> = {}): Plan {
+  return planSchema.parse({
+    id: "2b1f6e1a-0d6c-4a4b-9a0e-6b7a2e0c1d22",
+    goalId: GOAL_ID,
+    version: 1,
+    engineVersion: "0.1.0",
+    status: "active",
+    startDate: "2026-10-05",
+    endDate: "2026-10-25",
+    vdot: 41.2,
+    vdotSource: {
+      origin: "race",
+      distanceM: 10000,
+      timeS: 3000,
+      activityId: activityFixture().id,
+      date: "2026-09-27",
+    },
+    paces: {
+      easy: { fastSPerKm: 345, slowSPerKm: 380 },
+      marathon: { fastSPerKm: 315, slowSPerKm: 322 },
+      threshold: { fastSPerKm: 300, slowSPerKm: 307 },
+      interval: { fastSPerKm: 285, slowSPerKm: 292 },
+      repetition: { fastSPerKm: 270, slowSPerKm: 275 },
+      race: { fastSPerKm: 294, slowSPerKm: 298 },
+    },
+    warnings: [{ code: "race_date_close", weeks: 3, minimumWeeks: 8 }],
+    weeks: planWeeksFixture(),
+    createdAt: "2026-10-02T08:00:00Z",
+    ...overrides,
+  });
+}
+
+/** GET /api/plan once goalFixture is saved: the goal and its plan. */
+export function planResponseFixture(overrides: Partial<PlanResponse> = {}): PlanResponse {
+  return planResponseSchema.parse({ goal: goalFixture(), plan: planFixture(), ...overrides });
 }
