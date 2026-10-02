@@ -2,6 +2,7 @@ import type { MeResponse } from "@running-coach/shared";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { bootRetry } from "@/app/query-client";
+import { isApiError } from "./client";
 import { meQueryOptions } from "./me";
 import { isSyncRunning, useSyncNow } from "./sync";
 
@@ -101,8 +102,10 @@ export function useSyncOnOpen() {
             await queryClient.fetchQuery({ ...meQueryOptions(), staleTime: 0, ...bootRetry() })
           : // On open the authenticated loader has just cached it.
             await queryClient.ensureQueryData(meQueryOptions());
-      } catch {
-        // No user, no decision: skip this open. The query cache's onError has sent a 401 to /login.
+      } catch (error) {
+        // An answer from the API, or none (offline, still waking): no user, no decision, so skip this open;
+        // the query cache's onError has sent a 401 to /login. Anything else is a bug and must surface.
+        if (!isApiError(error)) throw error;
         return;
       }
       const now = Date.now();
