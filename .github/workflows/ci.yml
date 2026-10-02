@@ -177,11 +177,18 @@ jobs:
           tags: running-coach:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # Boot the image the way Render runs it (env from render.yaml, PORT 10000, non-root, no fixtures)
-      # and wait for /health, which is 200 only once migrations ran and the Garmin service is up.
+      # Boot the image the way Render runs it (env from render.yaml, PORT 10000, the free plan's 512 MB,
+      # no fixtures, a fresh database) and wait for /health, which is 200 only once migrations ran and
+      # the Garmin service is up. Then check what slice 1 relies on: cache headers, sign-in, non-root,
+      # the uvicorn child and memory well under 400 MB.
       - name: Smoke test the image
+        shell: bash
         run: |
-          docker run -d --name app --network host \
+          set -euo pipefail
+          base=http://localhost:10000
+          cookies="$RUNNER_TEMP/cookies.txt"
+          owner_password="$(openssl rand -hex 16)"
+          docker run -d --name app --network host --memory 512m \
             -e PORT=10000 \
             -e NODE_ENV=production \
             -e GARMIN_FIXTURES=0 \
@@ -189,20 +196,54 @@ jobs:
             -e DATABASE_URL=postgresql://postgres:postgres@localhost:5434/running_coach \
             -e MASTER_KEY="$(openssl rand -base64 32)" \
             -e BETTER_AUTH_SECRET="$(openssl rand -base64 32)" \
-            -e APP_URL=http://localhost:10000 \
+            -e APP_URL="$base" \
             -e CRON_SECRET="$(openssl rand -hex 32)" \
             -e OWNER_EMAIL=owner@example.com \
-            -e OWNER_PASSWORD="$(openssl rand -base64 24)" \
+            -e OWNER_PASSWORD="$owner_password" \
             -e OWNER_NAME=Owner \
             running-coach:ci
           for _ in $(seq 1 60); do
-            curl -fsS http://localhost:10000/health && break
-            sleep 2
+            curl -fs -o /dev/null "$base/health" && break
+            sleep 1
           done
-          docker logs app
-          curl -fsS http://localhost:10000/health
-          # The SPA comes from apps/web/dist through the API in production.
-          curl -fsS -o /dev/null http://localhost:10000/
+          curl -fsS "$base/health"
+          echo
+
+          # The API serves the SPA: the shell and service worker revalidate, hashed assets are immutable.
+          cache_control() { curl -fsS -o /dev/null -D - "$base$1" | tr -d '\r' | grep -i '^cache-control:' | cut -d ' ' -f 2-; }
+          asset="$(curl -fsS "$base/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js')"
+          test "$(cache_control /)" = "no-cache"
+          test "$(cache_control "$asset")" = "public, max-age=31536000, immutable"
+          test "$(cache_control /sw.js)" = "no-cache"
+          curl -fsS -o /dev/null "$base/manifest.webmanifest"
+
+          # The owner seeded at boot signs in through Better Auth (Origin must equal APP_URL).
+          curl -fsS -o /dev/null -c "$cookies" -H "Origin: $base" -H "Content-Type: application/json" \
+            -d "{\"email\":\"owner@example.com\",\"password\":\"$owner_password\"}" \
+            "$base/api/auth/sign-in/email"
+          me="$(curl -fsS -b "$cookies" "$base/api/me")"
+          grep -q '"email":"owner@example.com"' <<<"$me"
+
+          # Both processes run as the image's node user; the Garmin service is the API's child.
+          test "$(docker exec app id -u)" = "1000"
+          processes="$(docker top app -o pid,uid,rss,args)"
+          echo "$processes"
+          grep -q 'uvicorn garmin_service.main:app' <<<"$processes"
+          awk 'NR > 1 && $2 == 0 { root = 1 } END { exit root }' <<<"$processes"
+
+          for _ in $(seq 1 20); do curl -fsS -o /dev/null -b "$cookies" "$base/api/me"; done
+          memory="$(docker stats --no-stream --format '{{.MemUsage}}' app)"
+          echo "memory after 20 requests: $memory"
+          awk -v used="${memory%% /*}" 'BEGIN {
+            mib = used + 0
+            if (used ~ /GiB$/) mib *= 1024
+            else if (used ~ /KiB$/) mib /= 1024
+            else if (used !~ /MiB$/) exit 1
+            exit !(mib < 400)
+          }'
+      - name: Image logs
+        if: always()
+        run: docker logs app || true
 
   # Not a required check, and PR-only: on main it would hold every deploy hostage to a new advisory.
   audit:
