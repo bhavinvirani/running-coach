@@ -21,7 +21,8 @@ services:
       - key: LOG_LEVEL
         value: info
       # Secrets and per-deploy values: Render asks for each once, when the Blueprint is created.
-      # Names and formats are in .env.example. DATABASE_URL is Neon's direct (non-pooler) string.
+      # Names and formats are in .env.example. DATABASE_URL is Neon's direct (non-pooler) string with
+      # sslmode=require changed to sslmode=verify-full, so the server certificate is always checked.
       - key: DATABASE_URL
         sync: false
       - key: MASTER_KEY

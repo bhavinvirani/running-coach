@@ -76,6 +76,8 @@ jobs:
             garmin:
               - services/garmin/**
               - packages/shared/src/json-schema/**
+              - package.json
+              - .github/workflows/ci.yml
       - if: steps.changes.outputs.garmin == 'true'
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - if: steps.changes.outputs.garmin == 'true'
@@ -177,7 +179,7 @@ jobs:
           tags: running-coach:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # Boot the image the way Render runs it (env from render.yaml, PORT 10000, the free plan's 512 MB,
+      # Boot the image the way Render runs it (env from render.yaml, PORT 10000, the free plan's 512 MB and no swap,
       # no fixtures, a fresh database) and wait for /health, which is 200 only once migrations ran and
       # the Garmin service is up. Then check what slice 1 relies on: cache headers, sign-in, non-root,
       # the uvicorn child and memory well under 400 MB.
@@ -188,7 +190,7 @@ jobs:
           base=http://localhost:10000
           cookies="$RUNNER_TEMP/cookies.txt"
           owner_password="$(openssl rand -hex 16)"
-          docker run -d --name app --network host --memory 512m \
+          docker run -d --name app --network host --memory 512m --memory-swap 512m \
             -e PORT=10000 \
             -e NODE_ENV=production \
             -e GARMIN_FIXTURES=0 \

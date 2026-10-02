@@ -24,7 +24,7 @@ WORKDIR /app
 
 # Dependencies from the lockfile alone, so this layer survives every source change.
 FROM pnpm AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .pnpmfile.cjs ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN corepack install && pnpm fetch
 COPY . .
 RUN pnpm install --frozen-lockfile --offline
@@ -38,6 +38,37 @@ RUN pnpm build
 # packages; tsup bundles them into dist, so the copies deploy puts in node_modules are never loaded.
 FROM deps AS api-prod
 RUN pnpm --filter @running-coach/api --prod deploy --legacy /prod/api
+# better-auth's optional peers pull vitest and drizzle-kit, with vite, jsdom, esbuild and rolldown, into the
+# deploy, and nothing at runtime imports them. Keep only the store entries reachable from the API's own
+# dependencies without passing through those tools (about half of node_modules), then drop dangling links.
+WORKDIR /prod/api/node_modules
+RUN node --input-type=module <<'EOF'
+import { readdirSync, realpathSync, rmSync } from "node:fs";
+const store = `${process.cwd()}/.pnpm`;
+const tools = /^(vitest|@vitest\/.+|drizzle-kit|vite|jsdom)$/;
+const names = (dir) =>
+  readdirSync(dir)
+    .filter((name) => !name.startsWith("."))
+    .flatMap((name) => (name.startsWith("@") ? readdirSync(`${dir}/${name}`).map((sub) => `${name}/${sub}`) : [name]));
+const kept = new Set();
+const keep = (dir) => {
+  for (const name of names(dir)) {
+    if (tools.test(name)) continue;
+    const real = realpathSync(`${dir}/${name}`);
+    if (!real.startsWith(`${store}/`)) throw new Error(`${name} resolves outside the store: ${real}`);
+    const entry = real.slice(store.length + 1).split("/")[0];
+    if (!kept.has(entry)) {
+      kept.add(entry);
+      keep(`${store}/${entry}/node_modules`);
+    }
+  }
+};
+keep(".");
+const dropped = readdirSync(store).filter((entry) => !["node_modules", "lock.yaml"].includes(entry) && !kept.has(entry));
+for (const entry of dropped) rmSync(`${store}/${entry}`, { recursive: true });
+console.log(`kept ${kept.size} store entries, dropped ${dropped.length}`);
+EOF
+RUN find . -xtype l -delete
 
 # Python 3.12 managed by uv in a fixed path, so the venv's interpreter link resolves in the final stage.
 FROM os AS python

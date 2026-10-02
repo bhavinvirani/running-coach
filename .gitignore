@@ -12,10 +12,11 @@ reference/
 # Throwaway code
 spikes/
 
-# Test recordings (real Garmin or Claude responses)
+# Test recordings and raw captures (real Garmin or Claude responses); tests/sanitize.py reads raw/
 recordings/
 cassettes/
 *.har
+services/garmin/raw/
 
 # Dependencies and build output
 node_modules/
