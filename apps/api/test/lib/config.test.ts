@@ -26,6 +26,7 @@ describe("parseConfig", () => {
       APP_URL: "https://running-coach.example.com",
       GARMIN_SERVICE_PORT: 8765,
       GARMIN_FIXTURES: false,
+      GARMIN_ROUTE_LIMIT: 6,
       OWNER_EMAIL: undefined,
       COACH_MODEL: "claude-opus-5-5",
       COACH_FALLBACK_MODEL: "claude-sonnet-5-5",

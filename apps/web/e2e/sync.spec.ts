@@ -50,8 +50,7 @@ async function holdSyncs(page: Page): Promise<() => void> {
   return release;
 }
 
-// One test for the sync on open, the tap during it and the open after it: each real sync counts against the
-// API's six a minute per user, which the whole suite shares.
+// One test for the sync on open, the tap during it and the open after it: one real sync serves all three.
 test("opening the app syncs without a tap, a tap meanwhile starts no second sync, and opening it again within 10 minutes does not sync", async ({
   page,
 }) => {

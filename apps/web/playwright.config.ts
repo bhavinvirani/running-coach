@@ -84,6 +84,9 @@ export default defineConfig({
       CRON_SECRET: "e2e-only-cron-secret-not-for-production",
       GARMIN_SERVICE_SECRET: "",
       GARMIN_FIXTURES: "1",
+      // Every test is the one seeded runner, so the API's six Garmin requests a minute per user would fail a
+      // test for what the tests before it sent. The API's integration tests cover the limit.
+      GARMIN_ROUTE_LIMIT: "1000",
       // Not dev's 8765, so e2e runs next to `pnpm dev`.
       GARMIN_SERVICE_PORT: "8775",
       CLAUDE_BASE_URL: "",

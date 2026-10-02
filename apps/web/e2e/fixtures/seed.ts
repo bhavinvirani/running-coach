@@ -139,8 +139,8 @@ let storedFixtureLogin: string | undefined;
  * Connects the fixture Garmin account, then pins the sync cursor (pinnedLastSyncAt unless the test names
  * another) with the one statement no route offers. The worker's first connect goes through the API, as
  * `pnpm garmin:connect` does; every later one writes back the row that connect stored (storedFixtureLogin),
- * as a reconnect leaves it: status ok, no last error. The API allows six connects a minute per user and the
- * suite connects more often than that, so it spends one connect in all.
+ * as a reconnect leaves it: status ok, no last error. One Garmin login per worker keeps the
+ * suite quick and every later connect deterministic.
  */
 export async function connectGarmin(
   request: APIRequestContext,
@@ -202,7 +202,7 @@ export async function seedExpiredGarminLogin(): Promise<void> {
 
 /**
  * Sync now through the API, not the UI, for a test that needs the fixture runs stored before it starts.
- * Connect first. The API allows six syncs a minute per user, the whole suite included.
+ * Connect first.
  */
 export async function syncGarmin(request: APIRequestContext): Promise<SyncResponse> {
   const response = await request.post("/api/sync");
