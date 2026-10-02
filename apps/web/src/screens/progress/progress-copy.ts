@@ -71,14 +71,19 @@ export function importLine(progress: ImportProgress, timeZone: string): string {
   }
 }
 
-/** The line under Personal bests; `stopped` makes it an error sentence rather than a caption. */
+/**
+ * The line under Personal bests; `stopped` (no run is being checked right now, for a known reason) makes it
+ * an error sentence rather than a caption.
+ */
 export type PendingBestsLine = { text: string; stopped: boolean };
 
 /**
- * The line under Personal bests while runs wait for their best efforts, null once none do. While a job
- * checks them it counts them. With no job, it says why in the words the import line uses for a failed
- * import, which name what to do ("Reconnect in Settings"), or, with no reason known, that the next sync,
- * which queues the work again, checks them.
+ * The line under Personal bests while runs wait for their best efforts, null once none do. A known reason
+ * none are being checked comes first, in the words the import line uses for a failed import, which name
+ * what to do ("Reconnect in Settings"): with no job it is why the check stopped, and with a job held back
+ * (a 429's hour, a retry's backoff) the failure that holds it, so the line never counts runs that nothing
+ * checks for an hour. Otherwise a job counts them as it checks, or, with no job and no reason known, the
+ * line says the next sync, which queues the work again, checks them.
  */
 export function pendingBestsLine({
   pendingRuns,
@@ -86,8 +91,8 @@ export function pendingBestsLine({
   errorCode,
 }: Pick<PersonalBestsResponse, "pendingRuns" | "checking" | "errorCode">): PendingBestsLine | null {
   if (pendingRuns === 0) return null;
-  if (checking) return { text: `Checking ${runs(pendingRuns)} for best efforts`, stopped: false };
   if (errorCode !== null) return { text: errorCodeMessage(errorCode), stopped: true };
+  if (checking) return { text: `Checking ${runs(pendingRuns)} for best efforts`, stopped: false };
   return { text: `The next sync checks ${runs(pendingRuns)} for best efforts.`, stopped: false };
 }
 

@@ -7,6 +7,7 @@ import {
 } from "@running-coach/shared";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
+import { IMPORT_POLL_PAUSED_MS } from "./import";
 import { listKey } from "./query-keys";
 
 export const personalBestsKey = listKey("personal-bests");
@@ -19,14 +20,22 @@ export const personalBestsKey = listKey("personal-bests");
 export const PERSONAL_BESTS_POLL_MS = 15_000;
 
 /**
+ * How often the bests are read while their job is held back (a 429's hour, a retry's backoff): nothing
+ * changes for minutes, as with an import paused by Garmin, so the same rate.
+ */
+export const PERSONAL_BESTS_HELD_POLL_MS = IMPORT_POLL_PAUSED_MS;
+
+/**
  * Polls on `checking`, not on pending runs: runs can stay pending with no job to check them (an expired
  * Garmin login, a failed pass), and reading every 15 s then would change nothing. A sync or an import page
- * invalidates the bests, and that read learns of the job they queued and starts the poll again.
+ * invalidates the bests, and that read learns of the job they queued and starts the poll again. A job with
+ * an `errorCode` is held back by that failure, so it is read rarely until it runs again.
  */
 export function personalBestsPollInterval(
   response: PersonalBestsResponse | undefined,
 ): number | false {
-  return response?.checking === true ? PERSONAL_BESTS_POLL_MS : false;
+  if (response?.checking !== true) return false;
+  return response.errorCode === null ? PERSONAL_BESTS_POLL_MS : PERSONAL_BESTS_HELD_POLL_MS;
 }
 
 /** GET /api/personal-bests: the runner's bests, Garmin's records and the runs still waiting to be checked. */
@@ -38,7 +47,7 @@ export function personalBestsQueryOptions() {
   });
 }
 
-/** The bests, polled while a best-efforts job is waiting or running and not at all otherwise. */
+/** The bests, polled while a best-efforts job is waiting, held or running and not at all otherwise. */
 export function usePersonalBests() {
   return useQuery({
     ...personalBestsQueryOptions(),

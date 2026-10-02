@@ -1,6 +1,9 @@
+import { ErrorCode } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { personalBestFixture, personalBestsFixture } from "@/test/fixtures";
+import { IMPORT_POLL_PAUSED_MS } from "./import";
 import {
+  PERSONAL_BESTS_HELD_POLL_MS,
   PERSONAL_BESTS_POLL_MS,
   bestDistancesByRun,
   personalBestsPollInterval,
@@ -19,6 +22,22 @@ describe("personalBestsPollInterval", () => {
       personalBestsPollInterval(personalBestsFixture({ pendingRuns: 1, checking: true })),
     ).toBe(15_000);
   });
+
+  it.each([
+    { reason: "a 429's hour", errorCode: ErrorCode.garminRateLimited },
+    { reason: "a retry's backoff", errorCode: ErrorCode.garminUnavailable },
+  ])(
+    "polls every 60 s, like a paused import, while a job is held back ($reason)",
+    ({ errorCode }) => {
+      expect(PERSONAL_BESTS_HELD_POLL_MS).toBe(60_000);
+      expect(PERSONAL_BESTS_HELD_POLL_MS).toBe(IMPORT_POLL_PAUSED_MS);
+      expect(
+        personalBestsPollInterval(
+          personalBestsFixture({ pendingRuns: 340, checking: true, errorCode }),
+        ),
+      ).toBe(60_000);
+    },
+  );
 
   it("stops polling once nothing is checking, and before the first answer", () => {
     expect(personalBestsPollInterval(personalBestsFixture({ pendingRuns: 0 }))).toBe(false);

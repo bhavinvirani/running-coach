@@ -293,6 +293,11 @@ describe("TodayScreen", () => {
       errorCode: ErrorCode.garminAuthExpired,
     },
     { state: "waiting for the next sync", checking: false, errorCode: null },
+    {
+      state: "held back by Garmin's 429",
+      checking: true,
+      errorCode: ErrorCode.garminRateLimited,
+    },
   ] as const)(
     "stays quiet about runs whose best efforts are $state: only the PB chip",
     async ({ checking, errorCode }) => {
@@ -308,7 +313,9 @@ describe("TodayScreen", () => {
 
       const run = await screen.findByRole("region", { name: "Latest run" });
       expect(await within(run).findByText("PB 5K")).toBeInTheDocument();
-      expect(screen.queryByText(/best efforts|Garmin login expired/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/best efforts|Garmin login expired|Garmin is limiting/),
+      ).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );

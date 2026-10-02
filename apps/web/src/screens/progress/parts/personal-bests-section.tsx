@@ -70,7 +70,10 @@ function PersonalBestsContent({ state, checkedAt }: PersonalBestsSectionProps) {
   );
 }
 
-/** A check stopped for a known reason reads as an error sentence, like a failed import; else a caption. */
+/**
+ * A check stopped or held back for a known reason reads as an error sentence, like a failed import; else a
+ * caption.
+ */
 function PendingLine({ line }: { line: PendingBestsLine }) {
   return line.stopped ? (
     <p role="alert" className="text-body text-ink">

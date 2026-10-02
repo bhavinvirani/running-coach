@@ -1114,6 +1114,61 @@ describe("ProgressScreen personal bests", () => {
     },
   );
 
+  it("says what holds a held job instead of counting runs, polls every 60 s, and counts again at 15 s once it runs (garmin_rate_limited, held job)", async () => {
+    const { api, calls } = fakeProgressApi({
+      bests: personalBestsFixture({
+        ...bestsFound,
+        pendingRuns: 340,
+        checking: true,
+        errorCode: ErrorCode.garminRateLimited,
+      }),
+    });
+    renderProgress();
+    await findBadges();
+
+    const alert = within(bestsRegion()).getByRole("alert");
+    expect(alert).toHaveTextContent(errorMessages.garmin_rate_limited);
+    expect(alert).toHaveClass("text-body", "text-ink");
+    expect(within(bestsRegion()).queryByText(/best efforts/)).not.toBeInTheDocument();
+    expect(within(bestsRegion()).queryByRole("button")).not.toBeInTheDocument();
+    expect(polls.delays()).toEqual([60_000]);
+
+    api.bests = personalBestsFixture({ ...bestsFound, pendingRuns: 340, checking: true });
+    act(() => polls.fire());
+
+    const line = await within(bestsRegion()).findByText("Checking 340 runs for best efforts");
+    expect(line).toHaveClass("text-caption", "text-ink-2");
+    expect(within(bestsRegion()).queryByRole("alert")).not.toBeInTheDocument();
+    expect(polls.delays()).toEqual([15_000]);
+    expect(within(badge("5K")).getByText("27:05")).toBeInTheDocument();
+    expect(calls.filter((call) => call.path === "/api/personal-bests")).toHaveLength(2);
+  });
+
+  it("stops counting and says why once a running job is held back, then polls every 60 s (garmin_unavailable, retry backoff)", async () => {
+    const { api } = fakeProgressApi({
+      bests: personalBestsFixture({ ...bestsFound, pendingRuns: 340, checking: true }),
+    });
+    renderProgress();
+    await within(await screen.findByRole("region", { name: "Personal bests" })).findByText(
+      "Checking 340 runs for best efforts",
+    );
+    expect(polls.delays()).toEqual([15_000]);
+
+    api.bests = personalBestsFixture({
+      ...bestsFound,
+      pendingRuns: 338,
+      checking: true,
+      errorCode: ErrorCode.garminUnavailable,
+    });
+    act(() => polls.fire());
+
+    expect(await within(bestsRegion()).findByRole("alert")).toHaveTextContent(
+      errorMessages.garmin_unavailable,
+    );
+    expect(within(bestsRegion()).queryByText(/best efforts/)).not.toBeInTheDocument();
+    expect(polls.delays()).toEqual([60_000]);
+  });
+
   it.each([
     { state: "nothing checking", checking: false },
     { state: "a job finishing its last pass", checking: true },
