@@ -88,7 +88,8 @@ export function activityDetailFixture(overrides: Partial<ActivityDetail> = {}): 
     },
     route: Array.from({ length: 48 }, (_, point) => {
       const angle = (2 * Math.PI * point) / 48;
-      return [51.527 + 0.0015 * Math.sin(angle), -0.153 + 0.0024 * Math.cos(angle)];
+      // A loop in open ocean, like the Garmin fake's: fixtures hold no real place (tests rule).
+      return [0.0015 * Math.sin(angle), -30 + 0.0024 * Math.cos(angle)];
     }),
     hrZones: [
       { zone: 1, lowBpm: 98, seconds: 120 },
