@@ -79,17 +79,20 @@ describe("toSplitRows", () => {
     const laps = [
       toLapPoint({ index: 1, distanceM: 1609.344, durationS: 480 }, "mi"),
       toLapPoint({ index: 2, distanceM: 1609.344, durationS: 500 }, "mi"),
+      // 3:00/mi is 1:52/km: a GPS glitch, no bar and no delta on it or on the lap after it.
+      toLapPoint({ index: 3, distanceM: 1609.344, durationS: 180 }, "mi"),
       // The last 1 km of the run is 0.62 mi.
-      toLapPoint({ index: 3, distanceM: 1000, durationS: 300 }, "mi"),
+      toLapPoint({ index: 4, distanceM: 1000, durationS: 300 }, "mi"),
     ];
     const rows = toSplitRows(laps);
-    expect(rows.map((row) => row.label)).toEqual(["1", "2", "0.62"]);
+    expect(rows.map((row) => row.label)).toEqual(["1", "2", "3", "0.62"]);
+    expect(rows.map((row) => row.gpsGlitch)).toEqual([false, false, true, false]);
     // 300 s for 0.621 mi is 8:03 a mile: 483 s.
     expect(rows.map((row) => row.paceSecondsPerUnit && Math.round(row.paceSecondsPerUnit))).toEqual(
-      [480, 500, 483],
+      [480, 500, 180, 483],
     );
-    expect(rows.map((row) => row.barPercent)).toEqual([100, 96, 99]);
-    expect(rows.map((row) => row.deltaSeconds)).toEqual([null, -20, 17]);
+    expect(rows.map((row) => row.barPercent)).toEqual([100, 96, null, 99]);
+    expect(rows.map((row) => row.deltaSeconds)).toEqual([null, -20, null, null]);
   });
 
   it("returns no rows for no laps", () => {

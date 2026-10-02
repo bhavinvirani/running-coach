@@ -58,7 +58,8 @@ const SYNCED_KEYS = [
   "elevationGainM",
   "isIndoor",
   "isManual",
-  // The runner can mark a run a race on Garmin after it synced; the next sync carries the change over.
+  // The runner can mark a run a race on Garmin after it synced; Import history carries the change over
+  // (a sync re-reads only the day before its cursor).
   "eventType",
 ] as const;
 const syncedColumns = SYNCED_KEYS.map((key) => activity[key]);

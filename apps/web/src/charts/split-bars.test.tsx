@@ -103,17 +103,27 @@ describe("SplitBars", () => {
     expect(screen.getByText("Table of the first 2 laps")).toBeInTheDocument();
   });
 
-  it("names the bars per mile when the runner uses miles (unit conversion)", () => {
+  it("names the bars per mile and leaves out a 3:00/mi lap as a GPS glitch (unit conversion)", () => {
     const laps = [
       toLapPoint({ index: 1, distanceM: 1609.344, durationS: 480 }, "mi"),
-      toLapPoint({ index: 2, distanceM: 1000, durationS: 300 }, "mi"),
+      toLapPoint({ index: 2, distanceM: 1609.344, durationS: 500 }, "mi"),
+      // 3:00/mi is 1:52/km: a glitch, like the 1:50/km lap in the km test.
+      toLapPoint({ index: 3, distanceM: 1609.344, durationS: 180 }, "mi"),
+      toLapPoint({ index: 4, distanceM: 1000, durationS: 300 }, "mi"),
     ];
     renderBars(laps, "mi");
 
     expect(row(0).bar).toHaveAccessibleName("8:00 /mi");
-    expect(row(1).label).toHaveTextContent(/^0\.62$/);
-    expect(row(1).bar).toHaveAccessibleName("8:03 /mi");
-    expect(row(1).delta).toHaveTextContent(/^-0:03 slower$/);
+    expect(row(1).delta).toHaveTextContent(/^-0:20 slower$/);
+    expect(row(2).label).toHaveTextContent(/^3$/);
+    expect(within(row(2).item).getByText("GPS glitch")).toBeInTheDocument();
+    expect(within(row(2).item).queryByRole("img")).not.toBeInTheDocument();
+    expect(row(2).delta).toBeEmptyDOMElement();
+    // The short last lap, with nothing to compare against after the glitch.
+    expect(row(3).label).toHaveTextContent(/^0\.62$/);
+    expect(row(3).bar).toHaveAccessibleName("8:03 /mi");
+    expect(row(3).delta).toBeEmptyDOMElement();
+    expect(screen.getByText("1 lap left out as a GPS glitch.")).toBeInTheDocument();
   });
 
   it("shows the first 12 laps, all of them on Show all, and 12 again on Show fewer", async () => {

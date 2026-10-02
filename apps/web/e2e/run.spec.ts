@@ -72,8 +72,11 @@ async function expectSplitBar(page: Page, lap: number, pace: string, delta: stri
   const row = splitBars(page).nth(lap - 1);
   await expect(row.locator(":scope > span").first()).toHaveText(String(lap));
   await expect(row.getByRole("img")).toHaveAccessibleName(pace);
-  // The delta is followed by a visually hidden "faster" or "slower" for screen readers.
-  await expect(row.locator(":scope > span").last()).toContainText(delta);
+  // The delta is followed by a visually hidden "faster" or "slower" for screen readers; an empty delta
+  // must be empty, which toContainText("") would not check.
+  const deltaCell = row.locator(":scope > span").last();
+  if (delta === "") await expect(deltaCell).toHaveText("");
+  else await expect(deltaCell).toContainText(delta);
 }
 
 /** One lap of the splits table (Show table): lap, distance, pace and average HR. */
