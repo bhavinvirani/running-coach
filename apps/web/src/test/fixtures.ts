@@ -1,18 +1,22 @@
 import {
   activityDetailSchema,
+  activityResponseSchema,
   activitySchema,
   activityWeekSchema,
   importProgressSchema,
   meResponseSchema,
   personalBestSchema,
   personalBestsResponseSchema,
+  runBestEffortSchema,
   type Activity,
   type ActivityDetail,
+  type ActivityResponse,
   type ActivityWeek,
   type ImportProgress,
   type MeResponse,
   type PersonalBest,
   type PersonalBestsResponse,
+  type RunBestEffort,
 } from "@running-coach/shared";
 
 const RUNNER_ID = "5b1f0c9e-3d2a-4f6b-8c7d-9e0a1b2c3d4e";
@@ -103,6 +107,34 @@ export function activityDetailFixture(overrides: Partial<ActivityDetail> = {}): 
       { zone: 4, lowBpm: 155, seconds: 800 },
       { zone: 5, lowBpm: 172, seconds: 118 },
     ],
+    ...overrides,
+  });
+}
+
+/**
+ * One of a run's best efforts: activityFixture's 5K in 27:05 (5:25 /km, unrounded as the API sends it),
+ * the runner's current best there.
+ */
+export function runBestEffortFixture(overrides: Partial<RunBestEffort> = {}): RunBestEffort {
+  return runBestEffortSchema.parse({
+    distanceKey: "5k",
+    timeS: 1625.87,
+    personalBest: true,
+    ...overrides,
+  });
+}
+
+/**
+ * GET /api/activities/:id for activityFixture: no detail fetched yet and no best efforts computed, with the
+ * overrides for the run under test.
+ */
+export function activityResponseFixture(
+  overrides: Partial<ActivityResponse> = {},
+): ActivityResponse {
+  return activityResponseSchema.parse({
+    activity: activityFixture(),
+    detail: null,
+    bestEfforts: [],
     ...overrides,
   });
 }

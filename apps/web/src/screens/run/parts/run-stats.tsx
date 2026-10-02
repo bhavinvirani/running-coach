@@ -3,9 +3,11 @@ import {
   elevationInUnits,
   paceSecondsPerUnit,
   type Activity,
+  type DistanceKey,
   type Units,
 } from "@running-coach/shared";
 import { DotLine } from "@/components/dot-line";
+import { PbChip } from "@/components/pb-chip";
 import { RunTypeChip } from "@/components/run-type-chip";
 import { Stat } from "@/components/stat";
 import {
@@ -26,6 +28,8 @@ import { runTypeName } from "@/lib/run-type";
 type RunStatsProps = {
   activity: Activity;
   units: Units;
+  /** The distances at which the run is the runner's current best, shortest first; empty for most runs. */
+  bests: readonly DistanceKey[];
 };
 
 /** A figure with its unit, or the dash alone: "– km" would read as a broken value. */
@@ -35,10 +39,11 @@ function stat(label: string, value: string, unit?: string) {
 
 /**
  * The run's summary from the stored activity, in two columns so "1:32:10" fits at text-figure on a phone.
- * Above it the start time, the Race chip for a run marked as a race in Garmin Connect, and Indoor or
- * Manual. Pace is derived from distance and time; anything Garmin did not record shows the dash.
+ * Above it the start time, the Race chip for a run marked as a race in Garmin Connect, the PB chip for a
+ * run that holds a current best, and Indoor or Manual. Pace is derived from distance and time; anything
+ * Garmin did not record shows the dash.
  */
-export function RunStats({ activity, units }: RunStatsProps) {
+export function RunStats({ activity, units, bests }: RunStatsProps) {
   const elevation =
     activity.elevationGainM === null
       ? MISSING
@@ -68,6 +73,7 @@ export function RunStats({ activity, units }: RunStatsProps) {
       <DotLine className="text-caption text-ink-2">
         <time dateTime={activity.startLocal}>{formatLocalTime(activity.startLocal)}</time>
         {runTypeName(activity.eventType) ? <RunTypeChip eventType={activity.eventType} /> : null}
+        {bests.length > 0 ? <PbChip distances={bests} /> : null}
         {activity.isIndoor ? "Indoor" : null}
         {activity.isManual ? "Manual" : null}
       </DotLine>

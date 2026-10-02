@@ -27,6 +27,7 @@ import {
   formatRecordTime,
   formatTime,
   formatWeekRange,
+  recordSeconds,
 } from "./format";
 
 describe("formatPace", () => {
@@ -416,6 +417,15 @@ describe("formatLocalTime", () => {
     expect(formatLocalTime(null)).toBe(MISSING);
     expect(formatLocalTime("2026-09-27")).toBe(MISSING);
     expect(formatLocalTime("2026-02-30T07:12:00")).toBe(MISSING);
+  });
+});
+
+describe("recordSeconds", () => {
+  it("cuts a best effort's time to the whole second formatRecordTime shows, for the pace derived from it", () => {
+    expect(recordSeconds(290.5)).toBe(290);
+    expect(recordSeconds(1625.87)).toBe(1625);
+    expect(recordSeconds(1625.9999999999998)).toBe(1626);
+    expect(formatPace(recordSeconds(290.5), "km")).toBe("4:50 /km");
   });
 });
 

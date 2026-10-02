@@ -1,4 +1,4 @@
-import type { Activity, ActivityDetail, MeResponse } from "@running-coach/shared";
+import type { Activity, ActivityDetail, MeResponse, RunBestEffort } from "@running-coach/shared";
 import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import { StrictMode } from "react";
@@ -8,7 +8,13 @@ import { detailKey } from "@/api/query-keys";
 import { errorMessages } from "@/lib/errors";
 import { MISSING } from "@/lib/format";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
-import { activityDetailFixture, activityFixture, meFixture } from "@/test/fixtures";
+import {
+  activityDetailFixture,
+  activityFixture,
+  activityResponseFixture,
+  meFixture,
+  runBestEffortFixture,
+} from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { RunScreen } from "./run-screen";
 
@@ -24,6 +30,8 @@ type FakeRunApi = {
   garmin?: ActivityDetail;
   /** Called with 1 for the first fetch, 2 for the next. */
   fetchDetail?: (attempt: number) => FetchAnswer;
+  /** The run's best efforts, on every answer: none computed unless a test says otherwise. */
+  bestEfforts?: RunBestEffort[];
 };
 
 const run = activityFixture();
@@ -36,20 +44,21 @@ function fakeRunApi({
   stored = null,
   garmin = activityDetailFixture(),
   fetchDetail = () => "stored",
+  bestEfforts = [],
 }: FakeRunApi = {}) {
   let detail = stored;
   let fetches = 0;
   return stubFetch(({ method, path }) => {
     if (method === "GET" && path === "/api/me") return json(me);
     if (method === "GET" && path === `/api/activities/${activity.id}`) {
-      return json({ activity, detail });
+      return json(activityResponseFixture({ activity, detail, bestEfforts }));
     }
     if (method === "POST" && path === `/api/activities/${activity.id}/detail`) {
       fetches += 1;
       const answer = fetchDetail(fetches);
       if (answer !== "stored") return answer;
       detail = garmin;
-      return json({ activity, detail });
+      return json(activityResponseFixture({ activity, detail, bestEfforts }));
     }
     return notFound();
   });
@@ -91,6 +100,40 @@ async function splitsTable() {
 const startLine = () => within(section("Summary")).getByText("07:12").parentElement;
 const miles = meFixture({ settings: { ...meFixture().settings, units: "mi" } });
 
+/**
+ * The run's efforts as the API sends them, unrounded, shortest first: a 1K in 5:05 and a mile in 8:13
+ * that are no bests, then the 5K in 25:52 and the 10K in 51:59 it holds as the runner's current bests.
+ */
+const efforts = [
+  runBestEffortFixture({ distanceKey: "1k", timeS: 305.2, personalBest: false }),
+  runBestEffortFixture({ distanceKey: "1mi", timeS: 493.6, personalBest: false }),
+  runBestEffortFixture({ distanceKey: "5k", timeS: 1552.7, personalBest: true }),
+  runBestEffortFixture({ distanceKey: "10k", timeS: 3119.4, personalBest: true }),
+];
+
+/**
+ * The Best efforts rows, each as a screen reader hears it (its one sentence) and as the eye reads its
+ * columns: distance, time, pace and the PB marker.
+ */
+function effortRows() {
+  const list = within(section("Best efforts")).getByRole("list", { name: "Best efforts" });
+  return within(list)
+    .getAllByRole("listitem")
+    .map((row) => {
+      const [heard, ...columns] = Array.from(row.children);
+      return {
+        heard: heard?.textContent,
+        seen: columns.map((column) => column.textContent),
+        row,
+      };
+    });
+}
+
+/** True when `first` comes before `second` in the document. */
+function isBefore(first: HTMLElement, second: HTMLElement) {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
 describe("RunScreen", () => {
   beforeEach(() => {
     // jsdom has no layout; give Recharts' ResponsiveContainer a phone-width box to measure.
@@ -115,7 +158,7 @@ describe("RunScreen", () => {
         attempts += 1;
         return attempts === 1
           ? problem(500, ErrorCode.internal)
-          : json({ activity: run, detail: activityDetailFixture() });
+          : json(activityResponseFixture({ detail: activityDetailFixture() }));
       }
       return notFound();
     });
@@ -148,7 +191,7 @@ describe("RunScreen", () => {
       if (path === "/api/me") return json(meFixture());
       return failing
         ? problem(503, ErrorCode.internal)
-        : json({ activity: run, detail: activityDetailFixture() });
+        : json(activityResponseFixture({ detail: activityDetailFixture() }));
     });
     const { queryClient } = renderRun();
     await detailLoaded();
@@ -267,7 +310,7 @@ describe("RunScreen", () => {
     expect(figure("Distance")).toHaveTextContent("10.0km");
     expect(detailFetches(calls)).toHaveLength(1);
 
-    answer(json({ activity: run, detail: activityDetailFixture() }));
+    answer(json(activityResponseFixture({ detail: activityDetailFixture() })));
     await detailLoaded();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
@@ -280,7 +323,7 @@ describe("RunScreen", () => {
   it("keeps the fetched detail when a reload that started before the fetch stored it still has none (overlapping requests)", async () => {
     // Garmin's answer comes back, but every GET still reads the run without detail.
     const calls = fakeRunApi({
-      fetchDetail: () => json({ activity: run, detail: activityDetailFixture() }),
+      fetchDetail: () => json(activityResponseFixture({ detail: activityDetailFixture() })),
     });
     const { queryClient } = renderRun();
     await detailLoaded();
@@ -410,7 +453,7 @@ describe("RunScreen", () => {
     const loading = await screen.findByRole("status", { name: "Loading laps, route and zones" });
     expect(loading.querySelector(".h-60")).toBeNull();
     expect(startLine()).toHaveTextContent(/^07:12·Indoor$/);
-    answer(json({ activity: treadmill, detail: indoorDetail }));
+    answer(json(activityResponseFixture({ activity: treadmill, detail: indoorDetail })));
 
     const route = await detailLoaded();
     expect(within(route).getByText("Indoor run: no GPS route.")).toHaveClass("text-ink-2");
@@ -555,6 +598,153 @@ describe("RunScreen", () => {
 
       expect(startLine()).toHaveTextContent(/^07:12$/);
       expect(screen.queryByText("Race")).not.toBeInTheDocument();
+    },
+  );
+
+  it("marks the run's current bests with a PB chip after the start time, and none for its other efforts", async () => {
+    fakeRunApi({ stored: activityDetailFixture(), bestEfforts: efforts });
+    renderRun();
+    await detailLoaded();
+
+    expect(startLine()).toHaveTextContent(/^07:12PB 5K, 10K$/);
+    const chip = within(startLine() as HTMLElement).getByText("PB 5K, 10K");
+    expect(chip.querySelector(".bg-pb")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("puts the PB chip after the Race chip on a race that set a best", async () => {
+    fakeRunApi({
+      run: activityFixture({ eventType: RACE_EVENT_TYPE }),
+      stored: activityDetailFixture(),
+      bestEfforts: [runBestEffortFixture()],
+    });
+    renderRun();
+    await detailLoaded();
+
+    expect(startLine()).toHaveTextContent(/^07:12RacePB 5K$/);
+  });
+
+  it("shows no PB chip for a run whose efforts hold no current best (best since beaten)", async () => {
+    fakeRunApi({
+      stored: activityDetailFixture(),
+      bestEfforts: efforts.map((effort) => ({ ...effort, personalBest: false })),
+    });
+    renderRun();
+    await detailLoaded();
+
+    expect(startLine()).toHaveTextContent(/^07:12$/);
+    expect(effortRows()).toHaveLength(4);
+    expect(within(section("Best efforts")).queryByText("PB")).not.toBeInTheDocument();
+  });
+
+  it("lists the best efforts on a card between the stats and Route, shortest first, with time, pace in km and PB on bests only", async () => {
+    fakeRunApi({ stored: activityDetailFixture(), bestEfforts: efforts });
+    renderRun();
+    const route = await detailLoaded();
+
+    const card = within(section("Best efforts")).getByRole("heading", {
+      name: "Best efforts",
+    }).nextElementSibling;
+    expect(card).toHaveClass("rounded-md", "bg-surface-1", "p-4");
+    expect(isBefore(section("Summary"), section("Best efforts"))).toBe(true);
+    expect(isBefore(section("Best efforts"), route)).toBe(true);
+
+    // Times cut to the second like Garmin; each pace from the time as shown (25:52 over 5 km is 5:10).
+    expect(effortRows().map(({ seen }) => seen)).toEqual([
+      ["1K", "5:05", "5:05 /km", ""],
+      ["1 mi", "8:13", "5:06 /km", ""],
+      ["5K", "25:52", "5:10 /km", "PB"],
+      ["10K", "51:59", "5:12 /km", "PB"],
+    ]);
+  });
+
+  it("reads each best effort as one sentence in words and the PB marker as words, not color alone", async () => {
+    fakeRunApi({ stored: activityDetailFixture(), bestEfforts: efforts });
+    renderRun();
+    await detailLoaded();
+
+    const rows = effortRows();
+    expect(rows.map(({ heard }) => heard)).toEqual([
+      "1K, 5:05, 5:05 /km",
+      "1 mi, 8:13, 5:06 /km",
+      "5K, 25:52, 5:10 /km, personal best",
+      "10K, 51:59, 5:12 /km, personal best",
+    ]);
+    const [oneK, , fiveK] = rows as [(typeof rows)[0], (typeof rows)[0], (typeof rows)[0]];
+    expect(within(fiveK.row).getByText("5K, 25:52, 5:10 /km, personal best")).toHaveClass(
+      "sr-only",
+    );
+    for (const column of Array.from(fiveK.row.children).slice(1)) {
+      expect(column).toHaveAttribute("aria-hidden", "true");
+    }
+    const marker = within(fiveK.row).getByText("PB");
+    expect(marker).toHaveClass("text-caption", "text-ink");
+    expect(marker.querySelector(".bg-pb")).not.toBeNull();
+    expect(oneK.row.querySelector(".bg-pb")).toBeNull();
+  });
+
+  it("lines the figures up in fixed columns, the time as the row's strong figure", async () => {
+    fakeRunApi({ stored: activityDetailFixture(), bestEfforts: efforts });
+    renderRun();
+    await detailLoaded();
+
+    for (const { row } of effortRows()) {
+      const [, label, time, pace, marker] = Array.from(row.children);
+      expect(label).toHaveClass("min-w-0", "flex-1", "text-body", "text-ink");
+      expect(time).toHaveClass("w-18", "shrink-0", "text-right", "text-body", "font-semibold");
+      expect(pace).toHaveClass("w-22", "shrink-0", "text-right", "text-body", "text-ink-2");
+      expect(marker).toHaveClass("w-11", "shrink-0");
+    }
+  });
+
+  it("converts each effort's pace to the runner's unit and keeps its time (unit conversion)", async () => {
+    fakeRunApi({ me: miles, stored: activityDetailFixture(), bestEfforts: efforts });
+    renderRun();
+    await detailLoaded();
+
+    // A mile's pace in miles is its time; 25:52 over 3.11 mi is 8:20 a mile.
+    expect(effortRows().map(({ seen }) => seen)).toEqual([
+      ["1K", "5:05", "8:11 /mi", ""],
+      ["1 mi", "8:13", "8:13 /mi", ""],
+      ["5K", "25:52", "8:20 /mi", "PB"],
+      ["10K", "51:59", "8:22 /mi", "PB"],
+    ]);
+    expect(effortRows()[2]?.heard).toBe("5K, 25:52, 8:20 /mi, personal best");
+  });
+
+  it("lists the efforts shortest first whatever order they arrive in", async () => {
+    fakeRunApi({ stored: activityDetailFixture(), bestEfforts: [...efforts].reverse() });
+    renderRun();
+    await detailLoaded();
+
+    expect(effortRows().map(({ seen }) => seen[0])).toEqual(["1K", "1 mi", "5K", "10K"]);
+    expect(startLine()).toHaveTextContent(/^07:12PB 5K, 10K$/);
+  });
+
+  it("shows the best efforts while the detail is still coming from Garmin", async () => {
+    fakeRunApi({ fetchDetail: () => never(), bestEfforts: efforts });
+    renderRun();
+
+    expect(
+      await screen.findByRole("status", { name: "Loading laps, route and zones" }),
+    ).toBeInTheDocument();
+    expect(effortRows()).toHaveLength(4);
+  });
+
+  it.each([
+    { corner: "efforts not computed yet", run: activityFixture() },
+    {
+      corner: "indoor run",
+      run: activityFixture({ type: "treadmill_running", isIndoor: true }),
+    },
+  ])(
+    "shows no Best efforts section and no PB chip for a run without efforts ($corner)",
+    async ({ run: activity }) => {
+      fakeRunApi({ run: activity, stored: activityDetailFixture() });
+      renderRun();
+      await detailLoaded();
+
+      expect(screen.queryByRole("region", { name: "Best efforts" })).not.toBeInTheDocument();
+      expect(within(section("Summary")).queryByText(/PB/)).not.toBeInTheDocument();
     },
   );
 

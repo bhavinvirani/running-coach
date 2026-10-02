@@ -25,6 +25,8 @@ export const progressCopy = {
   noRunYet: "No run yet",
   /** On a best set within the last week. */
   newBest: "New",
+  /** Under the bests when Garmin's records are in: why only some tiles carry one. */
+  garminRecordsNote: "Garmin keeps records for 1K, 1 mi, 5K, 10K, half and marathon only.",
 } as const;
 
 /** The button each import status offers, named for what it does; none while the import moves by itself. */

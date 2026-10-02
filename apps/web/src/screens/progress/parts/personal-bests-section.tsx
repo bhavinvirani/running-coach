@@ -1,11 +1,10 @@
 import type { DistanceKey, GarminRecord, PersonalBestsResponse } from "@running-coach/shared";
-import type { ReactNode } from "react";
 import type { ScreenState } from "@/api/screen-state";
 import { RetryAlert } from "@/components/retry-alert";
 import { cn } from "@/lib/cn";
 import { DISTANCE_KEYS } from "@/lib/distance-labels";
 import { type PendingBestsLine, pendingBestsLine, progressCopy } from "../progress-copy";
-import { PersonalBestBadge } from "./personal-best-badge";
+import { PersonalBestBadge, TILE_CARD, TILE_SLOT } from "./personal-best-badge";
 
 type PersonalBestsSectionProps = {
   state: ScreenState<PersonalBestsResponse>;
@@ -14,10 +13,11 @@ type PersonalBestsSectionProps = {
 };
 
 /**
- * The runner's best time at each of the eleven distances, shortest first, on one card at the top of
- * Progress. It loads and fails on its own, so the weeks below stay usable whatever happens here. While
- * runs wait for their best efforts, a line under the heading says how many are being checked, or why
- * none are and what to do.
+ * The runner's best time at each of the eleven distances, shortest first, as one row of tiles that
+ * scrolls sideways at the top of Progress, so the bests take one tile's height instead of the screen.
+ * It loads and fails on its own, so the weeks below stay usable whatever happens here. While runs wait
+ * for their best efforts, a line under the heading says how many are being checked, or why none are and
+ * what to do. Under the row, when Garmin's records are in, a caption says why only some tiles carry one.
  */
 export function PersonalBestsSection({ state, checkedAt }: PersonalBestsSectionProps) {
   return (
@@ -54,18 +54,20 @@ function PersonalBestsContent({ state, checkedAt }: PersonalBestsSectionProps) {
       {state.refetchError ? (
         <RetryAlert error={state.refetchError} onRetry={() => void state.refetch()} />
       ) : null}
-      <BadgeGrid>
-        {DISTANCE_KEYS.map((distanceKey, position) => (
+      <ul aria-label={progressCopy.personalBests} className={cn(BLEED, SCROLLER)}>
+        {DISTANCE_KEYS.map((distanceKey) => (
           <PersonalBestBadge
             key={distanceKey}
             distanceKey={distanceKey}
             best={bestByDistance.get(distanceKey)}
             garminRecord={garminByDistance.get(distanceKey)}
             now={checkedAt}
-            className={rowLine(position)}
           />
         ))}
-      </BadgeGrid>
+      </ul>
+      {garminByDistance.size > 0 ? (
+        <p className="text-caption text-ink-2">{progressCopy.garminRecordsNote}</p>
+      ) : null}
     </>
   );
 }
@@ -84,27 +86,25 @@ function PendingLine({ line }: { line: PendingBestsLine }) {
   );
 }
 
-/** Two columns on one card, so the eleven times fit a phone without a scroll of their own. */
-const GRID = "grid grid-cols-2 gap-x-4 rounded-md bg-surface-1 px-4 py-1";
-
-function BadgeGrid({ children }: { children: ReactNode }) {
-  return <ul className={GRID}>{children}</ul>;
-}
-
-function rowLine(position: number): string | undefined {
-  return position >= 2 ? "border-t border-line" : undefined;
-}
+/**
+ * The row bleeds to the screen's edges: -mx-4 undoes Progress's px-4 so tiles slide under the edge
+ * instead of being cut at the content's padding, and px-4 puts the first tile back in line with the
+ * heading. py-1 keeps a tile's focus ring inside the row, which clips what overflows it.
+ */
+const BLEED = "-mx-4 flex gap-3 px-4 py-1";
+/** Sideways scroll that settles with a tile at the heading's edge (scroll-px-4 matches the px-4). */
+const SCROLLER = "snap-x snap-mandatory scroll-px-4 overflow-x-auto";
 
 /**
- * The card with every badge at its loaded height (label, time, date), so nothing jumps on load. Blocks,
- * not a list: a screen reader hears the loading status around it, not eleven empty items.
+ * The row with every tile at its loaded height (label, time, date), so nothing jumps on load. Blocks, not
+ * a list: a screen reader hears the loading status around it, not eleven empty items.
  */
 export function PersonalBestsSkeleton() {
   return (
-    <div className={GRID}>
-      {DISTANCE_KEYS.map((distanceKey, position) => (
-        <div key={distanceKey} className={cn("py-3", rowLine(position))}>
-          <div className="flex flex-col gap-0.5 py-1">
+    <div className={cn(BLEED, "overflow-hidden")}>
+      {DISTANCE_KEYS.map((distanceKey) => (
+        <div key={distanceKey} className={TILE_SLOT}>
+          <div className={TILE_CARD}>
             <div className="flex h-4 items-center">
               <div className="h-3 w-10 rounded-sm bg-surface-2" />
             </div>

@@ -58,13 +58,21 @@ export function formatDuration(seconds: number | null | undefined): string {
 const RECORD_TIME_TOLERANCE_S = 1e-6;
 
 /**
+ * A best effort's or record's time in the whole seconds the runner sees (formatRecordTime cuts them), for
+ * a figure derived from it: a 1K in 290.5 s shows 4:50, so its pace must be 4:50 /km, not a rounded 4:51.
+ */
+export function recordSeconds(seconds: number): number {
+  return Math.floor(seconds + RECORD_TIME_TOLERANCE_S);
+}
+
+/**
  * A best effort or record, cut to the whole second rather than rounded, because Garmin shows its records
  * that way and the runner knows them in that form: 1625.87 → "27:05", 6972.6 → "1:56:12". m:ss under an
  * hour, h:mm:ss from the hour on.
  */
 export function formatRecordTime(seconds: number | null | undefined): string {
   if (!isFiniteNumber(seconds) || seconds <= 0) return MISSING;
-  const total = Math.floor(seconds + RECORD_TIME_TOLERANCE_S);
+  const total = recordSeconds(seconds);
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const rest = total % 60;

@@ -5,13 +5,15 @@ import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { formatLocalDay } from "@/lib/format";
 import { BackLink } from "./parts/back-link";
+import { BestEfforts } from "./parts/best-efforts";
+import { currentBests, inDistanceOrder } from "./parts/best-effort-order";
 import { RunDetail } from "./parts/run-detail";
 import { RunStats } from "./parts/run-stats";
 import { useRunScreen } from "./use-run";
 
 /**
- * One run at /runs/:id: its summary, then the route, laps, zones and samples fetched from Garmin on the
- * first open. Keyed by id, so moving to another run starts over instead of showing the last one's state.
+ * One run at /runs/:id: its summary, its best efforts, then the route, laps, zones and samples fetched from
+ * Garmin on the first open. Keyed by id, so moving to another run starts over instead of showing the last one's state.
  */
 export function RunScreen() {
   const { id = "" } = useParams();
@@ -46,13 +48,15 @@ function RunView({ id }: { id: string }) {
   }
 
   const { activity } = data;
+  const efforts = inDistanceOrder(data.bestEfforts);
 
   return (
     <RunLayout title={formatLocalDay(activity.startLocal)}>
       {screen.refetchError ? (
         <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
       ) : null}
-      <RunStats activity={activity} units={units} />
+      <RunStats activity={activity} units={units} bests={currentBests(efforts)} />
+      <BestEfforts efforts={efforts} units={units} />
       <RunDetail
         state={screen.detail}
         activity={activity}
