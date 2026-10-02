@@ -25,6 +25,7 @@ export const activityColumns = {
   elevationGainM: activity.elevationGainM,
   isIndoor: activity.isIndoor,
   isManual: activity.isManual,
+  eventType: activity.eventType,
 };
 
 type ActivityRow = Pick<typeof activity.$inferSelect, keyof typeof activityColumns>;

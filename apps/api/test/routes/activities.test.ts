@@ -6,6 +6,7 @@ import {
   activityWeeksResponseSchema,
   ErrorCode,
   latestActivityResponseSchema,
+  RACE_EVENT_TYPE,
 } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
@@ -90,6 +91,7 @@ describe("GET /api/activities/latest", () => {
       elevationGainM: 142,
       isIndoor: false,
       isManual: false,
+      eventType: "uncategorized",
     });
   });
 
@@ -344,6 +346,38 @@ describe("GET /api/activities", () => {
     expect(new Set(weekStarts).size).toBe(weekStarts.length);
   });
 
+  it("carries each run's event type: race, uncategorized, and null for a run stored before event types (race badge)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const race = await insertRun(userId, {
+      garminActivityId: 2,
+      startUtc: new Date("2026-09-06T05:30:00Z"),
+      startLocal: "2026-09-06 07:30:00",
+      eventType: RACE_EVENT_TYPE,
+    });
+    const easy = await insertRun(userId, {
+      garminActivityId: 3,
+      startUtc: new Date("2026-09-08T05:30:00Z"),
+      startLocal: "2026-09-08 07:30:00",
+      eventType: "uncategorized",
+    });
+    const unsynced = await insertRun(userId, {
+      garminActivityId: 1,
+      startUtc: new Date("2026-08-31T05:30:00Z"),
+      startLocal: "2026-08-31 07:30:00",
+    });
+
+    const { weeks } = await weeksPage(agent);
+
+    expect(
+      weeks.flatMap((week) => week.runs.map((run) => ({ id: run.id, eventType: run.eventType }))),
+    ).toEqual([
+      { id: easy.id, eventType: "uncategorized" },
+      { id: race.id, eventType: RACE_EVENT_TYPE },
+      { id: unsynced.id, eventType: null },
+    ]);
+  });
+
   it("never lists another user's runs", async () => {
     const agent = await signedInAgent(app);
     const other = await createUser("other.runner@example.com");
@@ -444,9 +478,23 @@ describe("GET /api/activities/:id", () => {
         elevationGainM: 142,
         isIndoor: false,
         isManual: false,
+        eventType: "uncategorized",
       },
       detail: null,
     });
+  });
+
+  it("returns eventType race for a run the runner marked a race on Garmin (race badge)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const run = await createLongRun(userId);
+    await db.update(activity).set({ eventType: RACE_EVENT_TYPE }).where(eq(activity.id, run.id));
+
+    const response = await agent.get(`/api/activities/${run.id}`);
+
+    expect(response.status).toBe(200);
+    expect(activityResponseSchema.parse(response.body).activity.eventType).toBe(RACE_EVENT_TYPE);
+    expect((await latest(agent))?.eventType).toBe(RACE_EVENT_TYPE);
   });
 
   it("returns the stored detail once it was fetched, without calling Garmin", async () => {
@@ -639,6 +687,7 @@ describe("POST /api/activities/:id/detail", () => {
         elevationGainM: 142,
         isIndoor: false,
         isManual: false,
+        eventType: "uncategorized",
       },
     ]);
 

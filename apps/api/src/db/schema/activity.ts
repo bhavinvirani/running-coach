@@ -42,6 +42,9 @@ export const activity = pgTable(
     elevationGainM: doublePrecision("elevation_gain_m"),
     isIndoor: boolean("is_indoor").notNull().default(false),
     isManual: boolean("is_manual").notNull().default(false),
+    // Garmin's eventType.typeKey (race, training, uncategorized, ...); "race" is what the app reads. Null
+    // until the next sync or Import history rewrites the row.
+    eventType: text("event_type"),
     garminUpdatedAt: timestamp("garmin_updated_at", { withTimezone: true }),
     summary: jsonb("summary"),
     ...timestamps(),

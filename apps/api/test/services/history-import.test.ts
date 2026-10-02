@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { ErrorCode } from "@running-coach/shared";
+import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { asc, eq } from "drizzle-orm";
 import type { SendOptions } from "pg-boss";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -105,7 +105,14 @@ describe("importHistoryPage", () => {
       "done",
     ]);
     expect(pages.reduce((sum, page) => sum + page.written, 0)).toBe(FIXTURE_ACCOUNT.runs);
-    expect(await runs(userId)).toHaveLength(FIXTURE_ACCOUNT.runs);
+    const stored = await runs(userId);
+    expect(stored).toHaveLength(FIXTURE_ACCOUNT.runs);
+    // Event types come over too: the account's one race, every other run uncategorized.
+    expect(
+      stored
+        .filter((row) => row.eventType !== "uncategorized")
+        .map((row) => [row.garminActivityId, row.eventType]),
+    ).toEqual([[10_000_000_002, RACE_EVENT_TYPE]]);
     const progress = await getImportProgress(userId);
     expect(progress).toMatchObject({
       status: "done",
