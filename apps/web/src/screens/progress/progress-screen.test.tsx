@@ -656,4 +656,54 @@ describe("ProgressScreen", () => {
     expect(screen.getByText("Importing history · 4 runs · back to Aug 2026")).toBeInTheDocument();
     expect(calls.filter((call) => call.path === "/api/activities")).toHaveLength(2);
   });
+
+  it("keeps a Show earlier weeks tap still loading when a poll finds more runs, then refreshes the list (polling)", async () => {
+    let releaseEarlier = () => {};
+    let earlierRequests = 0;
+    const { api, calls } = fakeProgressApi({
+      pages: {
+        latest: firstPage,
+        "2026-09-21": () => {
+          earlierRequests += 1;
+          if (earlierRequests > 1) return json(secondPage);
+          return new Promise<Response>((resolve) => {
+            releaseEarlier = () => resolve(json(secondPage));
+          });
+        },
+      },
+      progress: importProgressFixture({
+        status: "running",
+        runsStored: 3,
+        oldestDate: "2026-09-22",
+        startedAt: "2026-10-02T06:40:00Z",
+      }),
+    });
+    renderProgress();
+    await userEvent.click(await screen.findByRole("button", { name: "Show earlier weeks" }));
+    expect(screen.getByRole("status", { name: "Loading earlier weeks" })).toBeInTheDocument();
+
+    api.progress = { ...api.progress, runsStored: 4 };
+    act(() => polls.fire());
+    expect(
+      await screen.findByText("Importing history · 4 runs · back to Sep 2026"),
+    ).toBeInTheDocument();
+    const pages = () =>
+      calls
+        .filter((call) => call.path === "/api/activities")
+        .map((call) => call.query.get("before") ?? "latest");
+    expect(pages()).toEqual(["latest", "2026-09-21"]);
+
+    act(() => releaseEarlier());
+
+    expect(await screen.findByRole("region", { name: "27 Jul – 2 Aug" })).toBeInTheDocument();
+    // The refresh comes after the earlier page and walks both pages again from the newest.
+    await vi.waitFor(() =>
+      expect(pages()).toEqual(["latest", "2026-09-21", "latest", "2026-09-21"]),
+    );
+    expect(
+      await screen.findByRole("region", { name: "29 Dec 2025 – 4 Jan 2026" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "21–27 Sep" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show earlier weeks" })).not.toBeInTheDocument();
+  });
 });

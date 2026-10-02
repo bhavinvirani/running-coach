@@ -38,6 +38,8 @@ const selectWeeks = (
   data: InfiniteData<ActivityWeeksResponse, string | undefined>,
 ): ActivityWeek[] => data.pages.flatMap((page) => page.weeks);
 
+export const activityWeeksKey = listKey("activities", "weeks");
+
 /**
  * GET /api/activities: runs by week, newest first, a page of whole weeks at a time, so a week's total is
  * never split. Each page asks for the weeks before the previous page's `nextBefore`; a refetch walks the
@@ -45,7 +47,7 @@ const selectWeeks = (
  */
 export function useActivityWeeks() {
   return useInfiniteQuery({
-    queryKey: listKey("activities", "weeks"),
+    queryKey: activityWeeksKey,
     queryFn: ({ pageParam, signal }) =>
       apiFetch(activityWeeksPath(pageParam), { schema: activityWeeksResponseSchema, signal }),
     initialPageParam: undefined as string | undefined,

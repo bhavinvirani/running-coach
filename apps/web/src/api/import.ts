@@ -1,5 +1,12 @@
 import { importProgressSchema, type ImportProgress } from "@running-coach/shared";
-import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
+import { activityWeeksKey } from "./activities";
 import { apiFetch } from "./client";
 import { detailKey, resourceKey } from "./query-keys";
 
@@ -22,6 +29,18 @@ export function importChangedRuns(previous: ImportProgress, next: ImportProgress
 }
 
 /**
+ * Refreshes every list and detail of runs, Today's latest run among them; inactive ones refetch on mount.
+ * invalidateQueries cancels a fetch in flight and refetches only the pages already loaded, which would drop
+ * a "Show earlier weeks" page still loading, so that page lands first. Its failure, if any, is the weeks
+ * query's to show.
+ */
+async function refreshRuns(client: QueryClient): Promise<void> {
+  const weeks = client.getQueryCache().find({ queryKey: activityWeeksKey, exact: true });
+  if (weeks?.state.fetchStatus === "fetching") await weeks.promise?.catch(() => undefined);
+  await client.invalidateQueries({ queryKey: resourceKey("activities") });
+}
+
+/**
  * GET /api/import. The comparison with the cached progress lives in the fetch rather than an effect, so it
  * runs once per poll however many components read the import, and sees what POST /api/import put there.
  */
@@ -31,10 +50,7 @@ export function importProgressQueryOptions() {
     queryFn: async ({ client, queryKey, signal }) => {
       const previous = client.getQueryData<ImportProgress>(queryKey);
       const progress = await apiFetch("/api/import", { schema: importProgressSchema, signal });
-      if (previous !== undefined && importChangedRuns(previous, progress)) {
-        // Every list and detail of runs, Today's latest run among them; inactive ones refetch on mount.
-        void client.invalidateQueries({ queryKey: resourceKey("activities") });
-      }
+      if (previous !== undefined && importChangedRuns(previous, progress)) void refreshRuns(client);
       return progress;
     },
   });
