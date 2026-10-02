@@ -1,5 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import {
+  RACE_EVENT_TYPE,
   connectGarminResponseSchema,
   meResponseSchema,
   syncResponseSchema,
@@ -51,10 +52,14 @@ const fixtureTokenBundle = JSON.stringify({
 const pinnedLastSyncAt = "2026-09-26T12:00:00Z";
 
 /**
- * A cursor from which a sync reads from 2026-09-14: the fixture's four runs of 16 to 27 Sep, among them the
- * 8 km treadmill run of Thu 24 Sep and the 6.5 km run without heart rate of Wed 16 Sep.
+ * A cursor from which a sync reads from 2026-09-06: the fixture's six runs of 6 to 27 Sep, among them the
+ * 10.2 km race of Sun 6 Sep, the 8 km treadmill run of Thu 24 Sep and the 6.5 km run without heart rate of
+ * Wed 16 Sep.
  */
-export const syncFromMidSeptember = "2026-09-15T12:00:00Z";
+export const syncFromRaceDay = "2026-09-07T12:00:00Z";
+
+/** Garmin's event type for every fixture run that is not a race (sync.json, history.json). */
+const UNCATEGORIZED = "uncategorized";
 
 const runnerId = `(select id from "user" where email = $1)`;
 
@@ -139,20 +144,23 @@ export const fixtureRunIds = {
   treadmill: 10_000_000_006,
   /** 6.5 km outdoors on Wed 16 Sep 2026, 19:00, without heart rate. */
   noHeartRate: 10_000_000_004,
+  /** 10.2 km on Sun 6 Sep 2026, 07:30, outdoors, marked as a race in Garmin Connect. */
+  race: 10_000_000_002,
 } as const;
 
 /**
  * Stores the fixture's 18 km run of 2026-09-27 directly, as a sync stores it (same Garmin id, so a later
- * sync updates this row), for tests that need a run on screen without spending a Garmin login.
+ * sync updates this row), for tests that need a run on screen without spending a Garmin login. With
+ * `race`, it is stored as a race, which the fixture's run is not: a later sync would make it uncategorized.
  */
-export async function seedLongRun(): Promise<void> {
+export async function seedLongRun({ race = false }: { race?: boolean } = {}): Promise<void> {
   await withDatabase((db) =>
     db.query(
       `insert into activity (user_id, garmin_activity_id, type, start_utc, start_local, distance_m,
-         duration_s, avg_hr, max_hr, cadence, calories, elevation_gain_m)
+         duration_s, avg_hr, max_hr, cadence, calories, elevation_gain_m, event_type)
        values (${runnerId}, $2, 'running', '2026-09-27T06:00:00Z', '2026-09-27 08:00:00', 18000,
-         6120, 148, 166, 168, 1150, 142)`,
-      [runner.email, fixtureRunIds.longRun],
+         6120, 148, 166, 168, 1150, 142, $3)`,
+      [runner.email, fixtureRunIds.longRun, race ? RACE_EVENT_TYPE : UNCATEGORIZED],
     ),
   );
 }
@@ -162,10 +170,10 @@ export async function seedTreadmillRun(): Promise<void> {
   await withDatabase((db) =>
     db.query(
       `insert into activity (user_id, garmin_activity_id, type, start_utc, start_local, distance_m,
-         duration_s, avg_hr, max_hr, cadence, calories, elevation_gain_m, is_indoor)
+         duration_s, avg_hr, max_hr, cadence, calories, elevation_gain_m, is_indoor, event_type)
        values (${runnerId}, $2, 'treadmill_running', '2026-09-24T16:30:00Z', '2026-09-24 18:30:00', 8000,
-         2700, 152, 171, 172, 520, null, true)`,
-      [runner.email, fixtureRunIds.treadmill],
+         2700, 152, 171, 172, 520, null, true, $3)`,
+      [runner.email, fixtureRunIds.treadmill, UNCATEGORIZED],
     ),
   );
 }
@@ -453,13 +461,16 @@ type SeededRun = {
   durationS: number;
   indoor?: boolean;
   manual?: boolean;
+  /** Marked as a race in Garmin Connect; every other run is uncategorized, as Garmin sends it. */
+  race?: boolean;
 };
 
 /**
  * Ten weeks of a fictional 10K build, newest first: 24 runs from Wed 22 Jul to Sun 27 Sep 2026, every week
  * from 20–26 Jul to 21–27 Sep with two or three runs. Progress shows the eight newest weeks (21–27 Sep back
  * to 3–9 Aug) and Show earlier weeks the last two. Week totals in km, newest first: 30, 27, 24, 20, 22, 20,
- * 18, 16, then 15 and 12. The treadmill run of Thu 24 Sep is indoor, the run of Thu 17 Sep entered by hand.
+ * 18, 16, then 15 and 12. The treadmill run of Thu 24 Sep is indoor, the run of Thu 17 Sep entered by hand,
+ * the 5 km of Thu 10 Sep a race.
  */
 export const runHistory: readonly SeededRun[] = [
   // 21–27 Sep: 30.0 km, 2:49:00
@@ -472,7 +483,7 @@ export const runHistory: readonly SeededRun[] = [
   { startLocal: "2026-09-15T18:30:00", distanceM: 8000, durationS: 2640 },
   // 7–13 Sep: 24.0 km
   { startLocal: "2026-09-13T08:00:00", distanceM: 12_000, durationS: 4140 },
-  { startLocal: "2026-09-10T18:30:00", distanceM: 5000, durationS: 1650 },
+  { startLocal: "2026-09-10T18:30:00", distanceM: 5000, durationS: 1650, race: true },
   { startLocal: "2026-09-08T18:30:00", distanceM: 7000, durationS: 2310 },
   // 31 Aug – 6 Sep: 20.0 km
   { startLocal: "2026-09-06T08:00:00", distanceM: 13_000, durationS: 4485 },
@@ -507,11 +518,12 @@ export async function seedRunHistory(): Promise<void> {
   await withDatabase((db) =>
     db.query(
       `insert into activity (user_id, garmin_activity_id, type, start_utc, start_local, distance_m,
-         duration_s, is_indoor, is_manual)
+         duration_s, is_indoor, is_manual, event_type)
        select ${runnerId}, run.garmin_id, run.type, run.start_local at time zone 'Europe/Berlin',
-         run.start_local, run.distance_m, run.duration_s, run.indoor, run.manual
+         run.start_local, run.distance_m, run.duration_s, run.indoor, run.manual, run.event_type
        from unnest($2::bigint[], $3::text[], $4::timestamp[], $5::float8[], $6::float8[], $7::bool[],
-         $8::bool[]) as run(garmin_id, type, start_local, distance_m, duration_s, indoor, manual)`,
+         $8::bool[], $9::text[])
+         as run(garmin_id, type, start_local, distance_m, duration_s, indoor, manual, event_type)`,
       [
         runner.email,
         oldestFirst.map((_, index) => firstHistoryGarminId + index),
@@ -521,6 +533,7 @@ export async function seedRunHistory(): Promise<void> {
         oldestFirst.map((run) => run.durationS),
         oldestFirst.map((run) => run.indoor ?? false),
         oldestFirst.map((run) => run.manual ?? false),
+        oldestFirst.map((run) => (run.race ? RACE_EVENT_TYPE : UNCATEGORIZED)),
       ],
     ),
   );
