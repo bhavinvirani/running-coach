@@ -7,7 +7,7 @@ import {
 } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, bestEffort, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
@@ -29,6 +29,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopBoss();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 let nextGarminId = 1;
@@ -294,7 +298,7 @@ describe("GET /api/personal-bests checking and errorCode", () => {
     });
   });
 
-  it("answers checking while a batch waits for its retry (Garmin outage)", async () => {
+  it("answers checking with the error that holds a batch waiting for its retry (Garmin outage)", async () => {
     const { agent, userId } = await ownerWithPendingRun({ lastError: ErrorCode.garminUnavailable });
     const boss = getBoss();
     const queued = await boss.send(
@@ -308,7 +312,80 @@ describe("GET /api/personal-bests checking and errorCode", () => {
 
     const [job] = await boss.findJobs(bestEffortsQueue.name, { id: queued });
     expect(job?.state).toBe("retry");
-    expect(await personalBests(agent)).toMatchObject({ checking: true, errorCode: null });
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 1,
+      checking: true,
+      errorCode: ErrorCode.garminUnavailable,
+    });
+  });
+
+  it("answers checking with garmin_rate_limited while a batch is deferred past a 429's hour (Garmin 429)", async () => {
+    const { agent, userId } = await ownerWithPendingRun({ lastError: ErrorCode.garminRateLimited });
+    // As the job defers itself on a 429.
+    await getBoss().send(
+      bestEffortsQueue.name,
+      { userId },
+      { ...bestEffortsQueue.sendOptions({ userId }), startAfter: 3600 },
+    );
+
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 1,
+      checking: true,
+      errorCode: ErrorCode.garminRateLimited,
+    });
+  });
+
+  it("answers checking without an error while a chained batch waits its 30 s turn, whatever the last error (backfill)", async () => {
+    const { agent, userId } = await ownerWithPendingRun({ lastError: ErrorCode.garminUnavailable });
+    await getBoss().send(
+      bestEffortsQueue.name,
+      { userId },
+      { ...bestEffortsQueue.sendOptions({ userId }), startAfter: 30 },
+    );
+
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 1,
+      checking: true,
+      errorCode: null,
+    });
+  });
+
+  it("counts a run waiting out its 6 h after a failed try as pending, with no batch and no error (one run failing)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await connectGarmin(userId);
+    await createRun(userId, {
+      garminActivityId: nextGarminId++,
+      bestEffortsAttempts: 1,
+      bestEffortsFailedAt: new Date(),
+    });
+
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 1,
+      checking: false,
+      errorCode: null,
+    });
+  });
+
+  it("reads the runs after asking pg-boss, so a batch that finished in between leaves nothing pending without a batch (read order)", async () => {
+    const { agent, userId } = await ownerWithPendingRun({ lastError: ErrorCode.garminUnavailable });
+    const boss = getBoss();
+    const findJobs = boss.findJobs.bind(boss);
+    // The batch finishes while pg-boss is asked: its job is gone and its run computed.
+    vi.spyOn(boss, "findJobs").mockImplementation(async (name, options) => {
+      const jobs = await findJobs(name, options);
+      await db
+        .update(activity)
+        .set({ bestEffortsVersion: BEST_EFFORTS_VERSION })
+        .where(eq(activity.userId, userId));
+      return jobs;
+    });
+
+    expect(await personalBests(agent)).toMatchObject({
+      pendingRuns: 0,
+      checking: false,
+      errorCode: null,
+    });
   });
 
   it.each([

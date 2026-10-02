@@ -15,6 +15,7 @@ import {
   count,
   desc,
   eq,
+  exists,
   gte,
   inArray,
   isNotNull,
@@ -23,11 +24,11 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { db } from "../db/client";
+import { type Db, type DbTransaction, db } from "../db/client";
 import { activity, bestEffort, garminConnection } from "../db/schema";
 import { garminClient } from "../garmin/client";
 import * as bestEffortsQueue from "../jobs/best-efforts-queue";
-import { hasPendingJob } from "../jobs/boss";
+import { findPendingJob, hasPendingJob } from "../jobs/boss";
 import { DomainError } from "../lib/errors";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
@@ -52,12 +53,19 @@ const eligible = and(
 );
 
 /**
- * Batches in which Garmin failed to read a run while it read others, before the run is given up. A run
- * Garmin cannot read (a broken file on its side) would otherwise come back in every batch, each one a
- * Garmin login; three failures in separate batches (a failed run goes last, so its tries spread out) tell
- * a broken run from a passing error. A sync that changes the run's distance or time starts the count again.
+ * Tries before a run is given up: batches in which Garmin failed to read the run while it read the
+ * batch's canary (before the user has one, another run of the batch). A run Garmin cannot read (a broken
+ * file on its side) would otherwise come back in every batch, each one a Garmin login. A sync that changes
+ * the run's distance or time starts the count again.
  */
 export const BEST_EFFORTS_MAX_ATTEMPTS = 3;
+
+/**
+ * Seconds a run waits after a batch failed on it before a batch takes it again. Batches chain 30 s apart,
+ * so without the wait a passing Garmin error would use up a run's tries in minutes; spaced 6 h, three
+ * failed tries tell a broken run from a bad hour, and the runs behind it go first meanwhile.
+ */
+export const BEST_EFFORTS_RETRY_AFTER_S = 6 * 60 * 60;
 
 /**
  * Eligible runs never computed, changed since (a null version), or computed by an older rule, unless
@@ -69,23 +77,74 @@ const pending = and(
   lt(activity.bestEffortsAttempts, BEST_EFFORTS_MAX_ATTEMPTS),
 );
 
-async function countPendingRuns(userId: string): Promise<number> {
-  const [row] = await db
-    .select({ runs: count() })
+/** Runs no batch failed on in the last BEST_EFFORTS_RETRY_AFTER_S: a pending one is due. */
+const rested = or(
+  isNull(activity.bestEffortsFailedAt),
+  lt(
+    activity.bestEffortsFailedAt,
+    sql`now() - make_interval(secs => ${BEST_EFFORTS_RETRY_AFTER_S})`,
+  ),
+);
+
+/**
+ * Pending runs by whether a batch may take them now (due) or they wait out BEST_EFFORTS_RETRY_AFTER_S.
+ * Takes the caller's transaction, so it also counts runs it has not committed yet.
+ */
+async function countPendingRuns(
+  userId: string,
+  executor: Db | DbTransaction = db,
+): Promise<{ due: number; waiting: number }> {
+  const [row] = await executor
+    .select({
+      all: count(),
+      due: sql<number>`count(*) filter (where ${rested})`.mapWith(Number),
+    })
     .from(activity)
     .where(and(eq(activity.userId, userId), pending));
-  return row?.runs ?? 0;
+  const due = row?.due ?? 0;
+  return { due, waiting: (row?.all ?? 0) - due };
+}
+
+/**
+ * The batch's canary: the user's newest run computed at the current rule that holds at least one effort,
+ * so Garmin gave it samples before, and that no outage batch stamped in the last
+ * BEST_EFFORTS_RETRY_AFTER_S (a canary deleted on Garmin then gives way to the next one). Undefined until a
+ * first batch stored an effort.
+ */
+async function findCanary(userId: string) {
+  const [canary] = await db
+    .select({ id: activity.id, garminActivityId: activity.garminActivityId })
+    .from(activity)
+    .where(
+      and(
+        eq(activity.userId, userId),
+        eligible,
+        eq(activity.bestEffortsVersion, BEST_EFFORTS_VERSION),
+        rested,
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(bestEffort)
+            .where(eq(bestEffort.activityId, activity.id)),
+        ),
+      ),
+    )
+    .orderBy(desc(activity.startUtc), desc(activity.garminActivityId))
+    .limit(1);
+  return canary;
 }
 
 export interface BestEffortsBatchResult {
   /** Runs marked done in this batch, with or without efforts. */
   processed: number;
-  /** Runs Garmin could not read in this batch: pending until BEST_EFFORTS_MAX_ATTEMPTS, tried again last. */
+  /** Runs Garmin could not read while it read the canary: one try counted, waiting until tried again. */
   failed: number;
-  /** Runs the Garmin service never asked about (it stopped early): pending as they were, no attempt counted. */
+  /** Runs the Garmin service never asked about (it stopped early): pending as they were, no try counted. */
   skipped: number;
-  /** Pending runs left after it; the job queues its successor while any are. */
+  /** Pending runs a next batch may take now; the job queues its successor while any are. */
   remaining: number;
+  /** Pending runs waiting out BEST_EFFORTS_RETRY_AFTER_S after a failure; the next sync queues them. */
+  waiting: number;
 }
 
 function garminDown(): DomainError {
@@ -96,70 +155,59 @@ function garminDown(): DomainError {
   );
 }
 
-/**
- * Whether a series answer says Garmin is down rather than anything about these runs, so nothing may be
- * marked: no run came back "ok" or "gone" (every run failed, or the service skipped the rest after failures
- * in a row), or several runs Garmin was asked about all came back without a sample, which is what a moved
- * or blocked details endpoint looks like (one run without samples is a run Garmin holds no detail for). A
- * skipped run says nothing about Garmin either way. One exception: a batch of a single run that failed
- * again after failing while Garmin read others is that run failing, or the last pending run would be
- * retried as an outage after every sync and never given up.
- */
-function readsAsOutage(
-  batch: readonly { bestEffortsAttempts: number }[],
-  series: readonly GarminActivitySeries[],
-): boolean {
-  if (!series.some((run) => run.outcome === "ok" || run.outcome === "gone")) {
-    const loneRunFailedAgain =
-      batch.length === 1 &&
-      series[0]?.outcome === "failed" &&
-      (batch[0]?.bestEffortsAttempts ?? 0) > 0;
-    return !loneRunFailedAgain;
-  }
-  const asked = series.filter((run) => run.outcome !== "skipped");
-  return (
-    asked.length > 1 && asked.every((run) => run.outcome === "ok" && run.elapsedS.length === 0)
-  );
+/** Whether Garmin read the run: "ok" with samples. */
+function hasSamples(series: GarminActivitySeries): boolean {
+  return series.outcome === "ok" && series.elapsedS.length > 0;
 }
 
 /**
- * Computes the best efforts of up to GARMIN_SERIES_BATCH_MAX pending runs, with one Garmin call inside the
- * per-user lock (the gates, bundle write-back and failure bookkeeping of openGarminAccount). Runs that
- * failed before go last, so a run Garmin keeps failing on cannot hold back the others; otherwise newest
- * first. The batch that empties the pending list also fetches Garmin's own records.
+ * Computes the best efforts of up to GARMIN_SERIES_BATCH_MAX due runs, never-failed first, then newest,
+ * with one Garmin call inside the per-user lock (the gates, bundle write-back and failure bookkeeping of
+ * openGarminAccount). The batch that takes the last due runs also fetches Garmin's own records. Nothing due
+ * returns at once without calling Garmin, which makes a duplicate job, or one whose runs all wait, a no-op.
  *
- * Each run comes back "ok", "gone", "failed" or "skipped". An answer that reads as Garmin being down
- * (readsAsOutage) throws garmin_unavailable before anything is written, recorded on the connection like any
- * Garmin failure, and the job retries. Otherwise, in one transaction: an "ok" run's rows are replaced and
- * its version set, so a recompute writes the same rows and a kill leaves the run pending; a "gone" run
- * (deleted on Garmin) is done with no rows; a "failed" run counts one more attempt and stays pending until
- * BEST_EFFORTS_MAX_ATTEMPTS; a "skipped" run (the service stopped early, after failures in a row or at its
- * time budget, before asking Garmin about it) is left exactly as it was, so a run never fetched is never
- * given up. Nothing pending returns at once without calling Garmin, which makes a duplicate job a no-op.
+ * Whether Garmin works is read from one run: the canary (findCanary), asked first and its answer never
+ * written, beside one fewer pending run. First in the request, so the service's early stop after two
+ * failures in a row cannot skip it. The canary back "ok" with samples means Garmin works, and every other
+ * run's outcome is its own; anything else is an outage. Without a canary (a user's first batches), an
+ * answer in which no run came back "ok" with samples is an outage.
+ *
+ * An outage writes no outcome and counts no try: it stamps best_efforts_failed_at on every run Garmin was
+ * asked about that came back without samples (the canary included, so a canary deleted on Garmin gives way
+ * to the next), in a write of its own, so the retry starts with the runs behind them, skipped ones first,
+ * instead of the same head (a first pass gets past broken newest runs; a real outage only delays the
+ * stamped runs), then throws garmin_unavailable inside the call, which records it on the connection, and
+ * the job retries. Otherwise, in one transaction: an "ok" run's rows are replaced and its version set, so a
+ * recompute writes the same rows and a kill leaves the run pending; a "gone" run (deleted on Garmin) is done
+ * with no rows; a "failed" run counts a try, stamped so it waits BEST_EFFORTS_RETRY_AFTER_S, and is given up
+ * at BEST_EFFORTS_MAX_ATTEMPTS; a "skipped" run (the service stopped early, after failures in a row or at
+ * its time budget) is left exactly as it was, so a run never fetched is never given up.
  */
 export async function computeBestEffortsBatch(
   userId: string,
   { signal }: { signal?: AbortSignal } = {},
 ): Promise<BestEffortsBatchResult> {
   return withUserLock(userId, async () => {
-    // One more than a batch tells whether this batch empties the list, without a count.
+    // One more than a batch tells whether this batch takes the last due runs, without a count.
     const candidates = await db
-      .select({
-        id: activity.id,
-        garminActivityId: activity.garminActivityId,
-        bestEffortsAttempts: activity.bestEffortsAttempts,
-      })
+      .select({ id: activity.id, garminActivityId: activity.garminActivityId })
       .from(activity)
-      .where(and(eq(activity.userId, userId), pending))
+      .where(and(eq(activity.userId, userId), pending, rested))
       .orderBy(
         asc(activity.bestEffortsAttempts),
         desc(activity.startUtc),
         desc(activity.garminActivityId),
       )
       .limit(GARMIN_SERIES_BATCH_MAX + 1);
-    if (candidates.length === 0) return { processed: 0, failed: 0, skipped: 0, remaining: 0 };
-    const batch = candidates.slice(0, GARMIN_SERIES_BATCH_MAX);
-    const includeRecords = candidates.length <= GARMIN_SERIES_BATCH_MAX;
+    if (candidates.length === 0) {
+      const { waiting } = await countPendingRuns(userId);
+      return { processed: 0, failed: 0, skipped: 0, remaining: 0, waiting };
+    }
+    const canary = await findCanary(userId);
+    const size = canary ? GARMIN_SERIES_BATCH_MAX - 1 : GARMIN_SERIES_BATCH_MAX;
+    const batch = candidates.slice(0, size);
+    const includeRecords = candidates.length <= size;
+    const asked = canary ? [canary, ...batch] : batch;
 
     const account = await openGarminAccount(userId);
     signal?.throwIfAborted();
@@ -167,32 +215,51 @@ export async function computeBestEffortsBatch(
       const answer = await garminClient.series(
         {
           tokenBundle,
-          garminActivityIds: batch.map((run) => run.garminActivityId),
+          garminActivityIds: asked.map((run) => run.garminActivityId),
           includeRecords,
         },
         options,
       );
-      // Thrown inside the call, so the connection records it like any other Garmin failure; a bundle
-      // Garmin rotated is already stored by then.
-      if (readsAsOutage(batch, answer.series)) {
+      const answered = asked.map((run, index) => {
+        const series = answer.series[index];
+        // The contract answers every id in request order; anything else is a service bug, and marking
+        // the runs done on it would hide their efforts for good.
+        if (series?.garminActivityId !== run.garminActivityId) {
+          throw new Error("The Garmin service answered the series out of request order");
+        }
+        return { run, series };
+      });
+      const garminWorks = canary
+        ? answered[0] !== undefined && hasSamples(answered[0].series)
+        : answered.some(({ series }) => hasSamples(series));
+      if (!garminWorks) {
+        // Not the skipped runs: never asked, they are the ones the retry starts with.
+        const stamped = answered
+          .filter(({ series }) => series.outcome !== "skipped" && !hasSamples(series))
+          .map(({ run }) => run.id);
+        // Its own write, outside the lock's transaction, so it survives the throw below.
+        await db
+          .update(activity)
+          .set({ bestEffortsFailedAt: sql`now()`, updatedAt: sql`${activity.updatedAt}` })
+          .where(inArray(activity.id, stamped));
         log.warn(
-          { userId, runs: batch.length, ...outcomeCounts(answer.series) },
-          "series answer reads as garmin being down; nothing marked",
+          {
+            userId,
+            runs: batch.length,
+            canary: canary !== undefined,
+            ...outcomeCounts(answer.series),
+          },
+          "series answer reads as garmin being down; nothing marked, the runs asked wait",
         );
+        // Thrown inside the call, so the connection records it like any other Garmin failure; a bundle
+        // Garmin rotated is already stored by then.
         throw garminDown();
       }
-      return answer;
+      return { records: answer.records, series: answer.series, answered };
     });
 
-    const answered = batch.map((run, index) => {
-      const series = response.series[index];
-      // The contract answers every id in request order; anything else is a service bug, and marking
-      // the runs done on it would hide their efforts for good.
-      if (series?.garminActivityId !== run.garminActivityId) {
-        throw new Error("The Garmin service answered the series out of request order");
-      }
-      return { run, series };
-    });
+    // The canary's answer is never written.
+    const answered = canary ? response.answered.slice(1) : response.answered;
     // A "skipped" run is in neither list: no row of it is touched.
     const doneIds = answered
       .filter(({ series }) => series.outcome === "ok" || series.outcome === "gone")
@@ -218,6 +285,7 @@ export async function computeBestEffortsBatch(
           .set({
             bestEffortsVersion: BEST_EFFORTS_VERSION,
             bestEffortsAttempts: 0,
+            bestEffortsFailedAt: null,
             updatedAt: keepUpdatedAt,
           })
           .where(inArray(activity.id, doneIds));
@@ -229,6 +297,7 @@ export async function computeBestEffortsBatch(
               .update(activity)
               .set({
                 bestEffortsAttempts: sql`${activity.bestEffortsAttempts} + 1`,
+                bestEffortsFailedAt: sql`now()`,
                 updatedAt: keepUpdatedAt,
               })
               .where(inArray(activity.id, failedIds))
@@ -239,17 +308,21 @@ export async function computeBestEffortsBatch(
           .set({ garminRecords: response.records, garminRecordsAt: sql`now()` })
           .where(eq(garminConnection.userId, userId));
       }
+      // Some run came back "ok" with samples (the canary, or one of the batch without one), or this
+      // would have been an outage: the login works.
       await recordGarminSuccess(tx, userId);
       return failedRuns
         .filter((run) => run.attempts >= BEST_EFFORTS_MAX_ATTEMPTS)
         .map((run) => run.id);
     });
 
+    const { due, waiting } = await countPendingRuns(userId);
     const result = {
       processed: doneIds.length,
       failed: failedIds.length,
       skipped,
-      remaining: await countPendingRuns(userId),
+      remaining: due,
+      waiting,
     };
     if (givenUp.length > 0) {
       log.warn(
@@ -261,6 +334,7 @@ export async function computeBestEffortsBatch(
       {
         userId,
         ...result,
+        canary: canary !== undefined,
         ...outcomeCounts(response.series),
         efforts: rows.length,
         records: response.records?.length ?? null,
@@ -283,13 +357,21 @@ function outcomeCounts(series: readonly GarminActivitySeries[]) {
 }
 
 /**
- * Queues a best-efforts batch when the user has pending runs. Called after a sync or an import page has
- * committed its runs and released the user lock. Never throws: a failed send must not fail the sync or
- * the page that called it, and the next one queues it again.
+ * Queues a best-efforts batch when the user has runs a batch may take now, unless pg-boss holds a job of
+ * theirs in any state: a waiting or running one re-reads what is pending, so it covers new runs, and a
+ * fresh one beside a retrying one would call Garmin before the retry's backoff ran out. A sync calls it
+ * after committing its runs; an import page calls it inside its transaction (`executor`, which also counts
+ * the page's runs), so the job is pending before the import can read as done. Never throws on its own: a
+ * failed send must not fail the sync or the page that called it, and the next one queues it again (a
+ * failed count inside the caller's transaction still fails that transaction).
  */
-export async function queueBestEfforts(userId: string): Promise<string | null> {
+export async function queueBestEfforts(
+  userId: string,
+  executor: Db | DbTransaction = db,
+): Promise<string | null> {
   try {
-    if ((await countPendingRuns(userId)) === 0) return null;
+    if ((await countPendingRuns(userId, executor)).due === 0) return null;
+    if (await hasPendingJob(bestEffortsQueue.name, userId)) return null;
     return await bestEffortsQueue.enqueueBestEfforts({ userId });
   } catch (err) {
     log.error({ err, userId }, "best-efforts batch not queued; the next sync queues it again");
@@ -298,15 +380,18 @@ export async function queueBestEfforts(userId: string): Promise<string | null> {
 }
 
 /**
- * Queues a batch for every user with pending runs, once the workers run at boot. A deploy that raises
- * BEST_EFFORTS_VERSION, or the first one with best efforts, leaves stored runs pending, and otherwise
- * nothing would queue them before each user's next sync. Never throws, so boot goes on: a failure is
- * logged, and the next sync queues the work again. Returns how many batches were queued.
+ * Queues a batch for every user with runs a batch may take now, once the workers run at boot. A deploy
+ * that raises BEST_EFFORTS_VERSION, or the first one with best efforts, leaves stored runs pending, and
+ * otherwise nothing would queue them before each user's next sync. Never throws, so boot goes on: a failure
+ * is logged, and the next sync queues the work again. Returns how many batches were queued.
  */
 export async function queuePendingBestEfforts(): Promise<number> {
   let users: { userId: string }[];
   try {
-    users = await db.selectDistinct({ userId: activity.userId }).from(activity).where(pending);
+    users = await db
+      .selectDistinct({ userId: activity.userId })
+      .from(activity)
+      .where(and(pending, rested));
   } catch (err) {
     log.error({ err }, "pending best efforts not queued at boot; the next sync queues them");
     return 0;
@@ -322,9 +407,10 @@ export async function queuePendingBestEfforts(): Promise<number> {
 const DISTANCE_ORDER = new Map(distanceKeySchema.options.map((key, index) => [key, index]));
 
 /**
- * Why pending runs have no job to check them: no Garmin login, an expired one (the next sync after a
- * reconnect queues the work), or the error the last Garmin call ended with, when it is one of this app's
- * codes. Null when no reason is known: the next sync queues the work again.
+ * Why pending runs are not being checked: no Garmin login, an expired one (the next sync after a reconnect
+ * queues the work), or the error the last Garmin call ended with, when it is one of this app's codes, which
+ * is also what holds back a deferred or retrying job. Null when no reason is known: the next sync queues
+ * the work again.
  */
 function stoppedBecause(
   connection: Pick<typeof garminConnection.$inferSelect, "status" | "lastError"> | undefined,
@@ -339,11 +425,16 @@ function stoppedBecause(
  * GET /api/personal-bests: the fastest effort per distance over runs that still count, shortest first.
  * A run edited since its efforts were computed (a null version) is left out until they are again; an
  * exact tie goes to the earlier run. No Garmin call: Garmin's records are the ones last stored. Also
- * whether a best-efforts job for the user is waiting, retrying or running, and, when runs are pending with
- * none, why (stoppedBecause), so the screen polls only while something will change.
+ * whether a best-efforts job for the user is waiting, deferred, retrying or running (checking), and, while
+ * runs are pending with no job or with one held back (a 429's hour, a retry's backoff), why
+ * (stoppedBecause), so the screen polls only while something will change and says what holds it.
+ *
+ * pg-boss is asked first and the tables after: a batch that finishes in between is then visible to the
+ * reads, never a job gone with the runs it computed still counted as pending.
  */
 export async function getPersonalBests(userId: string): Promise<PersonalBestsResponse> {
-  const [fastest, pendingRuns, [connection], checking] = await Promise.all([
+  const job = await findPendingJob(bestEffortsQueue.name, userId);
+  const [fastest, { due, waiting }, [connection]] = await Promise.all([
     db
       .selectDistinctOn([bestEffort.distanceKey], {
         distanceKey: bestEffort.distanceKey,
@@ -372,7 +463,6 @@ export async function getPersonalBests(userId: string): Promise<PersonalBestsRes
       })
       .from(garminConnection)
       .where(eq(garminConnection.userId, userId)),
-    hasPendingJob(bestEffortsQueue.name, userId),
   ]);
 
   const bests: PersonalBest[] = fastest
@@ -384,6 +474,8 @@ export async function getPersonalBests(userId: string): Promise<PersonalBestsRes
     .sort(
       (a, b) => (DISTANCE_ORDER.get(a.distanceKey) ?? 0) - (DISTANCE_ORDER.get(b.distanceKey) ?? 0),
     );
+  // Runs waiting out their retry spacing count too: they are not done, and the screen says so.
+  const pendingRuns = due + waiting;
   return {
     bests,
     garmin:
@@ -391,7 +483,8 @@ export async function getPersonalBests(userId: string): Promise<PersonalBestsRes
         ? { records: connection.records, fetchedAt: connection.fetchedAt.toISOString() }
         : null,
     pendingRuns,
-    checking,
-    errorCode: pendingRuns > 0 && !checking ? stoppedBecause(connection) : null,
+    checking: job !== null,
+    errorCode:
+      pendingRuns > 0 && (job === null || job.heldBack) ? stoppedBecause(connection) : null,
   };
 }

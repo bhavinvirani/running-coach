@@ -152,6 +152,7 @@ describe("best-efforts job", () => {
       failed: 0,
       skipped: 0,
       remaining: 2,
+      waiting: 0,
       nextJobId: jobs[1]?.id,
     });
     expect(jobs[1]?.output).toEqual({
@@ -160,6 +161,7 @@ describe("best-efforts job", () => {
       failed: 0,
       skipped: 0,
       remaining: 0,
+      waiting: 0,
       nextJobId: null,
     });
     const [stored] = await db
@@ -184,12 +186,38 @@ describe("best-efforts job", () => {
       failed: 0,
       skipped: 0,
       remaining: 0,
+      waiting: 0,
       nextJobId: null,
     });
     expect(series).not.toHaveBeenCalled();
     expect(await db.select().from(bestEffort).where(eq(bestEffort.userId, userId))).toEqual(
       efforts,
     );
+  });
+
+  it("completes without calling Garmin or queueing a successor when every pending run waits out its 6 h (failed run spacing)", async () => {
+    const userId = await connectedUser();
+    await createRuns(userId, [LONG_RUN]);
+    await db
+      .update(activity)
+      .set({ bestEffortsAttempts: 1, bestEffortsFailedAt: new Date() })
+      .where(eq(activity.userId, userId));
+    const series = vi.spyOn(garminClient, "series");
+
+    const job = await waitForJob(await enqueueBestEfforts({ userId }));
+
+    expect(job).toMatchObject({ state: "completed", retryCount: 0 });
+    expect(job.output).toEqual({
+      status: "ok",
+      processed: 0,
+      failed: 0,
+      skipped: 0,
+      remaining: 0,
+      waiting: 1,
+      nextJobId: null,
+    });
+    expect(series).not.toHaveBeenCalled();
+    expect(await queuedJobs(userId)).toEqual([]);
   });
 
   it("queues its successor BATCH_GAP_S after a batch while runs are pending (paced backfill)", async () => {

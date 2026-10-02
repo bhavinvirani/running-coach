@@ -6,8 +6,8 @@ import { logger, withRequestId } from "../lib/logger";
 import { type BestEffortsBatchResult, computeBestEffortsBatch } from "../services/best-efforts";
 import { data, jobOptions, name, sendOptions } from "./best-efforts-queue";
 
-// One batch of a user's best efforts per job, queued after each sync and import page while runs are
-// pending, each batch queueing the next until none are. The queue's name, data and options live in
+// One batch of a user's best efforts per job, queued after each sync and import page while runs are due,
+// each batch queueing the next until none are. The queue's name, data and options live in
 // best-efforts-queue.ts.
 
 export { data, jobOptions, name, queue, sendOptions } from "./best-efforts-queue";
@@ -32,14 +32,16 @@ export type BestEffortsOutput =
   | { status: "garmin_auth_expired" | "garmin_not_connected" };
 
 /**
- * Runs one batch and queues the next while runs are pending, BATCH_GAP_S later and without an id: the
- * successor re-reads what is pending, so a send folded into a waiting job loses nothing.
+ * Runs one batch and queues the next while runs are due, BATCH_GAP_S later and without an id: the
+ * successor re-reads what is pending, so a send folded into a waiting job loses nothing. Runs waiting out
+ * BEST_EFFORTS_RETRY_AFTER_S after a failure get no successor: a job that finds only those completes
+ * without calling Garmin, and a sync after the wait queues them.
  *
  * A 429 defers the work exactly as sync does: every waiting batch of the user moves to start after
  * retryAfterSeconds, or one is queued for then, and the job completes, never as a failed attempt. An
  * expired or missing login completes too: retrying cannot fix it, and the next sync after a reconnect
  * queues the batch again. Anything else throws, garmin_unavailable for an answer that reads as Garmin
- * being down included, and pg-boss retries with backoff; the runs stay pending.
+ * being down (the canary failed) included, and pg-boss retries with backoff; the runs stay pending.
  */
 export async function handle(
   boss: PgBoss,

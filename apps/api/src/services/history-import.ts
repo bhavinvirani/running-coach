@@ -171,8 +171,9 @@ export type ImportHistoryPageResult = { status: "skipped" } | ImportedPage;
  * missing or expired login and during the hour after a 429; a paused import that passes those gates is
  * running again before Garmin is called. Rethrows a failed Garmin call after recording it on the
  * connection; the job decides what each error means for the import. On success the runs, the cursor and
- * the connection's ok status commit in one transaction. Garmin's short page ends the import. An imported
- * page then queues the user's best efforts when runs are pending, outside the lock the batch also takes.
+ * the connection's ok status commit in one transaction. Garmin's short page ends the import. Inside that
+ * transaction, before its commit, the page also queues the user's best efforts when runs are due, so no
+ * reader sees the import done before the batch is pending.
  */
 export async function importHistoryPage({
   userId,
@@ -184,7 +185,7 @@ export async function importHistoryPage({
     throw new RangeError(`pageSize must exceed the overlap of ${HISTORY_PAGE_OVERLAP}`);
   }
 
-  const imported = await withUserLock(userId, async (): Promise<ImportHistoryPageResult> => {
+  return withUserLock(userId, async (): Promise<ImportHistoryPageResult> => {
     const progress = await readProgress(userId);
     if (!progress || progress.status === "done" || progress.status === "failed") {
       return { status: "skipped" } as const;
@@ -214,6 +215,10 @@ export async function importHistoryPage({
 
     const written = await db.transaction(async (tx) => {
       const rows = await upsertActivities(userId, page.activities, tx);
+      // Before the commit: a reader that sees the import done must also see the batch for its runs. The
+      // batch waits on the user lock this page holds, so it reads the runs once they are committed; one
+      // queued for a page that then rolls back finds nothing new and calls no one.
+      await queueBestEfforts(userId, tx);
       await tx
         .update(importProgress)
         .set({
@@ -245,8 +250,6 @@ export async function importHistoryPage({
     log.info({ userId, ...result }, "history page imported");
     return result;
   });
-  if (imported.status !== "skipped") await queueBestEfforts(userId);
-  return imported;
 }
 
 const unfinished = inArray(importProgress.status, ["running", "paused"]);

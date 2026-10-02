@@ -47,11 +47,39 @@ const PENDING_JOB_STATES: ReadonlySet<JobWithMetadata["state"]> = new Set([
   "active",
 ]);
 
+/**
+ * A waiting job due within this many seconds waits its turn; one due later is held back (a 429's hour). A
+ * chained successor's short gap (best-efforts' 30 s) is a turn, not a hold.
+ */
+export const HELD_BACK_AFTER_S = 60;
+
+export interface PendingJob {
+  /** Some pending job of the key waits out a retry's backoff, or is not due for HELD_BACK_AFTER_S. */
+  heldBack: boolean;
+}
+
+/**
+ * The jobs of the queue under this singleton key that pg-boss can still run, folded into one answer: null
+ * when there is none, else whether they are held back rather than waiting their turn or running.
+ */
+export async function findPendingJob(name: string, key: string): Promise<PendingJob | null> {
+  // Without `queued`, findJobs returns every state; `queued` alone would leave out the active job.
+  const jobs = (await getBoss().findJobs(name, { key })).filter((job) =>
+    PENDING_JOB_STATES.has(job.state),
+  );
+  if (jobs.length === 0) return null;
+  const heldAfter = Date.now() + HELD_BACK_AFTER_S * 1000;
+  return {
+    heldBack: jobs.some(
+      (job) =>
+        job.state === "retry" || (job.state === "created" && job.startAfter.getTime() > heldAfter),
+    ),
+  };
+}
+
 /** Whether pg-boss holds a job of the queue under this singleton key that it can still run. */
 export async function hasPendingJob(name: string, key: string): Promise<boolean> {
-  // Without `queued`, findJobs returns every state; `queued` alone would leave out the active job.
-  const jobs = await getBoss().findJobs(name, { key });
-  return jobs.some((job) => PENDING_JOB_STATES.has(job.state));
+  return (await findPendingJob(name, key)) !== null;
 }
 
 // A fixed namespace for this app's job ids.

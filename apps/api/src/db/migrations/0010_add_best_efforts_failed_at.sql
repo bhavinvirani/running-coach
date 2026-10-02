@@ -1,0 +1,1 @@
+ALTER TABLE "activity" ADD COLUMN "best_efforts_failed_at" timestamp with time zone;
