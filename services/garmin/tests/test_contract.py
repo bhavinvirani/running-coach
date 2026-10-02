@@ -10,26 +10,12 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from jsonschema import Draft202012Validator
 
 from garmin_service.models.problem import ErrorCode
 from tests.conftest import AppFactory
-from tests.helpers import JSON_SCHEMA_DIR, ScriptedGarmin, bundle
+from tests.helpers import JSON_SCHEMA_DIR, ScriptedGarmin, assert_valid, bundle
 
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
-
-
-def validator(name: str) -> Draft202012Validator:
-    schema = json.loads((JSON_SCHEMA_DIR / f"{name}.json").read_text(encoding="utf-8"))
-    Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
-
-
-def assert_valid(name: str, instance: Any) -> None:
-    errors = [
-        f"{list(e.absolute_path)}: {e.message}" for e in validator(name).iter_errors(instance)
-    ]
-    assert errors == [], errors
 
 
 @pytest.mark.parametrize("behaviour", [None, "rotate", "rotated"])

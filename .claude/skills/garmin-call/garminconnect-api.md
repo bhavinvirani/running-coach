@@ -9,7 +9,7 @@ Needs `pydantic` installed for the workout models (optional dependency of the li
 - Access token (`di_token`, JWT) lives about 24.6 h. Refresh token is opaque and ROTATES on every refresh.
 - The library refreshes when the access token is under 15 min from expiry (`_token_expires_soon`, 900 s) and inside `login(tokenstore=...)`.
 - Therefore: after every call, compare `dumps()` with the input bundle and write it back if changed; serialize all calls per user (two concurrent refreshes kill the bundle).
-- Login from password: `Garmin(email, password, return_on_mfa=True).login()` returns `("needs_mfa", None)` when a code is needed; then `resume_login({}, code)`. The MFA state is a live HTTP session on the instance, not serializable.
+- Login from password: `Garmin(email, password, return_on_mfa=True).login()` returns `("needs_mfa", None)` when a code is needed; then `resume_login({}, code)`. The MFA state is a live HTTP session on the instance, not serializable. `pnpm garmin:connect` (`garmin_service/connect_cli.py`) is the one caller; details under "Password login" below.
 - Garmin answered 429 to the library's mobile login fingerprints even from a home IP; the web-widget fallback inside `login()` succeeded. Login rarely, reuse tokens, never auto-retry 429 (blocks last about 1 h).
 
 ## Politeness
@@ -61,3 +61,11 @@ Verified on an Instinct 2 Solar: the workout showed on the watch with per-step p
 - `dumps()` is `json.dumps({"di_token", "di_refresh_token", "di_client_id"})` with default separators.
 - `get_activities_by_date` pages 20 at a time with no pause between pages (cap 2000 pages, then `GarminConnectConnectionError`); newest first unless `sortorder="asc"`. Items: `startTimeGMT` and `startTimeLocal` as `"YYYY-MM-DD HH:MM:SS"` without a zone, `timeZoneId` an int (not IANA), `manualActivity` bool, cadence in `averageRunningCadenceInStepsPerMinute`.
 - No `py.typed`: mypy uses `follow_untyped_imports` for `garminconnect`.
+
+## Password login (verified in 0.3.17 source, 2026-10-02)
+
+- With `return_on_mfa=True`, `login()` returns straight after the credential login, code or not: `(None, None)` or `("needs_mfa", None)`. It skips the profile load, so `display_name` and `full_name` stay None; `resume_login({}, code)` verifies the code, then loads profile and settings.
+- `login()` with no tokenstore reads env `GARMINTOKENS` and loads that file instead of logging in; the CLI unsets it.
+- Wrong email or password: `GarminConnectAuthenticationError("401 Unauthorized (Invalid Username or Password)")`, which stops the strategy chain at once. Wrong code: `GarminConnectAuthenticationError("MFA verification failed: [...]")`; the pending MFA session survives, so the same instance could take another code (the CLI exits instead). A network failure on every verify endpoint lands in that same message with no chained cause, so it reads as a wrong code.
+- Every strategy or verify endpoint answering 429: `GarminConnectTooManyRequestsError`. Otherwise `GarminConnectConnectionError("Login failed: All login strategies exhausted: ...")`, re-raised as the 429 or auth error when "429" or "401" is in the text. `errors.from_garmin_exception` maps all of these.
+- When the DI token exchange fails, login falls back to a `JWT_WEB` cookie session and `dumps()` then holds `di_token: null`: a bundle no other process can use. The CLI checks for both DI tokens before uploading.
