@@ -9,7 +9,9 @@ describe("RunTypeChip", () => {
     render(<RunTypeChip eventType={RACE_EVENT_TYPE} />);
 
     const chip = screen.getByText("Race");
-    expect(chip).toHaveClass("inline-flex", "items-center", "gap-2", "text-body", "text-ink");
+    expect(chip).toHaveClass("inline-flex", "items-center", "gap-2");
+    // No size or color of its own: a caption line keeps its size and grey around the chip.
+    expect(chip).not.toHaveClass("text-body", "text-ink");
     const dot = chip.querySelector("span");
     expect(dot).toHaveClass("size-3", "rounded-sm", "bg-type-race");
     expect(dot).toHaveAttribute("aria-hidden", "true");

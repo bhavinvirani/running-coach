@@ -2,11 +2,11 @@ import { SHORT_LAP_IN_UNITS, formatLapDistanceValue } from "@/lib/format";
 import type { LapPoint } from "./lap-point";
 
 /**
- * The narrowest bar, in percent of its column: the pace written inside ("5:09 /km") still fits at 390 px.
- * Only a lap about three times slower than the fastest reaches it, which is a walk; its pace is in the
- * label, so the bar stops saying how much slower and the number says it instead.
+ * The narrowest bar, in percent of its column: a pace as wide as "15:00 /km" written inside still fits at
+ * 390 px. Only a lap about two and a half times slower than the fastest reaches it, which is a walk; its
+ * pace is in the label, so the bar stops saying how much slower and the number says it instead.
  */
-export const MIN_BAR_PERCENT = 36;
+export const MIN_BAR_PERCENT = 40;
 
 /** One lap as SplitBars draws it. Build them with toSplitRows. */
 export type SplitRow = {

@@ -57,11 +57,11 @@ describe("SplitBars", () => {
     renderBars(kmLaps(318, 313, 340, 340));
 
     expect(row(0).delta).toBeEmptyDOMElement();
-    expect(row(1).delta).toHaveTextContent(/^\+0:05$/);
+    expect(row(1).delta).toHaveTextContent(/^\+0:05 faster$/);
     expect(row(1).delta).toHaveClass("text-good");
-    expect(row(2).delta).toHaveTextContent(/^-0:27$/);
+    expect(row(2).delta).toHaveTextContent(/^-0:27 slower$/);
     expect(row(2).delta).toHaveClass("text-bad");
-    expect(row(3).delta).toHaveTextContent(/^0:00$/);
+    expect(row(3).delta).toHaveTextContent(/^0:00 same pace$/);
     expect(row(3).delta).toHaveClass("text-ink-2");
   });
 
@@ -73,7 +73,7 @@ describe("SplitBars", () => {
     expect(within(glitch.item).getByText("GPS glitch")).toHaveClass("text-body", "text-ink-2");
     expect(glitch.delta).toBeEmptyDOMElement();
     expect(row(2).delta).toBeEmptyDOMElement();
-    expect(row(3).delta).toHaveTextContent(/^-0:07$/);
+    expect(row(3).delta).toHaveTextContent(/^-0:07 slower$/);
     expect(screen.getByText("1 lap left out as a GPS glitch.")).toHaveClass("text-caption");
   });
 
@@ -113,7 +113,7 @@ describe("SplitBars", () => {
     expect(row(0).bar).toHaveAccessibleName("8:00 /mi");
     expect(row(1).label).toHaveTextContent(/^0\.62$/);
     expect(row(1).bar).toHaveAccessibleName("8:03 /mi");
-    expect(row(1).delta).toHaveTextContent(/^-0:03$/);
+    expect(row(1).delta).toHaveTextContent(/^-0:03 slower$/);
   });
 
   it("shows the first 12 laps, all of them on Show all, and 12 again on Show fewer", async () => {

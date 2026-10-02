@@ -18,8 +18,8 @@ describe("toSplitRows", () => {
 
   it("keeps a lap three times slower than the fastest at the minimum width, so its pace still fits", () => {
     const rows = toSplitRows(kmLaps(300, 900));
-    expect(MIN_BAR_PERCENT).toBe(36);
-    expect(rows[1]?.barPercent).toBe(36);
+    expect(MIN_BAR_PERCENT).toBe(40);
+    expect(rows[1]?.barPercent).toBe(40);
   });
 
   it("compares each lap with the one before: faster positive, slower negative, the first lap blank", () => {

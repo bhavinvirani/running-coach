@@ -84,6 +84,17 @@ function deltaClass(seconds: number): string {
   return "text-ink-2";
 }
 
+/** The sign carries the meaning for the eye; a screen reader gets the word (good/bad rule). */
+function deltaWord(seconds: number): string {
+  if (seconds > 0) return "faster";
+  if (seconds < 0) return "slower";
+  return "same pace";
+}
+
+// SVG attributes cannot read tokens.css: these mirror --radius-sm (6px) and spacing step 3 (12px).
+const BAR_RADIUS = 6;
+const LABEL_INSET = 12;
+
 function SplitBar({ row, unit }: { row: SplitRow; unit: Units }) {
   const pace = formatPace(row.paceSecondsPerUnit, unit);
   return (
@@ -101,10 +112,10 @@ function SplitBar({ row, unit }: { row: SplitRow; unit: Units }) {
               y="0"
               width={`${row.barPercent}%`}
               height="100%"
-              rx="6"
+              rx={BAR_RADIUS}
               className="fill-accent"
             />
-            <text x="12" y="50%" dominantBaseline="central" className="fill-on-accent">
+            <text x={LABEL_INSET} y="50%" dominantBaseline="central" className="fill-on-accent">
               {pace}
             </text>
           </svg>
@@ -116,7 +127,12 @@ function SplitBar({ row, unit }: { row: SplitRow; unit: Units }) {
           row.deltaSeconds === null ? null : deltaClass(row.deltaSeconds),
         )}
       >
-        {row.deltaSeconds === null ? null : formatPaceDelta(row.deltaSeconds)}
+        {row.deltaSeconds === null ? null : (
+          <>
+            {formatPaceDelta(row.deltaSeconds)}
+            <span className="sr-only"> {deltaWord(row.deltaSeconds)}</span>
+          </>
+        )}
       </span>
     </li>
   );
