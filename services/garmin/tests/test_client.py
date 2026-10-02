@@ -6,7 +6,11 @@ import json
 from typing import Any
 
 import pytest
-from garminconnect import Garmin, GarminConnectAuthenticationError
+from garminconnect import (
+    Garmin,
+    GarminConnectAuthenticationError,
+    GarminConnectTooManyRequestsError,
+)
 
 from garmin_service.client import (
     GARMIN_CALL_GAP_S,
@@ -17,7 +21,7 @@ from garmin_service.client import (
 )
 from garmin_service.errors import ServiceError
 from garmin_service.fake_client import FakeGarmin
-from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle, rotated
+from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle, read_fixture, rotated
 
 
 class FakeClock:
@@ -121,6 +125,50 @@ def test_fake_lists_oldest_first_when_asked() -> None:
 
     starts = [item["startTimeLocal"] for item in items]
     assert starts == sorted(starts)
+
+
+def test_fake_serves_one_account_from_both_list_calls_newest_first() -> None:
+    garmin = FakeGarmin()
+    garmin.login(tokenstore=bundle())
+
+    paged = garmin.get_activities(0, 30) + garmin.get_activities(30, 30)
+    by_date = garmin.get_activities_by_date("2000-01-01")
+
+    assert [item["activityId"] for item in paged] == [item["activityId"] for item in by_date]
+    assert len(paged) == len(read_fixture("sync.json")) + len(read_fixture("history.json"))
+    starts = [item["startTimeLocal"] for item in paged]
+    assert starts == sorted(starts, reverse=True)
+
+
+def test_fake_ignores_the_activity_type_like_a_filter_that_lets_non_runs_through() -> None:
+    garmin = FakeGarmin()
+    garmin.login(tokenstore=bundle())
+
+    types = {item["activityType"]["typeKey"] for item in garmin.get_activities(0, 100, "running")}
+
+    assert {"cycling", "walking", "strength_training"} <= types
+
+
+def test_history_fixture_is_older_than_every_sync_run_and_its_ids_keep_that_order() -> None:
+    # The sync windows of the tests reach back to sync.json's oldest run only.
+    history = read_fixture("history.json")
+    sync = read_fixture("sync.json")
+
+    assert max(item["startTimeLocal"] for item in history) < min(
+        item["startTimeLocal"] for item in sync
+    )
+    newest_first = sorted(history + sync, key=lambda item: item["startTimeLocal"], reverse=True)
+    account_ids = [item["activityId"] for item in newest_first]
+    assert account_ids == sorted(set(account_ids), reverse=True)
+
+
+def test_fake_get_activities_fails_like_the_library_after_a_rotated_login() -> None:
+    garmin = FakeGarmin()
+    garmin.login(tokenstore=bundle(fixture="rotate_then_rate_limited"))
+
+    with pytest.raises(GarminConnectTooManyRequestsError):
+        garmin.get_activities(0, 10)
+    assert len(garmin.get_activities(0, 10)) == 10
 
 
 def session_after_login(dumps: str, sent: str = bundle()) -> GarminSession:

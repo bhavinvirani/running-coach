@@ -43,6 +43,30 @@ def test_sync_responses_match_garmin_sync_response(
         assert_valid("garmin-activity-summary", activity)
 
 
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"start": 0, "limit": 10},
+        {"start": 40, "limit": 10},
+        {"start": 49, "limit": 10},
+        {"start": 0, "limit": 200},
+        {"start": 0, "limit": 1, "tokenBundle": bundle(fixture="rotate")},
+    ],
+)
+def test_history_responses_match_garmin_history_response(
+    client: TestClient, page: dict[str, Any]
+) -> None:
+    request = {"tokenBundle": bundle(), **page}
+    assert_valid("garmin-history-request", request)
+
+    response = client.post("/history", json=request)
+
+    assert response.status_code == 200
+    assert_valid("garmin-history-response", response.json())
+    for activity in response.json()["activities"]:
+        assert_valid("garmin-activity-summary", activity)
+
+
 def test_sync_requests_the_tests_send_match_garmin_sync_request() -> None:
     assert_valid("garmin-sync-request", {"tokenBundle": bundle(), **FULL_RANGE})
     assert_valid("garmin-profile-request", {"tokenBundle": bundle()})
@@ -65,6 +89,17 @@ def error_responses(make_client: AppFactory) -> dict[str, Any]:
             "/sync", json={"tokenBundle": bundle(fixture="rotate_then_unavailable"), **FULL_RANGE}
         ),
         "validation": client.post("/sync", json={"tokenBundle": bundle()}),
+        "history_rotate_then_rate_limited": client.post(
+            "/history",
+            json={
+                "tokenBundle": bundle(fixture="rotate_then_rate_limited"),
+                "start": 0,
+                "limit": 10,
+            },
+        ),
+        "history_validation": client.post(
+            "/history", json={"tokenBundle": bundle(), "start": 0, "limit": 201}
+        ),
         "not_found": client.get("/nope"),
         "internal": make_client(connect=crashing).post("/profile", json={"tokenBundle": bundle()}),
     }
@@ -81,6 +116,8 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         "rotate_then_rate_limited": 429,
         "rotate_then_unavailable": 502,
         "validation": 400,
+        "history_rotate_then_rate_limited": 429,
+        "history_validation": 400,
         "not_found": 404,
         "internal": 500,
     }
@@ -88,7 +125,11 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         assert response.headers["content-type"] == "application/problem+json"
         assert_valid("garmin-problem", response.json())
     carrying_a_bundle = {name for name, r in responses.items() if "tokenBundle" in r.json()}
-    assert carrying_a_bundle == {"rotate_then_rate_limited", "rotate_then_unavailable"}
+    assert carrying_a_bundle == {
+        "rotate_then_rate_limited",
+        "rotate_then_unavailable",
+        "history_rotate_then_rate_limited",
+    }
 
 
 def test_every_error_code_of_the_service_is_a_shared_code() -> None:

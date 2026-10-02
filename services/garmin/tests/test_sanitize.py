@@ -174,11 +174,24 @@ def test_is_a_fixed_point_on_its_own_output(raw: Any) -> None:
     assert sanitize(once) == once
 
 
+# Hand-made fakes, not captures, that continue sync.json's account: their activity ids sit below
+# sync.json's (older runs, smaller ids) and their names go on from its, which the per-file
+# renumbering cannot reproduce. Every other value must survive sanitizing unchanged.
+CONTINUED_FIXTURES = {"history.json": frozenset({"activityId", "activityName"})}
+
+
+def without(items: Any, keys: frozenset[str]) -> Any:
+    if not keys:
+        return items
+    return [{key: value for key, value in item.items() if key not in keys} for item in items]
+
+
 @pytest.mark.parametrize("name", sorted(p.name for p in FIXTURES_DIR.glob("*.json")))
 def test_committed_fixtures_are_already_sanitized(name: str) -> None:
     fixture = json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+    renumbered = CONTINUED_FIXTURES.get(name, frozenset())
 
-    assert sanitize(fixture) == fixture
+    assert without(sanitize(fixture), renumbered) == without(fixture, renumbered)
 
 
 def test_cli_writes_the_sanitized_fixture(tmp_path: Path) -> None:
