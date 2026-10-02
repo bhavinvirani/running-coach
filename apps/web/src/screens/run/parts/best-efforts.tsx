@@ -4,44 +4,48 @@ import {
   type RunBestEffort,
   type Units,
 } from "@running-coach/shared";
-import { PbDot } from "@/components/pb-chip";
+import { longestFirst } from "@/components/best-effort-order";
+import { BestEffortRow, BestEffortTile } from "@/components/best-effort-row";
 import { distanceLabel } from "@/lib/distance-labels";
 import { formatPace, formatRecordTime, recordSeconds } from "@/lib/format";
 import { RunSection } from "./run-section";
 
+const TITLE = "Best efforts";
+/** On a tile the run holds as the runner's current best, in the New chip's place on Progress. */
+const PB_CHIP = "PB";
+
 type BestEffortsProps = {
-  /** Shortest first (`inDistanceOrder` in best-effort-order.ts). */
+  /** In any order: the tiles go longest first. */
   efforts: readonly RunBestEffort[];
   units: Units;
 };
 
 /**
- * The run's fastest stretch at each distance it covered: the distance, the time cut to the second as
- * Garmin shows it, the pace in the runner's unit, and PB at the end of a row that is the runner's current
- * best. Fixed columns, like the Progress run rows, so the figures line up down the card. Nothing at all
- * for a run without efforts (not computed yet, or a run the bests leave out: indoor, manual, under 1 km),
- * so the section needs no empty state.
+ * The run's fastest stretch at each distance it covered, as the row of tiles Progress shows its bests in,
+ * longest first: the distance with the PB dot and a PB chip where it is the runner's current best, the
+ * time cut to the second as Garmin shows it, and the pace in the runner's unit. Not links: the runner is
+ * on this run already. Nothing at all for a run without efforts (not computed yet, or a run the bests
+ * leave out: indoor, manual, under 1 km), so the section needs no empty state.
  */
 export function BestEfforts({ efforts, units }: BestEffortsProps) {
   if (efforts.length === 0) return null;
 
   return (
-    <RunSection title="Best efforts" className="mt-2">
-      <ul aria-label="Best efforts" className="-my-1.5 flex flex-col divide-y divide-line">
-        {efforts.map((effort) => (
-          <EffortRow key={effort.distanceKey} effort={effort} units={units} />
+    <RunSection title={TITLE} className="mt-2" card={false}>
+      <BestEffortRow label={TITLE}>
+        {longestFirst(efforts).map((effort) => (
+          <EffortTile key={effort.distanceKey} effort={effort} units={units} />
         ))}
-      </ul>
+      </BestEffortRow>
     </RunSection>
   );
 }
 
 /**
- * One distance. A screen reader hears the row as one sentence in words, "5K, 27:05, 5:25 /km, personal
- * best": read column by column it would run "5K" into "27:05". The PB marker is the gold dot and the word,
- * never the color alone.
+ * One distance. A screen reader hears the tile as one sentence in words, "5K, 27:05, 5:25 /km, personal
+ * best"; the PB marker is the gold dot and the word, never the color alone.
  */
-function EffortRow({ effort, units }: { effort: RunBestEffort; units: Units }) {
+function EffortTile({ effort, units }: { effort: RunBestEffort; units: Units }) {
   const label = distanceLabel(effort.distanceKey);
   const time = formatRecordTime(effort.timeS);
   // From the time as shown, so a 1K that reads 4:50 never reads 4:51 /km beside it.
@@ -54,31 +58,13 @@ function EffortRow({ effort, units }: { effort: RunBestEffort; units: Units }) {
     .join(", ");
 
   return (
-    <li className="flex min-h-11 items-center gap-2">
-      <span className="sr-only">{name}</span>
-      <span aria-hidden="true" className="min-w-0 flex-1 truncate text-body text-ink">
-        {label}
-      </span>
-      <span
-        aria-hidden="true"
-        className="w-18 shrink-0 text-right text-body font-semibold text-ink"
-      >
-        {time}
-      </span>
-      <span aria-hidden="true" className="w-22 shrink-0 text-right text-body text-ink-2">
-        {pace}
-      </span>
-      <span
-        aria-hidden="true"
-        className="flex w-11 shrink-0 items-center justify-end gap-1.5 text-caption font-semibold text-ink"
-      >
-        {effort.personalBest ? (
-          <>
-            <PbDot />
-            PB
-          </>
-        ) : null}
-      </span>
-    </li>
+    <BestEffortTile
+      label={label}
+      name={name}
+      personalBest={effort.personalBest}
+      chip={effort.personalBest ? PB_CHIP : undefined}
+      time={time}
+      captions={[{ text: pace }]}
+    />
   );
 }

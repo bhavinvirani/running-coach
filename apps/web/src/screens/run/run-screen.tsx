@@ -6,7 +6,7 @@ import { errorMessage } from "@/lib/errors";
 import { formatLocalDay } from "@/lib/format";
 import { BackLink } from "./parts/back-link";
 import { BestEfforts } from "./parts/best-efforts";
-import { currentBests, inDistanceOrder } from "./parts/best-effort-order";
+import { currentBests } from "./parts/current-bests";
 import { RunDetail } from "./parts/run-detail";
 import { RunStats } from "./parts/run-stats";
 import { useRunScreen } from "./use-run";
@@ -47,16 +47,15 @@ function RunView({ id }: { id: string }) {
     );
   }
 
-  const { activity } = data;
-  const efforts = inDistanceOrder(data.bestEfforts);
+  const { activity, bestEfforts } = data;
 
   return (
     <RunLayout title={formatLocalDay(activity.startLocal)}>
       {screen.refetchError ? (
         <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
       ) : null}
-      <RunStats activity={activity} units={units} bests={currentBests(efforts)} />
-      <BestEfforts efforts={efforts} units={units} />
+      <RunStats activity={activity} units={units} bests={currentBests(bestEfforts)} />
+      <BestEfforts efforts={bestEfforts} units={units} />
       <RunDetail
         state={screen.detail}
         activity={activity}

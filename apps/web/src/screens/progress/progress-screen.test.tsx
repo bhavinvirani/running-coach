@@ -805,18 +805,34 @@ const bestsFound = personalBestsFixture({
   },
 });
 
-const LABELS = [
-  "1K",
-  "1 mi",
-  "2 mi",
-  "5K",
-  "5 mi",
-  "10K",
-  "15K",
-  "10 mi",
-  "20K",
-  "Half",
+/** Every distance longest first, as the tiles go when no run has reached any yet. */
+const LONGEST_FIRST = [
   "Marathon",
+  "Half",
+  "20K",
+  "10 mi",
+  "15K",
+  "10K",
+  "5 mi",
+  "5K",
+  "2 mi",
+  "1 mi",
+  "1K",
+];
+
+/** bestsFound's tiles in screen order: its bests longest first, then the distances not reached, the same way. */
+const FOUND_ORDER = [
+  "Half",
+  "10 mi",
+  "10K",
+  "5K",
+  "1K",
+  "Marathon",
+  "20K",
+  "15K",
+  "5 mi",
+  "2 mi",
+  "1 mi",
 ];
 
 function bestsRegion() {
@@ -831,10 +847,18 @@ async function findBadges() {
 
 /** One distance's badge, by its label. */
 function badge(label: string) {
-  const index = LABELS.indexOf(label);
-  const item = within(bestsRegion()).getAllByRole("listitem")[index];
+  const item = within(bestsRegion())
+    .getAllByRole("listitem")
+    .find((candidate) => within(candidate).queryByText(label, { exact: true }) !== null);
   if (item === undefined) throw new Error(`No badge for ${label}`);
   return item;
+}
+
+/** The badges' labels in screen order: each one's name starts with its label. */
+function badgeOrder() {
+  return within(bestsRegion())
+    .getAllByRole("listitem")
+    .map((item) => item.querySelector(".sr-only")?.textContent?.split(",")[0]);
 }
 
 describe("ProgressScreen personal bests", () => {
@@ -862,8 +886,8 @@ describe("ProgressScreen personal bests", () => {
     expect(row).toHaveClass("-mx-4", "flex", "px-4", "overflow-hidden");
     expect(row?.children).toHaveLength(11);
     for (const tile of Array.from(row?.children ?? [])) {
-      expect(tile).toHaveClass("w-40", "shrink-0");
-      expect(tile.firstElementChild).toHaveClass("rounded-md", "bg-surface-1", "p-3");
+      expect(tile).toHaveClass("w-34", "shrink-0");
+      expect(tile.firstElementChild).toHaveClass("rounded-md", "bg-surface-1", "px-2.5", "py-2");
     }
     expect(within(region).queryByRole("listitem")).not.toBeInTheDocument();
     // No chip until the bests are in, and the rows open their runs meanwhile.
@@ -921,7 +945,7 @@ describe("ProgressScreen personal bests", () => {
     expect(within(badge("5K")).getByText("27:05")).toBeInTheDocument();
   });
 
-  it("shows eleven tiles shortest first in one list, each time cut to the whole second as Garmin shows it", async () => {
+  it("shows eleven tiles in one list, the bests longest first and the distances not reached at the end (no run yet)", async () => {
     fakeProgressApi({ bests: bestsFound });
     renderProgress();
 
@@ -929,9 +953,22 @@ describe("ProgressScreen personal bests", () => {
     expect(badges).toHaveLength(11);
     const list = within(bestsRegion()).getByRole("list", { name: "Personal bests" });
     expect(within(list).getAllByRole("listitem")).toEqual(badges);
+    expect(badgeOrder()).toEqual(FOUND_ORDER);
     badges.forEach((item, position) => {
-      expect(within(item).getByText(LABELS[position] ?? "")).toBeInTheDocument();
+      expect(within(item).getByText(FOUND_ORDER[position] ?? "")).toBeInTheDocument();
     });
+    // The five bests open their runs and lead; the six distances not reached follow.
+    expect(badges.slice(0, 5).every((item) => within(item).queryByRole("link") !== null)).toBe(
+      true,
+    );
+    expect(badges.slice(5).every((item) => within(item).queryByRole("link") === null)).toBe(true);
+  });
+
+  it("cuts each time to the whole second as Garmin shows it, as the tile's figure", async () => {
+    fakeProgressApi({ bests: bestsFound });
+    renderProgress();
+    await findBadges();
+
     expect(within(badge("1K")).getByText("4:50")).toHaveClass("text-figure", "text-ink");
     expect(within(badge("5K")).getByText("27:05")).toHaveClass("text-figure");
     expect(within(badge("10K")).getByText("54:41")).toHaveClass("text-figure");
@@ -946,15 +983,19 @@ describe("ProgressScreen personal bests", () => {
 
     const list = within(bestsRegion()).getByRole("list", { name: "Personal bests" });
     // Bleeds out of Progress's px-4 and pads back in, so the first tile lines up with the heading.
-    expect(list).toHaveClass("-mx-4", "px-4", "scroll-px-4", "flex", "gap-3");
+    expect(list).toHaveClass("-mx-4", "px-4", "scroll-px-4", "flex", "gap-2");
     expect(list).toHaveClass("overflow-x-auto", "snap-x", "snap-mandatory");
+    // Swipe, trackpad and arrow keys scroll it (the row takes focus); no bar shows under it (no scrollbar).
+    expect(list).toHaveClass("scrollbar-none");
+    expect(list).toHaveAttribute("tabindex", "0");
     for (const item of badges) {
-      expect(item).toHaveClass("w-40", "shrink-0", "snap-start");
+      expect(item).toHaveClass("w-34", "shrink-0", "snap-start");
       expect(item.firstElementChild).toHaveClass(
         "h-full",
         "rounded-md",
         "bg-surface-1",
-        "p-3",
+        "px-2.5",
+        "py-2",
         "whitespace-nowrap",
       );
     }
@@ -996,6 +1037,9 @@ describe("ProgressScreen personal bests", () => {
       expect(within(item).queryByRole("link")).not.toBeInTheDocument();
     }
     expect(within(bestsRegion()).getAllByRole("link")).toHaveLength(5);
+    // Heard as one sentence, Garmin's record included where it has one.
+    expect(within(badge("Marathon")).getByText("Marathon, No run yet")).toHaveClass("sr-only");
+    expect(within(badge("1 mi")).getByText("1 mi, No run yet, Garmin 8:00")).toHaveClass("sr-only");
   });
 
   it("shows every distance as No run yet before any best is found", async () => {
@@ -1005,6 +1049,7 @@ describe("ProgressScreen personal bests", () => {
     const badges = await findBadges();
     expect(badges).toHaveLength(11);
     expect(within(bestsRegion()).getAllByText("No run yet")).toHaveLength(11);
+    expect(badgeOrder()).toEqual(LONGEST_FIRST);
     expect(within(bestsRegion()).queryByRole("link")).not.toBeInTheDocument();
     expect(within(bestsRegion()).queryByText(/Garmin/)).not.toBeInTheDocument();
   });

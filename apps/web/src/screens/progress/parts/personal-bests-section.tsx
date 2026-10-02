@@ -1,10 +1,24 @@
-import type { DistanceKey, GarminRecord, PersonalBestsResponse } from "@running-coach/shared";
+import type {
+  DistanceKey,
+  GarminRecord,
+  PersonalBest,
+  PersonalBestsResponse,
+} from "@running-coach/shared";
 import type { ScreenState } from "@/api/screen-state";
+import { longestFirst } from "@/components/best-effort-order";
+import { BestEffortRow, BestEffortRowSkeleton, BestEffortTile } from "@/components/best-effort-row";
 import { RetryAlert } from "@/components/retry-alert";
-import { cn } from "@/lib/cn";
-import { DISTANCE_KEYS } from "@/lib/distance-labels";
-import { type PendingBestsLine, pendingBestsLine, progressCopy } from "../progress-copy";
-import { PersonalBestBadge, TILE_CARD, TILE_SLOT } from "./personal-best-badge";
+import { DISTANCE_KEYS, distanceLabel } from "@/lib/distance-labels";
+import { formatLocalDate, formatRecordTime } from "@/lib/format";
+import {
+  garminRecordLine,
+  type PendingBestsLine,
+  pendingBestsLine,
+  progressCopy,
+} from "../progress-copy";
+
+/** A best stays "New" for a week from the run's start. */
+const NEW_FOR_MS = 7 * 24 * 60 * 60 * 1000;
 
 type PersonalBestsSectionProps = {
   state: ScreenState<PersonalBestsResponse>;
@@ -13,11 +27,12 @@ type PersonalBestsSectionProps = {
 };
 
 /**
- * The runner's best time at each of the eleven distances, shortest first, as one row of tiles that
- * scrolls sideways at the top of Progress, so the bests take one tile's height instead of the screen.
- * It loads and fails on its own, so the weeks below stay usable whatever happens here. While runs wait
- * for their best efforts, a line under the heading says how many are being checked, or why none are and
- * what to do. Under the row, when Garmin's records are in, a caption says why only some tiles carry one.
+ * The runner's best time at each of the eleven distances, as one row of tiles that scrolls sideways at
+ * the top of Progress, so the bests take one tile's height instead of the screen: the distances with a
+ * best longest first, then the ones no run has reached yet. It loads and fails on its own, so the weeks
+ * below stay usable whatever happens here. While runs wait for their best efforts, a line under the
+ * heading says how many are being checked, or why none are and what to do. Under the row, when Garmin's
+ * records are in, a caption says why only some tiles carry one.
  */
 export function PersonalBestsSection({ state, checkedAt }: PersonalBestsSectionProps) {
   return (
@@ -47,6 +62,14 @@ function PersonalBestsContent({ state, checkedAt }: PersonalBestsSectionProps) {
   const garminByDistance = new Map<DistanceKey, GarminRecord>(
     (garmin?.records ?? []).map((record) => [record.distanceKey, record]),
   );
+  const tiles = longestFirst(
+    DISTANCE_KEYS.map((distanceKey) => ({
+      distanceKey,
+      best: bestByDistance.get(distanceKey),
+      garminRecord: garminByDistance.get(distanceKey),
+    })),
+    (tile) => tile.best !== undefined,
+  );
 
   return (
     <>
@@ -54,21 +77,65 @@ function PersonalBestsContent({ state, checkedAt }: PersonalBestsSectionProps) {
       {state.refetchError ? (
         <RetryAlert error={state.refetchError} onRetry={() => void state.refetch()} />
       ) : null}
-      <ul aria-label={progressCopy.personalBests} className={cn(BLEED, SCROLLER)}>
-        {DISTANCE_KEYS.map((distanceKey) => (
-          <PersonalBestBadge
-            key={distanceKey}
-            distanceKey={distanceKey}
-            best={bestByDistance.get(distanceKey)}
-            garminRecord={garminByDistance.get(distanceKey)}
-            now={checkedAt}
-          />
+      <BestEffortRow label={progressCopy.personalBests}>
+        {tiles.map((tile) => (
+          <PersonalBestTile key={tile.distanceKey} {...tile} now={checkedAt} />
         ))}
-      </ul>
+      </BestEffortRow>
       {garminByDistance.size > 0 ? (
         <p className="text-caption text-ink-2">{progressCopy.garminRecordsNote}</p>
       ) : null}
     </>
+  );
+}
+
+type PersonalBestTileProps = {
+  distanceKey: DistanceKey;
+  /** The runner's best at this distance; undefined until a run covers it. */
+  best: PersonalBest | undefined;
+  /** Garmin's own record at this distance, when Garmin tracks one. */
+  garminRecord: GarminRecord | undefined;
+  /** When the bests were read, as epoch ms: the instant "New" is measured from. */
+  now: number;
+};
+
+/**
+ * One distance: the time as Garmin would show it, New for a week, the run's local date and Garmin's
+ * record for comparison. A best opens its run; a distance not reached yet says so and opens nothing.
+ */
+function PersonalBestTile({ distanceKey, best, garminRecord, now }: PersonalBestTileProps) {
+  const label = distanceLabel(distanceKey);
+  const garmin = garminRecord ? garminRecordLine(formatRecordTime(garminRecord.timeS)) : null;
+  const garminCaption = garmin === null ? [] : [{ text: garmin }];
+
+  if (best === undefined) {
+    return (
+      <BestEffortTile
+        label={label}
+        name={[label, progressCopy.noRunYet, ...garminCaption.map((line) => line.text)].join(", ")}
+        noTime={progressCopy.noRunYet}
+        captions={garminCaption}
+      />
+    );
+  }
+
+  const time = formatRecordTime(best.timeS);
+  const date = formatLocalDate(best.startLocal);
+  const isNew = now - Date.parse(best.startUtc) < NEW_FOR_MS;
+  const name = [label, time, date, garmin, isNew ? progressCopy.newBest : null]
+    .filter((part) => part !== null)
+    .join(", ");
+
+  return (
+    <BestEffortTile
+      label={label}
+      name={name}
+      personalBest
+      chip={isNew ? progressCopy.newBest : undefined}
+      time={time}
+      captions={[{ text: date, dateTime: best.startLocal }, ...garminCaption]}
+      href={`/runs/${best.activityId}`}
+    />
   );
 }
 
@@ -86,37 +153,7 @@ function PendingLine({ line }: { line: PendingBestsLine }) {
   );
 }
 
-/**
- * The row bleeds to the screen's edges: -mx-4 undoes Progress's px-4 so tiles slide under the edge
- * instead of being cut at the content's padding, and px-4 puts the first tile back in line with the
- * heading. py-1 keeps a tile's focus ring inside the row, which clips what overflows it.
- */
-const BLEED = "-mx-4 flex gap-3 px-4 py-1";
-/** Sideways scroll that settles with a tile at the heading's edge (scroll-px-4 matches the px-4). */
-const SCROLLER = "snap-x snap-mandatory scroll-px-4 overflow-x-auto";
-
-/**
- * The row with every tile at its loaded height (label, time, date), so nothing jumps on load. Blocks, not
- * a list: a screen reader hears the loading status around it, not eleven empty items.
- */
+/** The row at its loaded height (label, time, date), one block per distance, so nothing jumps on load. */
 export function PersonalBestsSkeleton() {
-  return (
-    <div className={cn(BLEED, "overflow-hidden")}>
-      {DISTANCE_KEYS.map((distanceKey) => (
-        <div key={distanceKey} className={TILE_SLOT}>
-          <div className={TILE_CARD}>
-            <div className="flex h-4 items-center">
-              <div className="h-3 w-10 rounded-sm bg-surface-2" />
-            </div>
-            <div className="flex h-8.5 items-center">
-              <div className="h-7 w-20 rounded-sm bg-surface-2" />
-            </div>
-            <div className="flex h-4 items-center">
-              <div className="h-3 w-18 rounded-sm bg-surface-2" />
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+  return <BestEffortRowSkeleton count={DISTANCE_KEYS.length} />;
 }

@@ -19,7 +19,7 @@
 }
 ```
 
-`apps/web/src/styles/globals.css` is the Tailwind and ESLint entry point: it imports the font and `./tokens.css`, then adds base styles and the `pt-safe`/`pb-safe` utilities. There is no shadcn `@theme inline` block, and `components.json` sets `cssVariables: false`, so `shadcn add` cannot write its default palette into `globals.css`.
+`apps/web/src/styles/globals.css` is the Tailwind and ESLint entry point: it imports the font and `./tokens.css`, then adds base styles and the `pt-safe`/`pb-safe` and `scrollbar-none` (a sideways tile row without a scrollbar) utilities. There is no shadcn `@theme inline` block, and `components.json` sets `cssVariables: false`, so `shadcn add` cannot write its default palette into `globals.css`.
 
 Effect: the compiler refuses `bg-red-500`, `text-sm` and `hover:bg-red-500` (no CSS generated) and the linter reports them as unknown. Spacing stays a multiplier of `--spacing` (4px), so `p-13` is valid; add a step allowlist only if an audit finds off-scale spacing.
 
