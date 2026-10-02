@@ -30,7 +30,7 @@ import { type Db, type DbTransaction, db } from "../db/client";
 import { activity, bestEffort, garminConnection } from "../db/schema";
 import { garminClient } from "../garmin/client";
 import * as bestEffortsQueue from "../jobs/best-efforts-queue";
-import { findPendingJob, hasWaitingJob } from "../jobs/boss";
+import { findPendingJob, hasPendingJob, hasWaitingJob } from "../jobs/boss";
 import { DomainError } from "../lib/errors";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
@@ -116,10 +116,12 @@ async function countPendingRuns(
 
 /**
  * The batch's canary: the user's newest run computed at the current rule that holds at least one effort,
- * so Garmin gave it samples before, and that never came back without them since. A batch stamps
- * best_efforts_failed_at on a computed run only when it came back without samples, as the canary or in an
- * outage, and recomputing the run clears it, so a canary deleted on Garmin is never picked again and the
- * next-newest computed run takes over. Undefined until a first batch stored an effort.
+ * so Garmin gave it samples before. A canary that comes back without samples while another run of its
+ * batch reads (deleted on Garmin, most likely) is retired for good: its tries are set to
+ * BEST_EFFORTS_MAX_ATTEMPTS, and the next-newest computed run takes over. One stamped in an outage only
+ * rests BEST_EFFORTS_RETRY_AFTER_S like any run, then serves again, so an outage cannot use up the canaries.
+ * A sync that changes the run's distance or time resets both. A retired canary keeps the efforts it has,
+ * also after a rule change, as a run deleted on Garmin does. Undefined until a first batch stored an effort.
  */
 async function findCanary(userId: string) {
   const [canary] = await db
@@ -130,7 +132,8 @@ async function findCanary(userId: string) {
         eq(activity.userId, userId),
         eligible,
         eq(activity.bestEffortsVersion, BEST_EFFORTS_VERSION),
-        isNull(activity.bestEffortsFailedAt),
+        lt(activity.bestEffortsAttempts, BEST_EFFORTS_MAX_ATTEMPTS),
+        rested,
         exists(
           db
             .select({ one: sql`1` })
@@ -233,8 +236,8 @@ function readSeriesAnswer(
  * beside one fewer pending run, so the service's early stop after two failures in a row cannot skip it, and
  * its answer is never written: it is what tells a batch of runs deleted or empty on Garmin from an outage,
  * which is how such a batch reads before the user has a canary. A canary that comes back without samples
- * (deleted on Garmin) leaves canary duty for good, stamped best_efforts_failed_at, and the next-newest
- * computed run takes over.
+ * while another run reads (deleted on Garmin) leaves canary duty for good, its tries set to
+ * BEST_EFFORTS_MAX_ATTEMPTS, and the next-newest computed run takes over (findCanary).
  *
  * An outage (no run with samples) writes no outcome and counts no try: the runs asked that came back
  * without samples, the canary included, are stamped best_efforts_failed_at, so they wait
@@ -374,7 +377,7 @@ export async function computeBestEffortsBatch(
       if (reading.retiredCanaryId !== null) {
         await tx
           .update(activity)
-          .set({ bestEffortsFailedAt: sql`now()`, updatedAt: keepUpdatedAt })
+          .set({ bestEffortsAttempts: BEST_EFFORTS_MAX_ATTEMPTS, updatedAt: keepUpdatedAt })
           .where(eq(activity.id, reading.retiredCanaryId));
       }
       if (response.records !== null) {
@@ -441,7 +444,9 @@ function outcomeCounts(series: readonly GarminActivitySeries[]) {
  * start: a waiting or deferred one re-reads what is pending when it runs, so it covers new runs, and a
  * fresh one beside a retrying one would call Garmin before the retry's backoff ran out. Beside a running
  * job it sends, since that job may have read what is pending before these runs were stored: the stately
- * queue keeps one waiting job beside the running one and folds the running job's own successor into it. A
+ * queue keeps one waiting job beside the running one and folds the running job's own successor into it,
+ * and it starts BATCH_GAP_S later like that successor would, so an import whose pages each queue a batch
+ * keeps the gap between Garmin logins. A
  * sync calls it after committing its runs; an import page calls it inside its transaction (`executor`,
  * which also counts the page's runs), so the job is pending before the import can read as done. Never
  * throws on its own: a failed send must not fail the sync or the page that called it, and the next one
@@ -454,7 +459,11 @@ export async function queueBestEfforts(
   try {
     if ((await countPendingRuns(userId, executor)).due === 0) return null;
     if (await hasWaitingJob(bestEffortsQueue.name, userId)) return null;
-    return await bestEffortsQueue.enqueueBestEfforts({ userId });
+    const running = await hasPendingJob(bestEffortsQueue.name, userId);
+    return await bestEffortsQueue.enqueueBestEfforts(
+      { userId },
+      running ? { startAfter: bestEffortsQueue.BATCH_GAP_S } : {},
+    );
   } catch (err) {
     log.error({ err, userId }, "best-efforts batch not queued; the next sync queues it again");
     return null;

@@ -32,12 +32,31 @@ export const jobOptions = {
   expireInSeconds: 10 * 60,
 } satisfies SendOptions;
 
+/**
+ * Seconds before a batch queued beside a running one may start: its successor, or a sync's or an import
+ * page's send while one runs. Every batch is a Garmin login, and a first pass over a long history (or an
+ * import whose pages each queue a batch) would otherwise log in every few seconds for minutes, the pattern
+ * Garmin rate-limits; a batch queued when none runs still starts at once.
+ */
+export const BATCH_GAP_S = 30;
+
 export function sendOptions(job: BestEffortsData): SendOptions {
   return { ...jobOptions, singletonKey: job.userId };
 }
 
-/** Queues a batch for the user; null when one already waits, which then covers it. */
-export async function enqueueBestEfforts(job: BestEffortsData): Promise<string | null> {
+/**
+ * Queues a batch for the user, `startAfter` seconds from now when given; null when one already waits,
+ * which then covers it.
+ */
+export async function enqueueBestEfforts(
+  job: BestEffortsData,
+  { startAfter }: { startAfter?: number } = {},
+): Promise<string | null> {
   const parsed = data.parse(job);
-  return getBoss().send(name, parsed, sendOptions(parsed));
+  const options = sendOptions(parsed);
+  return getBoss().send(
+    name,
+    parsed,
+    startAfter === undefined ? options : { ...options, startAfter },
+  );
 }

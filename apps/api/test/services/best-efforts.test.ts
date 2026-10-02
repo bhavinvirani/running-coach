@@ -707,9 +707,12 @@ describe("computeBestEffortsBatch", () => {
     }
     expect(await stateOf(unreadableToo.id)).toEqual({ version: null, attempts: 1 });
     expect(await stampedNow(unreadableToo.id)).toBe(true);
-    // Off duty, its own efforts kept.
-    expect(await stampedNow(canary.id)).toBe(true);
-    expect(await stateOf(canary.id)).toEqual({ version: BEST_EFFORTS_VERSION, attempts: 0 });
+    // Retired for good through its tries, not stamped (a stamp only rests a run), its own efforts kept.
+    expect(await stampedNow(canary.id)).toBe(false);
+    expect(await stateOf(canary.id)).toEqual({
+      version: BEST_EFFORTS_VERSION,
+      attempts: BEST_EFFORTS_MAX_ATTEMPTS,
+    });
     expect(await effortsOf([canary.id])).toEqual(canaryEfforts);
     expect((await connection(userId)).lastError).toBeNull();
 
@@ -726,6 +729,41 @@ describe("computeBestEffortsBatch", () => {
     ]);
   });
 
+  it("rests a canary stamped in an outage for 6 h, then asks it again, and only retires it when another run reads beside it (Garmin outage)", async () => {
+    const userId = await connectedUser();
+    const canary = await createCanary(userId, GONE);
+    await createRun(userId, {
+      garminActivityId: GONE_TOO,
+      startUtc: new Date(Date.UTC(2026, 8, 27, 6)),
+    });
+    const calls = recordSeriesCalls();
+
+    // Nothing read: an outage, which stamps the canary but counts it no try.
+    await expect(computeBestEffortsBatch(userId)).rejects.toMatchObject({
+      code: ErrorCode.garminUnavailable,
+    });
+    expect(await stampedNow(canary.id)).toBe(true);
+    expect(await stateOf(canary.id)).toEqual({ version: BEST_EFFORTS_VERSION, attempts: 0 });
+
+    // Rested, it is the canary again; beside a run Garmin reads it comes back without samples, so it retires.
+    await waitOut([canary.id]);
+    await createOlderRun(userId, LONG_RUN, 15);
+    expect(await computeBestEffortsBatch(userId)).toEqual({
+      ...NOTHING_DONE,
+      processed: 1,
+      waiting: 1,
+    });
+
+    expect(calls.map((call) => call.garminActivityIds)).toEqual([
+      [GONE, GONE_TOO],
+      [GONE, LONG_RUN],
+    ]);
+    expect(await stateOf(canary.id)).toEqual({
+      version: BEST_EFFORTS_VERSION,
+      attempts: BEST_EFFORTS_MAX_ATTEMPTS,
+    });
+  });
+
   it("computes a new run when the canary is deleted on Garmin, records no outage, and asks the next computed run as canary for good (deleted canary)", async () => {
     const userId = await connectedUser();
     // Newer than the run the batch computes, so only being off duty keeps it from the next batch.
@@ -739,11 +777,14 @@ describe("computeBestEffortsBatch", () => {
     expect(await stateOf(newRun.id)).toEqual({ version: BEST_EFFORTS_VERSION, attempts: 0 });
     expect(await effortsOf([newRun.id])).toHaveLength(FIXTURE_DISTANCES.length);
     expect((await connection(userId)).lastError).toBeNull();
-    expect(await stampedNow(deleted.id)).toBe(true);
-    expect(await stateOf(deleted.id)).toEqual({ version: BEST_EFFORTS_VERSION, attempts: 0 });
+    expect(await stampedNow(deleted.id)).toBe(false);
+    expect(await stateOf(deleted.id)).toEqual({
+      version: BEST_EFFORTS_VERSION,
+      attempts: BEST_EFFORTS_MAX_ATTEMPTS,
+    });
     expect(await effortsOf([deleted.id])).toEqual(deletedEfforts);
 
-    // Past the 6 h a failed run waits, the deleted canary still stays off duty.
+    // Even with an old stamp past the 6 h a failed run waits, the retired canary stays off duty.
     await waitOut([deleted.id]);
     await createOlderRun(userId, RACE, 10);
     expect(await computeBestEffortsBatch(userId)).toEqual({ ...NOTHING_DONE, processed: 1 });
@@ -1225,7 +1266,7 @@ describe("queueing best efforts", () => {
     expect(await queuedBatches(userId)).toEqual([deferred]);
   });
 
-  it("sends a batch beside the user's running one, whose own successor then folds into it (overlapping jobs)", async () => {
+  it("sends a batch beside the user's running one, BATCH_GAP_S later like its successor, which then folds into it (overlapping jobs)", async () => {
     const userId = await connectedUser();
     await createRuns(userId, [LONG_RUN]);
     const boss = getBoss();
@@ -1241,6 +1282,11 @@ describe("queueing best efforts", () => {
 
     expect(queued).not.toBeNull();
     expect(await queuedBatches(userId)).toEqual([queued]);
+    // Not due at once: an import whose pages each queue a batch keeps the gap between Garmin logins.
+    const [waiting] = await boss.findJobs(bestEffortsQueue.name, { id: queued ?? "" });
+    const startsInS = ((waiting?.startAfter.getTime() ?? 0) - Date.now()) / 1000;
+    expect(startsInS).toBeGreaterThan(bestEffortsQueue.BATCH_GAP_S - 5);
+    expect(startsInS).toBeLessThanOrEqual(bestEffortsQueue.BATCH_GAP_S);
     // The running batch queues its successor as the job does: the waiting batch already covers it.
     expect(
       await boss.send(bestEffortsQueue.name, { userId }, { ...options, startAfter: 30 }),

@@ -4,21 +4,14 @@ import { DEFAULT_RETRY_AFTER_S } from "../garmin/client";
 import { DomainError } from "../lib/errors";
 import { logger, withRequestId } from "../lib/logger";
 import { type BestEffortsBatchResult, computeBestEffortsBatch } from "../services/best-efforts";
-import { data, jobOptions, name, sendOptions } from "./best-efforts-queue";
+import { BATCH_GAP_S, data, jobOptions, name, sendOptions } from "./best-efforts-queue";
 
 // One batch of a user's best efforts per job, queued after each sync and import page while runs are due,
 // each batch queueing the next until none are. The queue's name, data and options live in
 // best-efforts-queue.ts.
 
-export { data, jobOptions, name, queue, sendOptions } from "./best-efforts-queue";
+export { BATCH_GAP_S, data, jobOptions, name, queue, sendOptions } from "./best-efforts-queue";
 export type { BestEffortsData } from "./best-efforts-queue";
-
-/**
- * Seconds before a batch's successor may start. Every batch is a Garmin login, and a first pass over a
- * long history would otherwise log in every few seconds for minutes, the pattern Garmin rate-limits; the
- * first batch after a sync or an import page still starts at once.
- */
-export const BATCH_GAP_S = 30;
 
 export interface BestEffortsHandleOptions {
   /** Seconds before the successor may start; tests shorten it. */
