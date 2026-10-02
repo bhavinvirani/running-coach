@@ -611,7 +611,7 @@ export async function seedImportProgress(progress: SeededImport): Promise<void> 
 /**
  * The engine's BEST_EFFORTS_VERSION (packages/engine/src/constants.ts), which the web app does not depend
  * on: a run stored with it counts as checked. Bump it with the engine's; until then every seeded run counts
- * as pending, and the specs that expect none fail on "Checking N runs for best efforts".
+ * as pending, and the specs that expect none fail on the pending line under "Personal bests".
  */
 const BEST_EFFORTS_VERSION = 1;
 
@@ -726,7 +726,7 @@ export const indoorAndManualEfforts: readonly SeededEfforts[] = [
  * Stores best efforts on runs already stored, as the best-efforts job writes them, then marks runs checked
  * as a finished pass leaves them: every outdoor, recorded run of 1 km or more, plus every run named here
  * (so efforts on an indoor or manual run count as computed, and only the read can leave them out). Nothing
- * is left pending, so the bests show no "Checking N runs" line and do not poll. start_s is 0: nothing on
+ * is left pending, so the bests show no pending line and do not poll. start_s is 0: nothing on
  * screen reads where in a run an effort starts.
  */
 export async function seedBestEfforts(runs: readonly SeededEfforts[]): Promise<void> {

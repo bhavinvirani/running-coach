@@ -129,7 +129,9 @@ test("Progress shows a badge per distance with its time and date, and a badge op
   await expect(card).not.toContainText("Garmin");
   // Only the newest run's bests are within a week of the clock.
   await expect(card.getByText("New", { exact: true })).toHaveCount(2);
-  await expect(card).not.toContainText("Checking");
+  // No pending line ("Checking N runs ...", "The next sync checks N runs ...") and no stopped alert.
+  await expect(card).not.toContainText("best efforts");
+  await expect(card.getByRole("alert")).toHaveCount(0);
 
   // The runs holding a best carry its chip in the weeks below; a newer, slower run does not.
   await expect(runRow(week(page, "21–27 Sep"), "Sun 27 Sep")).toHaveAccessibleName(
@@ -193,8 +195,9 @@ test("Sync now flags the run that set new bests: its PB chip on Today, then its 
 
   const latest = page.getByRole("region", { name: "Latest run" });
   await expect(latest.locator("time")).toHaveText("Sun 27 Sep, 08:00");
-  // The worker takes the job within 2 s, and Today reads the bests again every 15 s while a run is
-  // pending, so the chip shows by the second read at the latest.
+  // The sync queues the job before it answers, so the read after it says checking; the worker takes the
+  // job within 2 s and Today reads the bests again every 15 s while checking, so the chip shows by the
+  // second read at the latest.
   await expect(latest.getByText(fixtureChip, { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(latest.getByRole("link")).toHaveAccessibleName(
     `Open the latest run, Sun 27 Sep, 08:00, ${fixtureChip}, 18.0 km, 1:42:00`,
@@ -205,7 +208,9 @@ test("Sync now flags the run that set new bests: its PB chip on Today, then its 
   await expectBadgeLinks(card, fixtureBadges);
   await expectNoRunYet(card, ["20K", "Half", "Marathon"]);
   await expect(badge(card, "Half")).toContainText("Garmin 2:08:51");
-  await expect(card).not.toContainText("Checking");
+  // No pending line ("Checking N runs ...", "The next sync checks N runs ...") and no stopped alert.
+  await expect(card).not.toContainText("best efforts");
+  await expect(card.getByRole("alert")).toHaveCount(0);
   await expect(runRow(week(page, "21–27 Sep"), "Sun 27 Sep")).toHaveAccessibleName(
     `Sun 27 Sep, ${fixtureChip}, 18.0 km, 1:42:00, 5:40 /km`,
   );
@@ -287,7 +292,13 @@ test("a treadmill run as the latest run gets no PB chip on Today and no badge", 
   );
   await expect(latest.getByText(/\bPBs?\b/)).toHaveCount(0);
 
-  expect(await personalBests(page.request)).toEqual({ bests: [], garmin: null, pendingRuns: 0 });
+  expect(await personalBests(page.request)).toEqual({
+    bests: [],
+    garmin: null,
+    pendingRuns: 0,
+    checking: false,
+    errorCode: null,
+  });
 });
 
 test("keeps the weeks when the bests do not load, says what failed, and Retry brings the badges and chips", async ({
