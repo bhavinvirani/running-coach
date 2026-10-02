@@ -4,7 +4,7 @@ import { errorMessages } from "../src/lib/errors";
 import { connectGarmin, importStalled, seedImportProgress, seedRunHistory } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
-const emptySentence = "No runs yet. Import your Garmin history to see them by week.";
+const emptySentence = "Import your Garmin history to see your runs by week.";
 
 /** The eight newest weeks of runHistory (seed.ts), newest first: the first page of Progress. */
 const firstPageWeeks = [
@@ -235,7 +235,9 @@ test("Resume import finishes an import whose job chain died", async ({ page }) =
   await seedImportProgress(importStalled);
 
   await openProgress(page);
-  await expect(importLine(page)).toContainText("The import stopped making progress.");
+  await expect(importLine(page)).toContainText(
+    "The import stopped. Resume import to carry on where it left off.",
+  );
 
   await page.getByRole("button", { name: "Resume import" }).click();
 

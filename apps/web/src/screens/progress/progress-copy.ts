@@ -8,7 +8,7 @@ export const progressCopy = {
   loading: "Loading your runs",
   loadingEarlierWeeks: "Loading earlier weeks",
   /** No runs and no import yet: the sentence carries the one Import history. */
-  empty: "No runs yet. Import your Garmin history to see them by week.",
+  empty: "Import your Garmin history to see your runs by week.",
   /** No runs while the import line above already says what the import is doing. */
   emptyWithImport: "No runs yet.",
   importRegion: "History import",
@@ -55,7 +55,7 @@ export function importLine(progress: ImportProgress, timeZone: string): string {
         ? "Garmin is limiting requests. The import continues later."
         : `Garmin is limiting requests. The import continues after ${formatTime(progress.resumeAt, timeZone)}.`;
     case "stalled":
-      return "The import stopped making progress.";
+      return "The import stopped. Resume import to carry on where it left off.";
     case "failed":
       return errorCodeMessage(progress.errorCode);
     case "done":

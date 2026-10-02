@@ -209,7 +209,7 @@ describe("ProgressScreen", () => {
     renderProgress();
 
     expect(
-      await screen.findByText("No runs yet. Import your Garmin history to see them by week."),
+      await screen.findByText("Import your Garmin history to see your runs by week."),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("button")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Import history" })).toBeEnabled();
@@ -301,7 +301,7 @@ describe("ProgressScreen", () => {
         oldestDate: "2021-03-14",
         startedAt: "2026-10-02T06:40:00Z",
       }),
-      line: "The import stopped making progress.",
+      line: "The import stopped. Resume import to carry on where it left off.",
       action: "Resume import",
     },
     {
@@ -507,7 +507,7 @@ describe("ProgressScreen", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.garmin_not_connected);
     expect(
-      screen.getByText("No runs yet. Import your Garmin history to see them by week."),
+      screen.getByText("Import your Garmin history to see your runs by week."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import history" })).toBeEnabled();
   });
