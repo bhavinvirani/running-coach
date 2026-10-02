@@ -33,6 +33,13 @@ async function withEmptyDatabase(fn: (pools: [pg.Pool, pg.Pool]) => Promise<void
     new pg.Pool({ connectionString: url.toString(), max: 2 }),
     new pg.Pool({ connectionString: url.toString(), max: 2 }),
   ];
+  // pool.end() resolves once pg-pool has dropped its clients, before their sockets close, so the forced drop
+  // below can terminate a connection that is still closing (57P01). Expected here; any other error is not.
+  for (const pool of pools) {
+    pool.on("error", (error: Error & { code?: string }) => {
+      if (error.code !== "57P01") throw error;
+    });
+  }
   try {
     await fn(pools);
   } finally {
