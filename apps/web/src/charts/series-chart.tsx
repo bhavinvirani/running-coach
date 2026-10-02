@@ -149,9 +149,10 @@ function SeriesLine({ points, furthest, unit, kind, copy }: SeriesLineProps) {
       aria-label={`${copy.name} chart`}
     >
       {/* No keyboard layer: there is no tooltip to move through; the table is the accessible view. */}
+      {/* Right margin for half a "15.0 km" label: the last tick sits on the edge when the distance is round. */}
       <LineChart
         data={charted}
-        margin={{ top: 8, right: 16, bottom: 0, left: 0 }}
+        margin={{ top: 8, right: 24, bottom: 0, left: 0 }}
         accessibilityLayer={false}
       >
         <CartesianGrid vertical={false} />

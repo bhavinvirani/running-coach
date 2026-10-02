@@ -19,7 +19,8 @@ type RunDetailProps = {
 };
 
 /**
- * Everything Garmin holds beyond the summary: route, lap pace, splits, HR zones, cadence and elevation.
+ * Everything Garmin holds beyond the summary: route, splits (lap pace chart over the lap table), HR zones,
+ * cadence and elevation.
  * It has its own loading and error states, because the first open fetches it from Garmin (about 5 s) and
  * that fetch can fail while the stats above stay good.
  */
@@ -46,12 +47,15 @@ export function RunDetail({ state, activity, units, onRetry }: RunDetailProps) {
   return (
     <>
       <RouteSection isIndoor={activity.isIndoor} route={route} />
-      {laps.length > 0 ? (
-        <RunSection title="Lap pace">
-          <LapsChart laps={laps.map((lap) => toLapPoint(lap, units))} unit={units} />
-        </RunSection>
-      ) : null}
       <RunSection title="Splits">
+        {/* The table below is the chart's table view, so the chart has no toggle of its own. */}
+        {laps.length > 0 ? (
+          <LapsChart
+            laps={laps.map((lap) => toLapPoint(lap, units))}
+            unit={units}
+            tableToggle={false}
+          />
+        ) : null}
         <SplitsTable laps={laps} units={units} />
       </RunSection>
       <RunSection title="Heart rate zones">

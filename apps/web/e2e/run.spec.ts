@@ -110,8 +110,10 @@ test("opens a stored run from Progress with its stats, splits, charts and route,
   await expect(route.getByRole("img", { name: "Route sketch" })).toBeVisible();
   await expect(route.getByText("Route only: no map token.", { exact: true })).toBeVisible();
 
+  // The lap pace chart sits over the splits table, which is its table view, so that section has no toggle.
+  await expect(section(page, "Splits").getByRole("img", { name: "Lap pace chart" })).toBeVisible();
+  await expect(section(page, "Splits").getByRole("button", { name: "Show table" })).toHaveCount(0);
   const charts = [
-    ["Lap pace", "Lap pace chart"],
     ["Heart rate zones", "Heart rate zones chart"],
     ["Cadence", "Cadence chart"],
     ["Elevation", "Elevation chart"],

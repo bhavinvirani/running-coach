@@ -77,7 +77,7 @@ function detailLoaded() {
   return screen.findByRole("region", { name: "Route" });
 }
 
-const lapBars = () => section("Lap pace").querySelectorAll(".recharts-bar-rectangle");
+const lapBars = () => section("Splits").querySelectorAll(".recharts-bar-rectangle");
 
 /** The line above the stats: start time and flags, "07:12 · Indoor". */
 const startLine = () => within(section("Summary")).getByText("07:12").parentElement;
@@ -183,7 +183,9 @@ describe("RunScreen", () => {
 
     expect(within(section("Route")).getByRole("img", { name: "Route sketch" })).toBeInTheDocument();
     expect(within(section("Route")).getByText("Route only: no map token.")).toBeInTheDocument();
-    expect(within(section("Lap pace")).getByRole("img", { name: "Lap pace chart" })).toBeVisible();
+    expect(within(section("Splits")).getByRole("img", { name: "Lap pace chart" })).toBeVisible();
+    // The splits table is the chart's table view: no toggle in this section.
+    expect(within(section("Splits")).queryByRole("button")).not.toBeInTheDocument();
     const splits = within(section("Splits")).getByRole("table", { name: "Splits" });
     expect(within(splits).getAllByRole("row")).toHaveLength(12);
     expect(within(splits).getByRole("row", { name: "1 1.0 km 5:18 138" })).toBeInTheDocument();
@@ -418,7 +420,7 @@ describe("RunScreen", () => {
     expect(within(glitch).getByText("GPS glitch")).toHaveClass("text-caption", "text-ink-2");
     expect(lapBars()).toHaveLength(11);
     expect(
-      within(section("Lap pace")).getByText("1 lap left out as a GPS glitch."),
+      within(section("Splits")).getByText("1 lap left out as a GPS glitch."),
     ).toBeInTheDocument();
   });
 
@@ -451,7 +453,7 @@ describe("RunScreen", () => {
     renderRun();
     await detailLoaded();
 
-    expect(screen.queryByRole("region", { name: "Lap pace" })).not.toBeInTheDocument();
+    expect(within(section("Splits")).queryByRole("img")).not.toBeInTheDocument();
     expect(within(section("Splits")).getByText("No laps recorded for this run.")).toBeVisible();
     expect(within(section("Cadence")).getByText("No cadence recorded.")).toBeVisible();
     expect(startLine()).toHaveTextContent(/^07:12 · Manual$/);
