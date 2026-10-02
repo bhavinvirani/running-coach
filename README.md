@@ -42,7 +42,7 @@ pnpm contract:build         # zod contracts to JSON Schema in packages/shared/sr
 
 ## Deploy
 
-Render Blueprint: in the Render dashboard choose New, Blueprint, and pick this repo. It reads `render.yaml` (one free Docker web service) and asks once for each secret; `.env.example` lists them with their formats. `DATABASE_URL` is Neon's direct (non-pooler) connection string with `sslmode=require` changed to `sslmode=verify-full`, and `APP_URL` is the service's `onrender.com` URL.
+Render Blueprint: in the Render dashboard choose New, Blueprint, and pick this repo. It reads `render.yaml` (one free Docker web service) and asks once for each secret; `.env.example` lists them with their formats. `DATABASE_URL` is Neon's direct (non-pooler) connection string with `sslmode=require` changed to `sslmode=verify-full`, and `APP_URL` is the service's `onrender.com` URL. The daily sync (`.github/workflows/daily-sync.yml`) needs two GitHub repository secrets: `APP_URL`, the same URL, and `CRON_SECRET`, the value Render holds.
 
 The first boot creates the owner from `OWNER_EMAIL`, `OWNER_PASSWORD` and `OWNER_NAME`; later boots never change it. To change the owner password, run `pnpm seed:owner` from an up-to-date `main` with `DATABASE_URL` set to Neon's URL and the new `OWNER_*` values; it also signs out every session.
 
