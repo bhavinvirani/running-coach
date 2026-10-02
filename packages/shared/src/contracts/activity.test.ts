@@ -119,6 +119,11 @@ describe("activityDetailSchema", () => {
     expect(activityDetailSchema.safeParse(manual).success).toBe(true);
   });
 
+  it("rejects a series shorter than elapsedS, which would misalign the charts", () => {
+    const misaligned = { ...detail, streams: { ...detail.streams, hr: [148, 151] } };
+    expect(activityDetailSchema.safeParse(misaligned).success).toBe(false);
+  });
+
   it("rejects a route point outside the globe and a sixth zone", () => {
     expect(activityDetailSchema.safeParse({ ...detail, route: [[91, 0]] }).success).toBe(false);
     expect(

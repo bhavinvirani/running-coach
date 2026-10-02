@@ -56,7 +56,14 @@ export const activityStreamsSchema = z
     elevationM: z.array(z.number().nullable()).nullable(),
     speedMps: z.array(z.number().nonnegative().nullable()).nullable(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (streams) =>
+      [streams.distanceM, streams.hr, streams.cadence, streams.elevationM, streams.speedMps].every(
+        (series) => series === null || series.length === streams.elapsedS.length,
+      ),
+    { message: "every series must have the length of elapsedS" },
+  );
 export type ActivityStreams = z.infer<typeof activityStreamsSchema>;
 
 /** Seconds spent in one of Garmin's five zones, with the zone's lower bound from the runner's Garmin settings. */
