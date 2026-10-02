@@ -1,0 +1,61 @@
+{
+  "model": "claude-opus-5-5",
+  "effortLevel": "xhigh",
+  "ultracode": true,
+  "permissions": {
+    "allow": [
+      "Bash(pnpm *)",
+      "Bash(pnpm)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(docker compose *)",
+      "Bash(uv *)",
+      "Bash(node *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(wc *)",
+      "Bash(jq *)",
+      "Bash(bash .claude/hooks/*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(!.env.example)",
+      "Edit(.env)",
+      "Edit(.env.*)",
+      "Edit(!.env.example)",
+      "Write(.env)",
+      "Write(.env.*)",
+      "Write(!.env.example)",
+      "Bash(git push --force*)",
+      "Bash(git push * --force*)",
+      "Bash(git push -f *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/format.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

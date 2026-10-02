@@ -1,6 +1,73 @@
 # Running Coach
 
-Planning phases. Before any work, read KICKOFF.md and SPEC.md.
-Backlog: GitHub issues #1 to #12 are the slices in build order; #13 to #19 hold deferred trade-offs; #20 is the owner setup checklist.
-Models: Fable for phases 0 to 3; from phase 4, claude-opus-5-5 at max effort with ultracode on.
-This file is temporary; phase 4 replaces it.
+Mobile-first PWA that replaces a Runna subscription: it syncs Garmin runs, builds a training plan for any goal (5K to marathon, with or without a race date), pushes structured workouts to the watch, reviews each run with Claude as the coach, and adapts the plan. One user today (the owner); data is per-user from day one. Each user brings their own Garmin account and Claude API key. Hosting is $0 (one Render free web service, Neon Postgres). SPEC.md is the one-page spec with every decision; keep it one page.
+
+Status: phase 5 (bootstrap) is next and runs in its own session. After it, every session is one slice started with `/slice N`; the slice ends with the PR steps written in `/ship`, which the owner can also run alone.
+
+## Repo map
+
+| Path | What | Rule |
+|---|---|---|
+| `apps/web` | Vite + React 19 PWA; Tailwind 4 with token-only utilities; restyled shadcn; TanStack Query; Recharts; Mapbox | `web-ui.md` |
+| `apps/web/e2e` | Playwright flows and screenshot tests on fake seed data | `tests.md` |
+| `apps/api` | Express + TypeScript: routes → services → Drizzle on Postgres; pg-boss worker and the Garmin service run in the same process | `api.md` |
+| `apps/api/src/db` | Drizzle schema and committed SQL migrations | `migrations.md` |
+| `apps/api/src/coach` | Claude client, versioned prompt files, output schemas, fallbacks | `coach-prompts.md` |
+| `services/garmin` | FastAPI over `garminconnect`, stateless, shared-secret header, bound to 127.0.0.1 | `garmin-service.md` |
+| `packages/engine` | Training rules: pure TypeScript, no I/O, test-first | `engine.md` |
+| `packages/shared` | zod contracts, error codes, units: the only source of types | `contracts.md` |
+
+Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md` names the reference implementation to copy from.
+
+## Commands (root `package.json`)
+
+| Command | Does |
+|---|---|
+| `pnpm dev` | Postgres via docker compose, API + worker, Garmin service, web with HMR |
+| `pnpm check` | typecheck, lint, boundaries, contract drift, unit and integration tests: what CI runs |
+| `pnpm test` / `pnpm test:e2e` / `pnpm test:screens` | Vitest; Playwright flows against the compose stack; screenshot comparison, always inside the Playwright Docker image (`--update` rewrites baselines) |
+| `pnpm build` / `pnpm contract:build` | production bundles; zod → JSON Schema into `packages/shared/src/json-schema/` |
+| `pnpm --filter @running-coach/<pkg> check` | one package's typecheck, lint and tests |
+| `pnpm seed:owner` | creates the owner account from env vars, locally or on Render |
+| `pnpm db:generate` / `pnpm db:migrate` | SQL from the Drizzle schema; apply locally |
+| `pnpm py:check` | ruff, mypy, pytest for `services/garmin` through uv |
+| `pnpm garmin:connect` | laptop CLI: Garmin login with 2FA, uploads the encrypted token bundle |
+
+## Consistency standards
+
+- One contract: zod schemas in `packages/shared`, written once. The API parses with them at every edge; the web client imports their types; the Python service validates its fixtures against the exported JSON Schema in CI. No duplicate type declarations.
+- Naming: files kebab-case; React components PascalCase; tables and columns snake_case; JSON camelCase; Python snake_case.
+- Units and time: store meters, seconds, bpm, UTC timestamps plus the activity's own time zone. Convert only at the UI edge with the user's settings.
+- Errors: typed domain errors → one Express error middleware → problem+json, including from the Python service. One error code list in `packages/shared`; user-facing messages mapped in one place in the web app and they say what happened and what to do.
+- Logs: pino JSON lines with a request id that flows web → API → Garmin service. Never log tokens, keys, passwords or raw health data.
+- Data fetching: TanStack Query over one fetch wrapper; keys are `[resource, "list" | "detail", ...ids]`.
+- Design: every color, type size, spacing step and radius is a token in `apps/web/src/styles/tokens.css`; lint rejects raw values. One accent; fixed color per workout type; dark only.
+- Boundaries (lint-enforced): web never imports api; engine and shared import no I/O; routes never touch the database directly.
+- Idempotent external writes: track Garmin workout and schedule ids; jobs have deterministic ids; a double fire is a no-op.
+
+## Quality bar (every slice)
+
+- zod at every edge; React error boundaries; no swallowed errors.
+- External calls (Garmin service, Claude): timeouts, retries with backoff and jitter for transient errors only, never on 429 from Garmin, clear failure states in the UI.
+- Claude output is structured JSON validated with zod; invalid output falls back to a fixed card. Prompts are versioned files, never inline strings.
+- Tests: TDD in `packages/engine`; integration tests against a real Postgres, no DB mocks; Garmin fixtures are sanitized; e2e on setup, sync, plan and run detail; screenshots use fake seeded data only (the repo is public).
+- Security: secrets encrypted at rest (AES-256-GCM, key version prefix); CORS locked to the app origin; rate limits on auth; dependency audit in CI.
+- Corner cases are part of each slice's acceptance list in its issue: token expiry and 2FA, Garmin outage or 429, duplicate or edited activities, indoor runs, missing HR, GPS glitches, time zones and DST, unit conversion, missed or moved sessions, illness or injury pauses, race date change, regenerating a plan without losing history, invalid Claude key, Claude quota or timeout, partial sync, overlapping syncs, a daily job firing twice.
+
+## Documentation budget
+
+Only these docs exist: CLAUDE.md, SPEC.md (one page), README (setup and run). Files under `.claude/` are configuration: short and concrete. No PRDs, architecture docs, ADRs, progress reports, status files or end-of-task summaries. Progress lives in GitHub issues and PRs; PR descriptions are at most 5 lines. Comments explain why, not what. When in doubt, ship a working slice instead of writing about it.
+
+## Sessions
+
+- One slice per session. Backlog: issues #1 to #12 are the slices in build order, #13 to #19 hold deferred trade-offs, #20 is the owner's setup checklist.
+- Model: claude-opus-5-5 at xhigh effort (the highest `effortLevel`) with ultracode on, both set in `.claude/settings.json`; subagents in `.claude/agents/` are opus too.
+- State lives in SPEC.md, `.claude/`, GitHub issues and git, never only in chat. Search with the Explore subagent; do not read the whole repo.
+- Stop only for: slice plan approval, secrets, paid services, deleting data, anything public beyond this repo. Everything else: decide and continue.
+- Context running low mid-slice: commit work in progress, add an issue comment of at most 3 lines (done / next / blockers), stop, and tell the owner the one line to resume with.
+- Conventional commits. Never force-push. Never read or write `.env` files (hooks block both); `.env.example` is the list of variables.
+- Pushing back is welcome: the owner is a software engineer (Java/Spring, React/TypeScript, Node) and wants the why and the trade-off in a sentence, and risks (API access, ToS, security, privacy, cost) flagged early.
+
+## Coach
+
+Voice: plain words, short sentences, specific numbers. What happened, what it means, what to do next. No hype, emoji, congratulation openers or filler. Safety: load goes up gradually and missed sessions are never caught up; pain, injury, illness or unusual HR mean rest or easy running and a suggestion to see a professional. Full rules in `.claude/rules/coach-prompts.md`.

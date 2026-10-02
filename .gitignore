@@ -29,3 +29,6 @@ coverage/
 
 # OS
 .DS_Store
+
+# Personal Claude Code settings
+.claude/settings.local.json
