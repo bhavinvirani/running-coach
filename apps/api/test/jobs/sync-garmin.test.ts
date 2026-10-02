@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ErrorCode } from "@running-coach/shared";
 import { asc, eq } from "drizzle-orm";
+import pg from "pg";
 import type { Job, JobWithMetadata } from "pg-boss";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
@@ -11,10 +12,12 @@ import { enqueueSyncGarmin, startJobs, stopJobs } from "../../src/jobs";
 import * as bestEffortsJob from "../../src/jobs/best-efforts";
 import { getBoss } from "../../src/jobs/boss";
 import * as syncJob from "../../src/jobs/sync-garmin";
+import { config } from "../../src/lib/config";
 import { decrypt } from "../../src/lib/crypto";
 import { DomainError } from "../../src/lib/errors";
+import { advisoryLockKey } from "../../src/lib/lock-key";
 import { noonUtc } from "../../src/lib/local-date";
-import { syncGarmin } from "../../src/services/garmin-sync";
+import { syncGarmin, syncNow } from "../../src/services/garmin-sync";
 import { connectGarmin, createUser, fixturesSentTo, garminBundle, setSettings } from "../seed";
 
 // The sync job and service on the real Postgres, against the Garmin service in fixture mode. The fixture
@@ -22,6 +25,7 @@ import { connectGarmin, createUser, fixturesSentTo, garminBundle, setSettings } 
 // sync (30 days back) read all seven in five 7-day chunks.
 
 const TODAY = "2026-09-28";
+const TOMORROW = "2026-09-29";
 const NOW = new Date("2026-09-28T10:00:00Z");
 const FIXTURE_RUNS = 7;
 // The jobs' clock; a test may move it and afterEach puts it back.
@@ -203,31 +207,82 @@ describe("syncGarmin", () => {
     expect((await connection(userId)).lastError).toBeNull();
   });
 
-  it("serializes two concurrent syncs for one user", async () => {
+  it("joins a sync started while one runs for the user: one Garmin call per chunk and one shared result (overlapping syncs)", async () => {
     const userId = await connectedUser();
-    const original = garminClient.sync.bind(garminClient);
-    const events: string[] = [];
-    vi.spyOn(garminClient, "sync").mockImplementation(async (request, options) => {
-      events.push(`start ${request.startDate}`);
-      await sleep(20);
-      const response = await original(request, options);
-      events.push(`end ${request.startDate}`);
-      return response;
-    });
+    const { calls } = recordSyncCalls();
 
-    const [first, second] = await Promise.all([
+    const first = syncGarmin({ userId, now: NOW });
+    const second = syncGarmin({ userId, now: NOW });
+
+    expect(second).toBe(first);
+    const [a, b] = await Promise.all([first, second]);
+    expect(b).toBe(a);
+    expect(a).toMatchObject({ chunks: 5, activitiesWritten: FIXTURE_RUNS });
+    expect(calls).toHaveLength(5);
+    expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);
+  });
+
+  it("shares the running sync's error with a caller that joined it, and counts one rejected login, not two (overlapping syncs, token expiry)", async () => {
+    const userId = await connectedUser(garminBundle("expired"));
+    const { calls } = recordSyncCalls();
+
+    const results = await Promise.allSettled([
       syncGarmin({ userId, now: NOW }),
       syncGarmin({ userId, now: NOW }),
     ]);
 
-    // Every call ends before the next one starts.
-    for (let index = 0; index < events.length; index += 2) {
-      expect(events[index]?.startsWith("start")).toBe(true);
-      expect(events[index + 1]).toBe(events[index]?.replace("start", "end"));
+    for (const result of results) {
+      expect(result).toMatchObject({
+        status: "rejected",
+        reason: { code: ErrorCode.garminAuthExpired },
+      });
     }
-    // Whichever ran second started from the first one's cursor.
-    expect([first.chunks, second.chunks].sort()).toEqual([1, 5]);
-    expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);
+    expect(calls).toHaveLength(1);
+    // Two separate syncs would have marked the login expired (two rejected logins in a row).
+    expect((await connection(userId)).status).toBe("ok");
+  });
+
+  it("starts a new sync once the one it would have joined has settled", async () => {
+    const userId = await connectedUser();
+    await syncGarmin({ userId, now: NOW });
+    const { calls } = recordSyncCalls();
+
+    const again = await syncGarmin({ userId, now: NOW });
+
+    expect(again).toMatchObject({ chunks: 1, activitiesWritten: 0 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("waits while another process holds the user's lock, then starts from the cursor it committed (overlapping syncs across processes)", async () => {
+    const userId = await connectedUser();
+    const { calls } = recordSyncCalls();
+    const otherProcess = new pg.Client({ connectionString: config.DATABASE_URL });
+    await otherProcess.connect();
+    try {
+      await otherProcess.query("begin");
+      await otherProcess.query("select pg_advisory_xact_lock($1::bigint)", [
+        advisoryLockKey("user", userId),
+      ]);
+
+      const sync = syncGarmin({ userId, now: NOW });
+      await sleep(150);
+      expect(calls).toEqual([]);
+      // As another instance's sync would: its cursor commits as its lock is released.
+      await otherProcess.query(
+        "update garmin_connection set last_sync_at = $1 where user_id = $2",
+        [noonUtc("2026-09-20").toISOString(), userId],
+      );
+      await otherProcess.query("commit");
+      const result = await sync;
+
+      expect(calls).toEqual([
+        { startDate: "2026-09-19", endDate: "2026-09-25" },
+        { startDate: "2026-09-26", endDate: TODAY },
+      ]);
+      expect(result).toMatchObject({ startDate: "2026-09-19", chunks: 2 });
+    } finally {
+      await otherProcess.end();
+    }
   });
 
   it("keeps the connection ok on a first rejected login, in case a failed token refresh caused it", async () => {
@@ -356,7 +411,7 @@ describe("syncGarmin", () => {
 describe("sync-garmin job", () => {
   it("runs once for a user and date when the cron enqueues it, however often", async () => {
     const userId = await connectedUser();
-    const data = { userId, trigger: "cron", date: TODAY } as const;
+    const data = { userId, date: TODAY };
 
     const first = await enqueueSyncGarmin(data);
     const second = await enqueueSyncGarmin(data);
@@ -371,45 +426,42 @@ describe("sync-garmin job", () => {
     expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);
   });
 
-  it("queues a sync on app open or Sync now even after a sync already ran that day", async () => {
+  it("queues the next date's sync after the previous date's has run", async () => {
     const userId = await connectedUser();
-    const first = await enqueueSyncGarmin({ userId, trigger: "cron", date: TODAY });
+    const first = await enqueueSyncGarmin({ userId, date: TODAY });
     expect((await waitForJob(first)).state).toBe("completed");
     const { calls } = recordSyncCalls();
 
-    const later = await enqueueSyncGarmin({ userId, trigger: "user" });
+    const next = await enqueueSyncGarmin({ userId, date: TOMORROW });
 
-    const job = await waitForJob(later);
+    expect(next).toBe(syncJob.jobId({ userId, date: TOMORROW }));
+    const job = await waitForJob(next);
     expect(job.output).toMatchObject({ status: "ok", activitiesWritten: 0 });
     expect(calls).toHaveLength(1);
   });
 
-  it("folds repeated taps into the one sync already queued for the user", async () => {
+  it("folds a cron send into the sync already waiting for the user (a sync deferred by a 429)", async () => {
     const userId = await connectedUser();
-    // Not due for a minute, so the worker leaves it queued while the taps come in.
-    const queued = await getBoss().send(
-      syncJob.name,
-      { userId, trigger: "user" },
-      {
-        ...syncJob.sendOptions({ userId, trigger: "user" }),
-        startAfter: 60,
-      },
-    );
+    const deferred = { userId, date: TODAY };
+    // Not due for a minute, so the worker leaves it queued while the cron fires.
+    const queued = await getBoss().send(syncJob.name, deferred, {
+      ...syncJob.sendOptions(deferred),
+      startAfter: 60,
+    });
 
-    const taps = await Promise.all([
-      enqueueSyncGarmin({ userId, trigger: "user" }),
-      enqueueSyncGarmin({ userId, trigger: "user" }),
-      enqueueSyncGarmin({ userId, trigger: "cron", date: TODAY }),
+    const sends = await Promise.all([
+      enqueueSyncGarmin({ userId, date: TOMORROW }),
+      enqueueSyncGarmin({ userId, date: TOMORROW }),
     ]);
 
     expect(queued).not.toBeNull();
-    expect(taps).toEqual([null, null, null]);
+    expect(sends).toEqual([null, null]);
     expect(await queuedJobs(userId)).toEqual([queued]);
   });
 
   it("reschedules itself after retryAfterSeconds on a 429 without counting a failed attempt", async () => {
     const userId = await connectedUser(garminBundle("rate_limited"));
-    const data = { userId, trigger: "user" } as const;
+    const data = { userId, date: TODAY };
     const id = await enqueueSyncGarmin(data);
 
     const job = await waitForJob(id);
@@ -428,20 +480,21 @@ describe("sync-garmin job", () => {
       lastError: ErrorCode.garminRateLimited,
     });
     expect(await runs(userId)).toHaveLength(0);
-    // A tap while the successor waits does not reach Garmin before the delay.
-    expect(await enqueueSyncGarmin(data)).toBeNull();
+    // The next day's cron while the successor waits does not reach Garmin before the delay.
+    expect(await enqueueSyncGarmin({ userId, date: TOMORROW })).toBeNull();
     expect(await queuedJobs(userId)).toEqual([nextId]);
   });
 
   it("pushes back the user's waiting sync on a 429 instead of queueing a successor beside it (429 with a queued job)", async () => {
     const userId = await connectedUser(garminBundle("rate_limited"));
-    const data = { userId, trigger: "user" } as const;
-    // Queued while the 429 job ran: due in a minute, so it would call Garmin long before the delay.
-    const waiting = await getBoss().send(syncJob.name, data, {
-      ...syncJob.sendOptions(data),
+    // The next day's cron, queued while the 429 job ran: due in a minute, so it would call Garmin long
+    // before the delay.
+    const next = { userId, date: TOMORROW };
+    const waiting = await getBoss().send(syncJob.name, next, {
+      ...syncJob.sendOptions(next),
       startAfter: 60,
     });
-    const running = runningJob(data);
+    const running = runningJob({ userId, date: TODAY });
 
     const output = await syncJob.handle(getBoss(), running, () => NOW);
 
@@ -470,11 +523,7 @@ describe("sync-garmin job", () => {
     const limited = await connection(userId);
     const sent = fixturesSentTo("/sync");
 
-    const output = await syncJob.handle(
-      getBoss(),
-      runningJob({ userId, trigger: "user" }),
-      () => NOW,
-    );
+    const output = await syncJob.handle(getBoss(), runningJob({ userId, date: TODAY }), () => NOW);
 
     if (output.status !== "rate_limited")
       throw new Error(`expected rate_limited, got ${output.status}`);
@@ -489,7 +538,7 @@ describe("sync-garmin job", () => {
 
   it("writes back the bundle Garmin rotated before a 429 and still reschedules (rotate then 429)", async () => {
     const userId = await connectedUser(garminBundle("rotate_then_rate_limited"));
-    const id = await enqueueSyncGarmin({ userId, trigger: "user" });
+    const id = await enqueueSyncGarmin({ userId, date: TODAY });
 
     const job = await waitForJob(id);
 
@@ -503,7 +552,7 @@ describe("sync-garmin job", () => {
     const userId = await connectedUser();
     // Queued on 2026-09-20; runs at 00:30 on 2026-09-29 in Berlin, which is still 2026-09-28 in UTC.
     jobClock = new Date("2026-09-28T22:30:00Z");
-    const id = await enqueueSyncGarmin({ userId, trigger: "cron", date: "2026-09-20" });
+    const id = await enqueueSyncGarmin({ userId, date: "2026-09-20" });
 
     const job = await waitForJob(id);
 
@@ -515,9 +564,27 @@ describe("sync-garmin job", () => {
     });
   });
 
+  it("makes one Garmin sync when Sync now arrives while the cron's job syncs, and both get its outcome (overlapping syncs)", async () => {
+    const userId = await connectedUser();
+    const { calls } = recordSyncCalls();
+
+    // The job takes the user's sync first; the tap joins it.
+    const job = syncJob.handle(getBoss(), runningJob({ userId, date: TODAY }), () => NOW);
+    const tap = syncNow({ userId });
+    const [output, response] = await Promise.all([job, tap]);
+
+    expect(output).toMatchObject({ status: "ok", chunks: 5, activitiesWritten: FIXTURE_RUNS });
+    expect(response).toEqual({
+      lastSyncAt: noonUtc(TODAY).toISOString(),
+      activitiesWritten: FIXTURE_RUNS,
+    });
+    expect(calls).toHaveLength(5);
+    expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);
+  });
+
   it("completes without retrying when Garmin rejects the login", async () => {
     const userId = await connectedUser(garminBundle("expired"));
-    const id = await enqueueSyncGarmin({ userId, trigger: "user" });
+    const id = await enqueueSyncGarmin({ userId, date: TODAY });
 
     const job = await waitForJob(id);
 

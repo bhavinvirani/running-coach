@@ -8,6 +8,7 @@ const valid = {
   DATABASE_URL: "postgresql://user:pass@db.example.com/app",
   MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
   BETTER_AUTH_SECRET: "x".repeat(32),
+  CRON_SECRET: "c".repeat(64),
   GARMIN_SERVICE_SECRET: "",
   OWNER_EMAIL: "",
 };
@@ -74,6 +75,28 @@ describe("parseConfig", () => {
       "MASTER_KEY",
     ]);
     expect(JSON.stringify(result.problems)).not.toContain("dev-only");
+  });
+
+  it("requires CRON_SECRET in production, so the daily sync cannot stop silently", () => {
+    for (const missing of [undefined, ""]) {
+      const result = parseConfig({ ...valid, CRON_SECRET: missing });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.problems).toEqual([
+        { variable: "CRON_SECRET", message: "is required in production" },
+      ]);
+    }
+  });
+
+  it("leaves CRON_SECRET optional in development and test", () => {
+    for (const NODE_ENV of ["development", "test"]) {
+      const result = parseConfig({ ...valid, NODE_ENV, CRON_SECRET: undefined });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.config.CRON_SECRET).toBeUndefined();
+    }
   });
 
   it("accepts the published dev secrets outside production", () => {

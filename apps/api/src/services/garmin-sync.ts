@@ -150,20 +150,41 @@ async function saveChunk(
   });
 }
 
+// The sync running in this process for each user; an entry leaves when its sync settles.
+const inFlight = new Map<string, Promise<SyncGarminResult>>();
+
 /**
  * Pulls the user's runs from Garmin into `activity`, from the last sync (minus a day) or 30 days back, up
- * to the user's local date today, in 7-day chunks oldest first. Runs inside the per-user lock, so two
- * syncs for one user never overlap. Each chunk commits on its own connection (not the lock's
- * transaction): a kill or an error keeps the finished chunks and the cursor, and the next run resumes
- * there. A bundle Garmin rotated is written back the moment the client hands it over, before the call
- * returns or throws, because the old refresh token no longer works. A finished sync then queues the
- * user's best efforts when runs are pending, outside the lock the batch also takes.
+ * to the user's local date today, in 7-day chunks oldest first.
+ *
+ * Single-flight per user: a call while the user's sync runs in this process returns that sync's promise
+ * and shares its result or error, instead of waiting behind the lock to log in to Garmin a second time for
+ * a range the first one just read. That happens when Sync now is tapped during the app-open sync, when the
+ * cron's job runs during either, or with the app open in two tabs. In memory is enough because one
+ * process serves the app (SPEC: Hosting); withUserLock still serializes a sync with other Garmin work for
+ * the user and with any other process. A joining caller's `now` and `signal` are not used: the sync it
+ * joins reads its own.
  */
-export async function syncGarmin({
-  userId,
-  now,
-  signal,
-}: SyncGarminInput): Promise<SyncGarminResult> {
+export function syncGarmin(input: SyncGarminInput): Promise<SyncGarminResult> {
+  const running = inFlight.get(input.userId);
+  if (running) return running;
+  const sync = runSync(input).finally(() => {
+    // Removes only this sync's own entry, never one a later sync set.
+    if (inFlight.get(input.userId) === sync) inFlight.delete(input.userId);
+  });
+  inFlight.set(input.userId, sync);
+  return sync;
+}
+
+/**
+ * One sync for syncGarmin. Runs inside the per-user lock, so it never overlaps other Garmin calls for the
+ * user. Each chunk commits on its own connection (not the lock's transaction): a kill or an error keeps
+ * the finished chunks and the cursor, and the next run resumes there. A bundle Garmin rotated is written
+ * back the moment the client hands it over, before the call returns or throws, because the old refresh
+ * token no longer works. A finished sync then queues the user's best efforts when runs are pending,
+ * outside the lock the batch also takes.
+ */
+async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGarminResult> {
   const synced = await withUserLock(userId, async () => {
     const account = await openGarminAccount(userId);
     const timeZone = account.connection.timezone;
@@ -209,9 +230,10 @@ export async function syncGarmin({
 }
 
 /**
- * POST /api/sync: Sync now. Runs in the request instead of the job queue, so a 409, 429 or 502 reaches the
- * runner who tapped rather than hiding behind the job's retries minutes later. A 429 is not deferred here:
- * the runner sees it and decides when to try again.
+ * POST /api/sync: Sync now, also run by the web app when it opens. Runs in the request instead of the job
+ * queue, so a 409, 429 or 502 reaches the runner who asked rather than hiding behind the job's retries
+ * minutes later. A 429 is not deferred here: the runner sees it and decides when to try again. A request
+ * during a running sync joins it (syncGarmin) and answers with its outcome.
  */
 export async function syncNow({ userId }: { userId: string }): Promise<SyncResponse> {
   const { activitiesWritten } = await syncGarmin({ userId });

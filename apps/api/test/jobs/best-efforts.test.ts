@@ -319,7 +319,7 @@ describe("best-efforts job", () => {
   it("computes the runs a sync stored, queued by the sync job (new runs after sync)", async () => {
     const userId = await connectedUser();
 
-    const syncJob = await enqueueSyncGarmin({ userId, trigger: "user" });
+    const syncJob = await enqueueSyncGarmin({ userId, date: "2026-09-28" });
 
     await waitForChain(userId);
     const [sync] = await getBoss().findJobs<object>("sync-garmin", { id: syncJob ?? "" });
