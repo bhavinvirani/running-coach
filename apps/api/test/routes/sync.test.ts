@@ -1,11 +1,15 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { ErrorCode, syncResponseSchema } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, garminConnection } from "../../src/db/schema";
+import { garminClient } from "../../src/garmin/client";
 import { decrypt } from "../../src/lib/crypto";
+import { addDays, type DateRange, dateChunks } from "../../src/lib/local-date";
 import { syncLimiter } from "../../src/routes/sync";
+import { SYNC_CHUNK_DAYS } from "../../src/services/garmin-sync";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import { connectGarmin, fixtureOf, fixturesSentTo, garminBundle } from "../seed";
 
@@ -68,11 +72,25 @@ describe("POST /api/sync", () => {
     expect(await runs()).toHaveLength(FIXTURE_RUNS);
   });
 
-  it("serializes two Sync now requests of one user and stores each run once (overlapping syncs)", async () => {
+  it("serializes two Sync now requests of one user: the second reads the cursor the first committed (overlapping syncs)", async () => {
     const { agent } = await connectedOwner();
+    const windows: DateRange[] = [];
+    const sync = garminClient.sync.bind(garminClient);
+    vi.spyOn(garminClient, "sync").mockImplementation(async (body, options) => {
+      windows.push({ start: body.startDate, end: body.endDate });
+      // Keeps the first sync running while the second request arrives, so only the lock orders them.
+      await sleep(20);
+      return sync(body, options);
+    });
 
     const [first, second] = await Promise.all([agent.post(PATH), agent.post(PATH)]);
 
+    // The first sync asks for 2026-08-31 to today in chunks; the second, after it, asks only for the day
+    // before the first one's last day onwards. Unserialized, both would read 2026-09-01 and ask twice.
+    const firstSync = windows.slice(0, -1);
+    const lastDay = firstSync.at(-1)?.end ?? "no first sync";
+    expect(firstSync).toEqual(dateChunks("2026-08-31", lastDay, SYNC_CHUNK_DAYS));
+    expect(windows.at(-1)?.start).toBe(addDays(lastDay, -1));
     const written = [first, second].map(
       (response) => syncResponseSchema.parse(response.body).activitiesWritten,
     );
