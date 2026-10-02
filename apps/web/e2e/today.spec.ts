@@ -257,7 +257,7 @@ test("Today is the first tab and Settings opens from the tab bar", async ({ page
   const today = tabs.getByRole("link", { name: "Today" });
   const settings = tabs.getByRole("link", { name: "Settings" });
 
-  await expect(tabs.getByRole("link")).toHaveText(["Today", "Progress", "Settings"]);
+  await expect(tabs.getByRole("link")).toHaveText(["Today", "Plan", "Progress", "Settings"]);
   await expect(today).toHaveAttribute("aria-current", "page");
 
   await settings.click();
