@@ -24,7 +24,7 @@ WORKDIR /app
 
 # Dependencies from the lockfile alone, so this layer survives every source change.
 FROM pnpm AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .pnpmfile.cjs ./
 RUN corepack install && pnpm fetch
 COPY . .
 RUN pnpm install --frozen-lockfile --offline
@@ -66,4 +66,5 @@ COPY apps/api/src/db/migrations apps/api/src/db/migrations
 COPY apps/api/src/coach/prompts apps/api/src/coach/prompts
 COPY --from=build /app/apps/web/dist apps/web/dist
 USER node
-CMD ["node", "apps/api/dist/index.js"]
+# Same flags as the api start script: stacks point at TypeScript; measured cost about 3 MB of RSS.
+CMD ["node", "--enable-source-maps", "apps/api/dist/index.js"]
