@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importProgressSchema } from "./history-import";
+import { importProgressSchema } from "./import";
 
 const notStarted = {
   status: "not_started",
