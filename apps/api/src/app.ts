@@ -55,6 +55,12 @@ export function createApp(options: AppOptions = {}): Express {
 
   const csp = helmet.contentSecurityPolicy.getDefaultDirectives();
   if (config.APP_URL.startsWith("http://")) delete csp["upgrade-insecure-requests"];
+  // The run screen's Mapbox map fetches its style and tiles from Mapbox's API, reports to its events host,
+  // runs its workers from blob: URLs and draws blob: images (Mapbox GL JS's CSP guide); without these the
+  // browser blocks it and the screen falls back to the route sketch. 'self' keeps the app's service worker.
+  csp["connect-src"] = ["'self'", "https://api.mapbox.com", "https://events.mapbox.com"];
+  csp["worker-src"] = ["'self'", "blob:"];
+  csp["img-src"] = ["'self'", "data:", "blob:"];
   app.use(helmet({ contentSecurityPolicy: { useDefaults: false, directives: csp } }));
 
   app.use(requestIdMiddleware);

@@ -67,4 +67,25 @@ describe("serving the web app", () => {
     expect(response.headers["x-content-type-options"]).toBe("nosniff");
     expect(response.headers["x-powered-by"]).toBeUndefined();
   });
+
+  it("lets the run screen's Mapbox map load: its API, its blob: workers and blob: images, nothing wider", async () => {
+    const response = await request(app).get("/");
+    const directives = new Map(
+      String(response.headers["content-security-policy"])
+        .split(";")
+        .map((directive) => directive.trim().split(/\s+/))
+        .map(([name = "", ...sources]) => [name, sources]),
+    );
+
+    expect(directives.get("connect-src")).toEqual([
+      "'self'",
+      "https://api.mapbox.com",
+      "https://events.mapbox.com",
+    ]);
+    // 'self' keeps the app's own service worker allowed.
+    expect(directives.get("worker-src")).toEqual(["'self'", "blob:"]);
+    expect(directives.get("img-src")).toEqual(["'self'", "data:", "blob:"]);
+    expect(directives.get("default-src")).toEqual(["'self'"]);
+    expect(directives.get("script-src")).toEqual(["'self'"]);
+  });
 });
