@@ -21,7 +21,8 @@
     "db:generate": "pnpm --filter @running-coach/api db:generate",
     "db:migrate": "pnpm --filter @running-coach/api db:migrate",
     "seed:owner": "pnpm --filter @running-coach/api seed:owner",
-    "py:check": "cd services/garmin && uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run pytest"
+    "py:check": "cd services/garmin && uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run pytest",
+    "garmin:connect": "cd services/garmin && uv run --frozen python -m garmin_service.connect_cli"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

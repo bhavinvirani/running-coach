@@ -24,6 +24,8 @@ pnpm dev          # Postgres (docker compose, port 5434), API + worker + Garmin 
 pnpm seed:owner   # once, after setting OWNER_EMAIL, OWNER_PASSWORD and OWNER_NAME in .env; needs the database up
 ```
 
+Garmin: `pnpm garmin:connect http://localhost:5173` (or the Render URL) signs in to the app as you, asks for your Garmin email, password and 2FA code, and uploads the token bundle, which the API checks with one Garmin call and stores encrypted; nothing is written to disk. Then tap Sync now on Today.
+
 Database: `pnpm db:generate` writes a SQL migration from the Drizzle schema, `pnpm db:migrate` applies it locally (the API also migrates at start).
 
 ## Test

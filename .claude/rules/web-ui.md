@@ -25,7 +25,7 @@ Data first: big tabular figures, small sentence-case labels. Dark only. Strava a
 
 ## Data
 
-- All server data goes through TanStack Query hooks in `src/api/`, over `src/api/client.ts` (typed fetch, `x-request-id`, problem+json → `ApiError`). Query keys come from `src/api/query-keys.ts` as `[resource, "list" | "detail", ...ids]`; a mutation that answers with the whole resource sets it with `setQueryData` under its detail key; any other invalidates by resource prefix.
+- All server data goes through TanStack Query hooks in `src/api/`, over `src/api/client.ts` (typed fetch, `x-request-id`, problem+json → `ApiError`). Query keys come from `src/api/query-keys.ts` as `[resource, "list" | "detail", ...ids]`; a mutation that answers with the whole resource sets it with `setQueryData` under its detail key; any other invalidates by resource prefix. A mutation whose state must outlive its screen (Sync now) gets `actionKey(action)` and a `scope`, and the screen reads it through a hook in `src/api/` built on `useIsMutating` and `useMutationState` (`useLatestSync` in `src/api/sync.ts`).
 - Types are imported from `@running-coach/shared`; never redeclare a response shape.
 - Values arrive in SI and UTC; convert at render time with the conversions in `@running-coach/shared` (`units.ts`) and the user's settings from `useSettings()` in `src/api/me.ts`, then format with `src/lib/format.ts`.
 - The service worker caches the app shell only; API responses are never cached offline.
@@ -35,4 +35,4 @@ Data first: big tabular figures, small sentence-case labels. Dark only. Strava a
 - Only through `src/charts/*` (Recharts via the restyled shadcn `ChartContainer` in `src/components/ui/chart.tsx`, which keeps only `ChartContainer` and `ChartStyle`; add shadcn's tooltip or legend back, restyled, when a chart needs one, values through `src/lib/format.ts`): `isAnimationActive={false}`, series downsampled to 600 points with `src/lib/downsample.ts`, 2 px lines, gridlines `chart-grid`, axes in `text-caption` `ink-2`, target lines dashed `accent` with a text label, no legend for a single series, readable at 390 px. Chart screens are lazy routes.
 - Route map: `react-map-gl` with the Mapbox dark style, no controls except recenter, the route in `chart-series`.
 
-Reference (phase 5): `src/screens/settings/settings-screen.tsx`, `src/components/stat.tsx`, `src/charts/laps-chart.tsx`, `src/styles/tokens.css`.
+Reference (phase 5, and Today from slice 1 for the empty state): `src/screens/settings/settings-screen.tsx`, `src/screens/today/today-screen.tsx`, `src/components/stat.tsx`, `src/charts/laps-chart.tsx`, `src/styles/tokens.css`.

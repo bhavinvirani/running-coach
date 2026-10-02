@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 from garmin_service.client import Connect, GarminSession, login
 from garmin_service.fake_client import FakeTokenStore
 
@@ -33,6 +35,15 @@ def rotated(sent: str) -> str:
 
 def read_fixture(name: str) -> Any:
     return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+
+
+def assert_valid(name: str, instance: Any) -> None:
+    """instance matches packages/shared/src/json-schema/<name>.json, exported from zod."""
+    schema = json.loads((JSON_SCHEMA_DIR / f"{name}.json").read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
+    errors = [f"{list(e.absolute_path)}: {e.message}" for e in validator.iter_errors(instance)]
+    assert errors == [], errors
 
 
 class ScriptedGarmin:

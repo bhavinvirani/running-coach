@@ -3,14 +3,18 @@ import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { isApiError } from "@/api/client";
 import { meQueryOptions } from "@/api/me";
 import { AppPending } from "./app-pending";
+import { bootRetry } from "./query-client";
 import { ScreenErrorBoundary } from "./screen-error-boundary";
 import { TabShell } from "./tab-shell";
 
-/** Every screen behind login needs the user and settings; load them once, send 401s to /login. */
+/**
+ * Every screen behind login needs the user and settings; load them once, send 401s to /login. This is the
+ * first request after the server slept, so it rides out the wake while AppPending explains the wait.
+ */
 export function authenticatedLoader(queryClient: QueryClient) {
   return async () => {
     try {
-      await queryClient.ensureQueryData(meQueryOptions());
+      await queryClient.ensureQueryData({ ...meQueryOptions(), ...bootRetry() });
       return null;
     } catch (error) {
       if (isApiError(error) && error.status === 401) return redirect("/login");
@@ -39,8 +43,13 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
           Component: TabShell,
           ErrorBoundary: ScreenErrorBoundary,
           children: [
-            // Today replaces this redirect in slice 1.
-            { index: true, loader: () => redirect("/settings") },
+            {
+              index: true,
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () => (await import("@/screens/today/today-screen")).TodayScreen,
+              },
+            },
             {
               path: "settings",
               ErrorBoundary: ScreenErrorBoundary,

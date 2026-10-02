@@ -1,11 +1,14 @@
-import { Settings2, type LucideIcon } from "lucide-react";
+import { House, Settings2, type LucideIcon } from "lucide-react";
 import { NavLink, Outlet } from "react-router";
 import { cn } from "@/lib/cn";
 
 type Tab = { to: string; label: string; icon: LucideIcon };
 
-// Only the tabs that exist. Today, Plan and Progress join as their slices land.
-const tabs: readonly Tab[] = [{ to: "/settings", label: "Settings", icon: Settings2 }];
+// Only the tabs that exist. Plan and Progress join between these two as their slices land.
+const tabs: readonly Tab[] = [
+  { to: "/", label: "Today", icon: House },
+  { to: "/settings", label: "Settings", icon: Settings2 },
+];
 
 export function TabShell() {
   return (

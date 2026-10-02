@@ -90,6 +90,19 @@ function secondsUntil(date: Date | undefined): number {
   return ((date?.getTime() ?? 0) - Date.now()) / 1000;
 }
 
+/** A job as the worker hands it to the handler, for calling `handle` directly. */
+function runningJob(data: syncJob.SyncGarminData): Job<unknown> {
+  return {
+    id: randomUUID(),
+    name: syncJob.name,
+    data,
+    signal: new AbortController().signal,
+    expireInSeconds: 900,
+    heartbeatSeconds: null,
+    retryCount: 0,
+  };
+}
+
 beforeAll(async () => {
   await startJobs({ pollingIntervalSeconds: 0.5, clock: () => jobClock });
 });
@@ -424,15 +437,7 @@ describe("sync-garmin job", () => {
       ...syncJob.sendOptions(data),
       startAfter: 60,
     });
-    const running: Job<unknown> = {
-      id: randomUUID(),
-      name: syncJob.name,
-      data,
-      signal: new AbortController().signal,
-      expireInSeconds: 900,
-      heartbeatSeconds: null,
-      retryCount: 0,
-    };
+    const running = runningJob(data);
 
     const output = await syncJob.handle(getBoss(), running, () => NOW);
 
@@ -446,6 +451,36 @@ describe("sync-garmin job", () => {
     // Handling the same 429 again only moves it again.
     await syncJob.handle(getBoss(), running, () => NOW);
     expect(await queuedJobs(userId)).toEqual([waiting]);
+  });
+
+  it("defers a sync that runs in the hour after a 429 by the seconds left, without calling Garmin (Garmin 429)", async () => {
+    const userId = await connectedUser(garminBundle("rate_limited"));
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
+      code: ErrorCode.garminRateLimited,
+    });
+    // The 429 was half an hour ago.
+    await db
+      .update(garminConnection)
+      .set({ updatedAt: new Date(Date.now() - 1800 * 1000) })
+      .where(eq(garminConnection.userId, userId));
+    const limited = await connection(userId);
+    const sent = fixturesSentTo("/sync");
+
+    const output = await syncJob.handle(
+      getBoss(),
+      runningJob({ userId, trigger: "user" }),
+      () => NOW,
+    );
+
+    if (output.status !== "rate_limited")
+      throw new Error(`expected rate_limited, got ${output.status}`);
+    expect(output.retryAfterSeconds).toBeGreaterThan(1790);
+    expect(output.retryAfterSeconds).toBeLessThanOrEqual(1800);
+    expect(sent()).toEqual([]);
+    expect(await connection(userId)).toEqual(limited);
+    const [nextId] = output.rescheduledJobIds;
+    expect(secondsUntil((await findJob(nextId))?.startAfter)).toBeGreaterThan(1780);
+    expect(secondsUntil((await findJob(nextId))?.startAfter)).toBeLessThanOrEqual(1800);
   });
 
   it("writes back the bundle Garmin rotated before a 429 and still reschedules (rotate then 429)", async () => {

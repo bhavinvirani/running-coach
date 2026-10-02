@@ -1,5 +1,5 @@
 import { defineConfig, type Project } from "@playwright/test";
-import { runner } from "./e2e/fixtures/seed";
+import { e2eDatabaseUrl, runner } from "./e2e/fixtures/seed";
 
 // Flows (`pnpm test:e2e`) drive a local Chromium. Screens (`pnpm test:screens`) drive the Chromium inside the
 // official Playwright image through e2e/run-screens.ts, so host fonts and rendering never reach a baseline.
@@ -75,9 +75,7 @@ export default defineConfig({
       PORT: String(PORT),
       APP_URL: baseURL,
       LOG_LEVEL: "error",
-      DATABASE_URL:
-        process.env.E2E_DATABASE_URL ??
-        "postgres://postgres:postgres@localhost:5434/running_coach_e2e",
+      DATABASE_URL: e2eDatabaseUrl,
       // Fake values that satisfy config.ts; nothing real is encrypted or signed in e2e.
       MASTER_KEY: "ZTJlLW9ubHktbWFzdGVyLWtleS0zMi1ieXRlcy1vayE=",
       BETTER_AUTH_SECRET: "e2e-only-better-auth-secret-not-for-production",

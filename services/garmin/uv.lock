@@ -222,6 +222,7 @@ name = "garmin-service"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "fastapi" },
     { name = "garminconnect" },
     { name = "pydantic" },
@@ -240,6 +241,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = "==2026.7.22" },
     { name = "fastapi", specifier = "==0.142.2" },
     { name = "garminconnect", specifier = "==0.3.17" },
     { name = "pydantic", specifier = "==2.13.5" },

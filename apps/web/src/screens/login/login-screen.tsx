@@ -15,7 +15,7 @@ export function LoginScreen() {
     event.preventDefault();
     logIn.mutate(
       { email: email.trim(), password },
-      { onSuccess: () => void navigate("/settings", { replace: true }) },
+      { onSuccess: () => void navigate("/", { replace: true }) },
     );
   }
 

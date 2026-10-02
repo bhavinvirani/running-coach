@@ -30,8 +30,8 @@ export async function stopJobs(): Promise<void> {
 
 /**
  * Queues a sync of the user's runs. The cron passes the user's local date and runs once per user and date;
- * app open and Sync now pass trigger "user" and always queue one, unless a sync is already queued for the
- * user, which then covers it. Null when nothing new was queued.
+ * app open passes trigger "user" and always queues one, unless a sync is already queued for the user,
+ * which then covers it. Null when nothing new was queued. Sync now does not queue (POST /api/sync).
  */
 export async function enqueueSyncGarmin(data: syncGarmin.SyncGarminData): Promise<string | null> {
   const job = syncGarmin.data.parse(data);

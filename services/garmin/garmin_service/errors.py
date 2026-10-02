@@ -151,6 +151,22 @@ def from_garmin_exception(exc: BaseException) -> ServiceError | None:
     return unavailable()
 
 
+def from_login_exception(exc: BaseException) -> ServiceError | None:
+    """Map a failed password login (connect_cli); None when it is neither Garmin nor the network.
+
+    Garmin.resume_login lets a network error out with no library exception around it. During a
+    login nothing else is on the wire, so that is Garmin not answering. The routes keep
+    from_garmin_exception, which leaves such an error unmapped.
+    """
+    error = from_garmin_exception(exc)
+    if error is not None:
+        return error
+    # requests' and curl_cffi's RequestException, socket timeouts and TLS errors are all OSError.
+    if any(isinstance(e, OSError) for e in _chain(exc)):
+        return unavailable()
+    return None
+
+
 class TokenSource(Protocol):
     """A Garmin session that can say whether its tokens rotated (client.GarminSession)."""
 
