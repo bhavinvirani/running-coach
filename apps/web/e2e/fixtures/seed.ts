@@ -50,6 +50,12 @@ const fixtureTokenBundle = JSON.stringify({
  */
 const pinnedLastSyncAt = "2026-09-26T12:00:00Z";
 
+/**
+ * A cursor from which a sync reads from 2026-09-14: the fixture's four runs of 16 to 27 Sep, among them the
+ * 8 km treadmill run of Thu 24 Sep and the 6.5 km run without heart rate of Wed 16 Sep.
+ */
+export const syncFromMidSeptember = "2026-09-15T12:00:00Z";
+
 const runnerId = `(select id from "user" where email = $1)`;
 
 /**
@@ -87,10 +93,13 @@ export async function resetRunner(request: APIRequestContext): Promise<MeRespons
 
 /**
  * Connects the fixture Garmin account through the API, as `pnpm garmin:connect` does, then pins the sync
- * cursor (see pinnedLastSyncAt) with the one statement no route offers. One Garmin login: the API allows
- * six connects a minute per user, so a test connects at most once.
+ * cursor (pinnedLastSyncAt unless the test names another) with the one statement no route offers. One
+ * Garmin login: the API allows six connects a minute per user, so a test connects at most once.
  */
-export async function connectGarmin(request: APIRequestContext): Promise<void> {
+export async function connectGarmin(
+  request: APIRequestContext,
+  lastSyncAt: string = pinnedLastSyncAt,
+): Promise<void> {
   const response = await request.put("/api/garmin/connection", {
     data: { tokenBundle: fixtureTokenBundle },
   });
@@ -102,7 +111,7 @@ export async function connectGarmin(request: APIRequestContext): Promise<void> {
   const pinned = await withDatabase((db) =>
     db.query(`update garmin_connection set last_sync_at = $2 where user_id = ${runnerId}`, [
       runner.email,
-      pinnedLastSyncAt,
+      lastSyncAt,
     ]),
   );
   if (pinned.rowCount !== 1) {
@@ -122,6 +131,16 @@ export async function syncGarmin(request: APIRequestContext): Promise<SyncRespon
   return syncResponseSchema.parse(await response.json());
 }
 
+/** Garmin ids of the fixture account's runs that tests store or open (services/garmin sync.json). */
+export const fixtureRunIds = {
+  /** 18 km on Sun 27 Sep 2026, 08:00, outdoors, with heart rate. */
+  longRun: 10_000_000_007,
+  /** 8 km on a treadmill on Thu 24 Sep 2026, 18:30. */
+  treadmill: 10_000_000_006,
+  /** 6.5 km outdoors on Wed 16 Sep 2026, 19:00, without heart rate. */
+  noHeartRate: 10_000_000_004,
+} as const;
+
 /**
  * Stores the fixture's 18 km run of 2026-09-27 directly, as a sync stores it (same Garmin id, so a later
  * sync updates this row), for tests that need a run on screen without spending a Garmin login.
@@ -131,11 +150,300 @@ export async function seedLongRun(): Promise<void> {
     db.query(
       `insert into activity (user_id, garmin_activity_id, type, start_utc, start_local, distance_m,
          duration_s, avg_hr, max_hr, cadence, calories, elevation_gain_m)
-       values (${runnerId}, 10000000007, 'running', '2026-09-27T06:00:00Z', '2026-09-27 08:00:00', 18000,
+       values (${runnerId}, $2, 'running', '2026-09-27T06:00:00Z', '2026-09-27 08:00:00', 18000,
          6120, 148, 166, 168, 1150, 142)`,
-      [runner.email],
+      [runner.email, fixtureRunIds.longRun],
     ),
   );
+}
+
+/** Stores the fixture's 8 km treadmill run of 2026-09-24 directly, as a sync stores it: indoor, no climb. */
+export async function seedTreadmillRun(): Promise<void> {
+  await withDatabase((db) =>
+    db.query(
+      `insert into activity (user_id, garmin_activity_id, type, start_utc, start_local, distance_m,
+         duration_s, avg_hr, max_hr, cadence, calories, elevation_gain_m, is_indoor)
+       values (${runnerId}, $2, 'treadmill_running', '2026-09-24T16:30:00Z', '2026-09-24 18:30:00', 8000,
+         2700, 152, 171, 172, 520, null, true)`,
+      [runner.email, fixtureRunIds.treadmill],
+    ),
+  );
+}
+
+/**
+ * What seedRunDetail stores: an outdoor run with route, elevation and heart rate; a treadmill run without
+ * route or elevation; an outdoor run whose watch recorded no heart rate (no HR series, zones or lap HR).
+ */
+export type RunDetailVariant = "outdoor" | "treadmill" | "noHr";
+
+type LapProfile = {
+  /** Seconds per km of each 1 km lap, repeated for a longer run and scaled to the run's own time. */
+  paceS: readonly number[];
+  avgHr: readonly number[];
+  avgCadence: readonly number[];
+};
+
+const lapProfiles: Record<"outdoor" | "treadmill", LapProfile> = {
+  // The 18 km long run's laps, 6120 s in all, so they are stored as written: a slow first km, a hill on
+  // km 10 (6:06), the descent after it (5:31) and a fast last km (5:06).
+  outdoor: {
+    paceS: [
+      352, 348, 344, 343, 341, 342, 340, 343, 341, 366, 331, 340, 337, 341, 336, 335, 334, 306,
+    ],
+    avgHr: [
+      140, 142, 143, 144, 145, 146, 146, 147, 148, 158, 150, 149, 150, 151, 152, 153, 155, 165,
+    ],
+    avgCadence: [
+      168, 169, 169, 170, 169, 170, 169, 170, 169, 168, 172, 170, 170, 169, 170, 171, 172, 176,
+    ],
+  },
+  // The 8 km treadmill run's laps, 2700 s in all: steady once warm.
+  treadmill: {
+    paceS: [345, 340, 338, 336, 336, 335, 335, 335],
+    avgHr: [138, 145, 149, 151, 153, 155, 157, 160],
+    avgCadence: [170, 171, 172, 172, 172, 173, 173, 174],
+  },
+};
+
+/** Garmin's five zones: lower bounds, and the long run's seconds in each, scaled to any run's time. */
+const zoneLowBpm = [98, 118, 137, 157, 176] as const;
+const zoneSecondsOfLongRun = [180, 1260, 3120, 1440, 120] as const;
+
+/** About what Garmin's detail call leaves of a run, and what a chart draws without downsampling. */
+const SAMPLES = 600;
+const ROUTE_POINTS = 300;
+
+type SeededLap = {
+  idx: number;
+  distanceM: number;
+  durationS: number;
+  avgHr: number | null;
+  avgCadence: number;
+};
+
+type SeededDetail = {
+  laps: SeededLap[];
+  elapsedS: number[];
+  distanceM: number[];
+  hr: number[] | null;
+  cadence: number[];
+  elevationM: number[] | null;
+  speedMps: number[];
+  route: [number, number][] | null;
+  hrZones: { zone: number; lowBpm: number; seconds: number }[] | null;
+};
+
+function at(values: readonly number[], index: number): number {
+  const value = values[index % values.length];
+  if (value === undefined) throw new Error("A lap profile is empty");
+  return value;
+}
+
+function round(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  // + 0 turns -0 into 0.
+  return Math.round(value * factor) / factor + 0;
+}
+
+/** 1 km laps (the last one shorter) paced by the profile, scaled so they add up to the run's time. */
+function seededLaps(
+  distanceM: number,
+  durationS: number,
+  profile: LapProfile,
+  withHr: boolean,
+): SeededLap[] {
+  const count = Math.ceil(distanceM / 1000);
+  const laps = Array.from({ length: count }, (_, index) => {
+    const lapDistance = Math.min(1000, distanceM - index * 1000);
+    return {
+      idx: index + 1,
+      distanceM: lapDistance,
+      durationS: (at(profile.paceS, index) * lapDistance) / 1000,
+      avgHr: withHr ? at(profile.avgHr, index) : null,
+      avgCadence: at(profile.avgCadence, index),
+    };
+  });
+  const scale = durationS / laps.reduce((sum, lap) => sum + lap.durationS, 0);
+  return laps.map((lap) => ({ ...lap, durationS: round(lap.durationS * scale, 3) }));
+}
+
+/** A lap value at time t: straight lines between lap midpoints, from `startValue` at the start. */
+function lapCurve(
+  laps: readonly SeededLap[],
+  value: (lap: SeededLap) => number,
+  startValue: number,
+): (t: number) => number {
+  const points: [number, number][] = [[0, startValue]];
+  let lapStart = 0;
+  for (const lap of laps) {
+    points.push([lapStart + lap.durationS / 2, value(lap)]);
+    lapStart += lap.durationS;
+  }
+  return (t) => {
+    const next = points.findIndex(([time]) => time >= t);
+    if (next <= 0) return points[next === 0 ? 0 : points.length - 1]?.[1] ?? startValue;
+    const [t0, v0] = points[next - 1] ?? [0, startValue];
+    const [t1, v1] = points[next] ?? [t0, v0];
+    return v0 + ((v1 - v0) * (t - t0)) / (t1 - t0);
+  };
+}
+
+/**
+ * A fictional loop in open ocean around 0.0, -30.0, uneven so it reads as a route: never anyone's real
+ * coordinates.
+ */
+function oceanLoop(): [number, number][] {
+  return Array.from({ length: ROUTE_POINTS + 1 }, (_, index) => {
+    const angle = (2 * Math.PI * index) / ROUTE_POINTS;
+    const radius = 1 + 0.12 * Math.sin(3 * angle) + 0.05 * Math.cos(5 * angle);
+    return [
+      round(0.024 * radius * Math.sin(angle), 6),
+      round(-30 + 0.036 * radius * Math.cos(angle), 6),
+    ];
+  });
+}
+
+/** Deterministic laps, samples, route and zones for a stored run of this distance and time. */
+function syntheticDetail(
+  distanceM: number,
+  durationS: number,
+  variant: RunDetailVariant,
+): SeededDetail {
+  const indoor = variant === "treadmill";
+  const withHr = variant !== "noHr";
+  const laps = seededLaps(
+    distanceM,
+    durationS,
+    lapProfiles[indoor ? "treadmill" : "outdoor"],
+    withHr,
+  );
+
+  const lapEnds: { time: number; distance: number; lap: SeededLap }[] = [];
+  let time = 0;
+  let distance = 0;
+  for (const lap of laps) {
+    time += lap.durationS;
+    distance += lap.distanceM;
+    lapEnds.push({ time, distance, lap });
+  }
+  // The climb tops out where the slowest lap after the first ends.
+  const slowest = laps
+    .slice(1)
+    .reduce<SeededLap | undefined>(
+      (slow, lap) =>
+        !slow || lap.durationS / lap.distanceM > slow.durationS / slow.distanceM ? lap : slow,
+      undefined,
+    );
+  const hilltopM = slowest ? slowest.idx * 1000 : distanceM / 2;
+
+  const hrAt = lapCurve(laps, (lap) => lap.avgHr ?? 0, 118);
+  const cadenceAt = lapCurve(laps, (lap) => lap.avgCadence, 166);
+  const detail: SeededDetail = {
+    laps,
+    elapsedS: [],
+    distanceM: [],
+    hr: withHr ? [] : null,
+    cadence: [],
+    elevationM: indoor ? null : [],
+    speedMps: [],
+    route: indoor ? null : oceanLoop(),
+    hrZones: withHr ? zones(durationS) : null,
+  };
+  for (let sample = 0; sample < SAMPLES; sample += 1) {
+    const t = (durationS * sample) / (SAMPLES - 1);
+    const end = lapEnds.find((candidate) => candidate.time >= t - 1e-9) ?? lapEnds.at(-1);
+    if (!end) throw new Error("A run with detail needs at least one lap");
+    const { lap } = end;
+    const d = end.distance - (lap.distanceM * (end.time - t)) / lap.durationS;
+    detail.elapsedS.push(round(t, 1));
+    detail.distanceM.push(round(Math.max(0, d), 1));
+    // Drift on two slow, unrelated periods, so the lines wander as a run does rather than zigzag.
+    const drift = 0.6 * Math.sin(t / 97) + 0.4 * Math.sin(t / 233);
+    detail.hr?.push(round(hrAt(t) + 2 * drift, 0));
+    detail.cadence.push(round(cadenceAt(t) + drift, 1));
+    // Gentle rolls, and one climb of about 45 m over the 2 km before the hilltop.
+    const rolls = 4 * Math.sin((2 * Math.PI * d) / 3100) + 2 * Math.sin((2 * Math.PI * d) / 1300);
+    const climb = 46 * Math.exp(-(((d - hilltopM) / 1100) ** 2));
+    detail.elevationM?.push(round(14 + rolls + climb, 1));
+    detail.speedMps.push(round(lap.distanceM / lap.durationS + 0.05 * drift, 2));
+  }
+  return detail;
+}
+
+/** The long run's share of each zone, in whole seconds that add up to the run's time. */
+function zones(durationS: number): SeededDetail["hrZones"] {
+  const total = zoneSecondsOfLongRun.reduce((sum, seconds) => sum + seconds, 0);
+  const seconds = zoneSecondsOfLongRun.map((share) => Math.round((share * durationS) / total));
+  // Rounding leftovers go to zone 3, the biggest.
+  seconds[2] =
+    Math.round(durationS) -
+    seconds.reduce((sum, value, index) => (index === 2 ? sum : sum + value), 0);
+  return seconds.map((value, index) => ({
+    zone: index + 1,
+    lowBpm: at(zoneLowBpm, index),
+    seconds: value,
+  }));
+}
+
+/**
+ * Stores laps, samples, route and zones for an already stored run, as the first open of the run screen
+ * would after fetching them from Garmin, so the screen shows them without a Garmin login. Synthetic and
+ * deterministic: built from the run's distance and time. Both rows go with the run when resetRunner
+ * deletes it (on delete cascade).
+ */
+export async function seedRunDetail(
+  garminActivityId: number,
+  variant: RunDetailVariant,
+): Promise<void> {
+  await withDatabase(async (db) => {
+    const { rows } = await db.query<{ id: string; distance_m: number; duration_s: number }>(
+      `select id, distance_m, duration_s from activity
+       where user_id = ${runnerId} and garmin_activity_id = $2`,
+      [runner.email, garminActivityId],
+    );
+    const run = rows[0];
+    if (!run) throw new Error(`No stored run with Garmin id ${garminActivityId} to add detail to`);
+    const detail = syntheticDetail(run.distance_m, run.duration_s, variant);
+
+    await db.query("begin");
+    try {
+      await db.query(
+        `insert into activity_stream (activity_id, elapsed_s, distance_m, hr, cadence, elevation_m,
+           speed_mps, route, hr_zones)
+         values ($1, $2::real[], $3::real[], $4::real[], $5::real[], $6::real[], $7::real[], $8::jsonb,
+           $9::jsonb)`,
+        [
+          run.id,
+          detail.elapsedS,
+          detail.distanceM,
+          detail.hr,
+          detail.cadence,
+          detail.elevationM,
+          detail.speedMps,
+          detail.route === null ? null : JSON.stringify(detail.route),
+          detail.hrZones === null ? null : JSON.stringify(detail.hrZones),
+        ],
+      );
+      await db.query(
+        `insert into activity_lap (activity_id, idx, distance_m, duration_s, avg_hr, avg_cadence)
+         select $1, lap.idx, lap.distance_m, lap.duration_s, lap.avg_hr, lap.avg_cadence
+         from unnest($2::int[], $3::float8[], $4::float8[], $5::float8[], $6::float8[])
+           as lap(idx, distance_m, duration_s, avg_hr, avg_cadence)`,
+        [
+          run.id,
+          detail.laps.map((lap) => lap.idx),
+          detail.laps.map((lap) => lap.distanceM),
+          detail.laps.map((lap) => lap.durationS),
+          detail.laps.map((lap) => lap.avgHr),
+          detail.laps.map((lap) => lap.avgCadence),
+        ],
+      );
+      await db.query("commit");
+    } catch (error) {
+      await db.query("rollback");
+      throw error;
+    }
+  });
 }
 
 type SeededRun = {
