@@ -11,11 +11,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from garmin_service.fake_client import FAKE_UNAVAILABLE_ACTIVITY_ID, FAKE_UNAVAILABLE_ACTIVITY_IDS
 from garmin_service.models.problem import ErrorCode
 from tests.conftest import AppFactory
 from tests.helpers import JSON_SCHEMA_DIR, ScriptedGarmin, assert_valid, bundle, raw_run
 
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
+# Both of the fake's unavailable runs, in a row: the series route stops after them.
+UNAVAILABLE_IN_A_ROW = sorted(FAKE_UNAVAILABLE_ACTIVITY_IDS)
 
 
 @pytest.mark.parametrize("behaviour", [None, "rotate", "rotated"])
@@ -118,9 +121,17 @@ def test_activity_detail_responses_match_garmin_activity_detail_response(
         ([10_000_000_007, 10_000_000_004, 9_000_000_023], True, None),
         ([10_000_000_007], False, None),
         ([10_000_000_003, 12_345], True, None),  # a manual entry and a run Garmin does not have
+        # ok, gone, failed and ok without samples in one batch.
+        ([10_000_000_007, 12_345, FAKE_UNAVAILABLE_ACTIVITY_ID, 10_000_000_003], True, None),
+        ([FAKE_UNAVAILABLE_ACTIVITY_ID], False, None),
+        # Two failures in a row: the runs after them are skipped, the records null.
+        ([*UNAVAILABLE_IN_A_ROW, 10_000_000_007, 10_000_000_003], True, None),
         ([], True, None),
         ([], False, None),
         ([10_000_000_006, 10_000_000_007], True, "rotate"),
+        # The run fails and the records come back null, with the rotated bundle.
+        ([10_000_000_007], False, "rotate_then_unavailable"),
+        ([], True, "rotate_then_unavailable"),
     ],
 )
 def test_series_responses_match_garmin_series_response(
@@ -136,10 +147,72 @@ def test_series_responses_match_garmin_series_response(
     response = client.post("/activities/series", json=request)
 
     assert response.status_code == 200
-    assert_valid("garmin-series-response", response.json())
-    for series in response.json()["series"]:
+    assert_series_response_valid(response.json())
+
+
+def test_series_responses_carry_every_outcome_the_contract_names(client: TestClient) -> None:
+    response = client.post(
+        "/activities/series",
+        json={
+            "tokenBundle": bundle(),
+            "garminActivityIds": [10_000_000_007, 12_345, *UNAVAILABLE_IN_A_ROW, 10_000_000_002],
+            "includeRecords": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert_series_response_valid(response.json())
+    schema = json.loads(
+        (JSON_SCHEMA_DIR / "garmin-series-outcome.json").read_text(encoding="utf-8")
+    )
+    outcomes = [series["outcome"] for series in response.json()["series"]]
+    assert outcomes == ["ok", "gone", "failed", "failed", "skipped"]
+    assert list(dict.fromkeys(outcomes)) == schema["enum"]
+
+
+@pytest.mark.parametrize(
+    "garmin",
+    [
+        ScriptedGarmin(personal_records={"records": []}),
+        ScriptedGarmin(personal_records=[{"typeId": 3, "value": "27:05"}, {"typeId": 7}]),
+        ScriptedGarmin(details={"activityDetailMetrics": "7028 rows"}),
+        ScriptedGarmin(
+            details={
+                "metricDescriptors": [
+                    {"metricsIndex": 0, "key": "sumDuration"},
+                    {"metricsIndex": 1, "key": "sumDistance"},
+                ],
+                "activityDetailMetrics": [
+                    {"metrics": [0.0, 0.0]},
+                    {"metrics": [5.0, 12.0]},
+                    {"metrics": [4.0, 13.0]},
+                    {"metrics": [float("inf"), 14.0]},
+                ],
+            }
+        ),
+    ],
+)
+def test_series_responses_from_unexpected_garmin_answers_match_garmin_series_response(
+    make_client: AppFactory, garmin: ScriptedGarmin
+) -> None:
+    response = make_client(connect=garmin.connect()).post(
+        "/activities/series",
+        json={"tokenBundle": bundle(), "garminActivityIds": [42], "includeRecords": True},
+    )
+
+    assert response.status_code == 200
+    assert_series_response_valid(response.json())
+
+
+def assert_series_response_valid(body: dict[str, Any]) -> None:
+    assert_valid("garmin-series-response", body)
+    for series in body["series"]:
         assert_valid("garmin-activity-series", series)
-    for record in response.json()["records"] or []:
+        assert_valid("garmin-series-outcome", series["outcome"])
+        # The zod refinements JSON Schema cannot carry.
+        assert len(series["distanceM"]) == len(series["elapsedS"])
+        assert series["outcome"] == "ok" or series["elapsedS"] == []
+    for record in body["records"] or []:
         assert_valid("garmin-record", record)
 
 

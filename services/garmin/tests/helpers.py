@@ -73,7 +73,9 @@ class ScriptedGarmin:
         hr_zones: dict[str, Any] | list[Any] | None = None,
         detail_error: BaseException | None = None,
         details_errors: dict[str, BaseException] | None = None,
+        details_answers: dict[str, Any] | None = None,
         personal_records: Any = None,
+        records_error: BaseException | None = None,
         rotate_to: str | None = None,
         full_name: str | None = "Alex Fixture",
         display_name: str | None = "fixture-runner",
@@ -95,8 +97,12 @@ class ScriptedGarmin:
         self._detail_error = detail_error
         # Raised by get_activity_details for these activity ids.
         self._details_errors = details_errors or {}
+        # get_activity_details' answer for these activity ids, over `details`.
+        self._details_answers = details_answers or {}
         # get_personal_record's answer; None serves personal-records.json.
         self._personal_records = personal_records
+        # Raised by get_personal_record.
+        self._records_error = records_error
         self.full_name = full_name
         self.display_name = display_name
         self.calls: list[str] = []
@@ -155,6 +161,9 @@ class ScriptedGarmin:
         self.calls.append(f"get_activity_details:{activity_id}:{maxchart}:{maxpoly}")
         if activity_id in self._details_errors:
             raise self._details_errors[activity_id]
+        if activity_id in self._details_answers:
+            by_id: dict[str, Any] = self._details_answers[activity_id]
+            return by_id
         answer: dict[str, Any] = read_fixture("detail-series.json")
         return answer if self._details is None else self._details
 
@@ -165,6 +174,8 @@ class ScriptedGarmin:
 
     def get_personal_record(self) -> dict[str, Any] | list[Any]:
         self.calls.append("get_personal_record")
+        if self._records_error is not None:
+            raise self._records_error
         answer: list[Any] = read_fixture("personal-records.json")
         return answer if self._personal_records is None else self._personal_records
 

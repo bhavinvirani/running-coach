@@ -11,8 +11,13 @@ derive the variants from the account's list item: an indoor type has no route an
 run without heart rate has no HR series, no lap HR and no second in any zone, a manual entry has no
 laps, no samples and no zones. An outdoor run gets a fictional loop around 0.0, -30.0 (open
 ocean) as its route, since the sanitizer removes the real one; with maxpoly 0 its polyline is
-empty, as Garmin answers. An id outside the account is a 404, as Garmin answers. The series route
-asks for the same details at maxchart 10000 and gets the same fixture rows.
+empty, as Garmin answers. An id outside the account is a 404, as Garmin answers (the series route
+reports it "gone"), except FAKE_UNAVAILABLE_ACTIVITY_IDS: every per-run call for them fails the
+way garminconnect raises a 503 once its retries ran out, so the API's tests reach the series route's
+per-run "failed" (and the detail route's 502) on one run while the others succeed, and with both in
+a row its early stop, which answers the runs after them "skipped". The series route asks for the
+same details at maxchart 10000 and gets the same fixture rows; a manual entry answers with no rows
+("ok", empty).
 
 get_personal_record serves personal-records.json: made-up values in the shape captured from Garmin
 (distance records 1 to 5, the longest run 7, step and goal records 12 to 16).
@@ -34,7 +39,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from garminconnect import (
     GarminConnectAuthenticationError,
@@ -55,6 +60,9 @@ RECORDS_FIXTURE = "personal-records.json"
 FAKE_ROUTE_CENTER = (0.0, -30.0)
 FAKE_ROUTE_RADIUS_DEG = 0.02
 FAKE_ROUTE_POINTS = 120
+# No activity of the account has these ids: Garmin down for these runs alone.
+FAKE_UNAVAILABLE_ACTIVITY_ID = 9_000_000_503
+FAKE_UNAVAILABLE_ACTIVITY_IDS = frozenset({FAKE_UNAVAILABLE_ACTIVITY_ID, 9_000_000_504})
 
 # What garminconnect's _run_request raises underneath login() for each simulated failure.
 _LOGIN_FAILURES = {
@@ -65,9 +73,9 @@ _LOGIN_FAILURES = {
 _ROTATE_THEN_FAIL = frozenset({"rotate_then_rate_limited", "rotate_then_unavailable"})
 
 
-def _call_failure(behaviour: str) -> Exception:
+def _call_failure(status: Literal[429, 503]) -> Exception:
     """What garminconnect's API-call wrapper raises for a 429, or a 503 once its retries ran out."""
-    if behaviour == "rotate_then_rate_limited":
+    if status == 429:
         error: Exception = GarminConnectTooManyRequestsError("Rate limit exceeded")
         cause = GarminConnectConnectionError("API Error 429")
     else:
@@ -244,6 +252,8 @@ class FakeGarmin:
         return records
 
     def _activity(self, activity_id: str) -> dict[str, Any]:
+        if activity_id in {str(unavailable) for unavailable in FAKE_UNAVAILABLE_ACTIVITY_IDS}:
+            raise _call_failure(503)
         for item in self._account():
             if str(item["activityId"]) == activity_id:
                 return item
@@ -252,7 +262,7 @@ class FakeGarmin:
     def _fail_pending_call(self) -> None:
         if self._fail_next_call is not None:
             behaviour, self._fail_next_call = self._fail_next_call, None
-            raise _call_failure(behaviour)
+            raise _call_failure(429 if behaviour == "rotate_then_rate_limited" else 503)
 
     def _account(self) -> list[dict[str, Any]]:
         """Every activity of the fake account, newest first by startTimeLocal like Garmin."""

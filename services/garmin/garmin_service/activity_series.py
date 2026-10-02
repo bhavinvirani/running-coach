@@ -1,18 +1,30 @@
 """Garmin's full-rate samples of a run as timer and distance series, and Garmin's own running
-records, for best efforts and personal bests."""
+records, for best efforts and personal bests.
+
+A batch fails as a whole only on a 429 or a dead login: every later call would fail the same way,
+and the API must back off or ask the runner to reconnect. Anything else concerns one run (its
+outcome says what became of it) or the records (null), and the batch goes on.
+"""
 
 import logging
+import math
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from garminconnect import GarminConnectConnectionError
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from garmin_service.activity_detail import parse_details, timed_rows
 from garmin_service.client import GarminSession
-from garmin_service.errors import from_garmin_exception, unavailable
+from garmin_service.errors import ServiceError, error_names, from_garmin_exception
 from garmin_service.models.garmin import GarminPersonalRecord
 from garmin_service.models.problem import ErrorCode
-from garmin_service.models.series import DISTANCE_KEYS, ActivitySeries, DistanceKey, GarminRecord
+from garmin_service.models.series import (
+    DISTANCE_KEYS,
+    ActivitySeries,
+    DistanceKey,
+    GarminRecord,
+    SeriesOutcome,
+)
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +37,7 @@ SERIES_MAX_POLY = 0
 # get_personal_record's typeId of each running record at a distance the app knows; `value` is
 # seconds. 1 to 5 were seen on the owner's account (2026-10-02); 6 as the marathon is assumed from
 # the library's docstring, since no marathon was recorded. 7 (longest run, in meters) and the step
-# and goal records (12 to 16) are ignored.
+# and goal records (12 to 16) are never read.
 GARMIN_RECORD_DISTANCES: dict[int, DistanceKey] = {
     1: "1k",
     2: "1mi",
@@ -35,75 +47,150 @@ GARMIN_RECORD_DISTANCES: dict[int, DistanceKey] = {
     6: "marathon",
 }
 
+# The failures that end the whole request (errors.py answers them, with a rotated bundle).
+REQUEST_FAILURES = frozenset({ErrorCode.GARMIN_RATE_LIMITED, ErrorCode.GARMIN_AUTH_EXPIRED})
+
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-_RECORDS = TypeAdapter(list[GarminPersonalRecord])
 
 
-def details_or_none(garmin: GarminSession, garmin_activity_id: int) -> object | None:
-    """get_activity_details at full rate; None when Garmin no longer has the run.
+def empty_series(garmin_activity_id: int, outcome: SeriesOutcome) -> ActivitySeries:
+    return ActivitySeries(
+        garmin_activity_id=garmin_activity_id, outcome=outcome, elapsed_s=[], distance_m=[]
+    )
 
-    A run deleted on Garmin has no best efforts, and it must not fail the other runs of the batch.
-    Every other failure fails the request through errors.py, which also decides what is a 404.
-    """
+
+def fetch_series(garmin: GarminSession, garmin_activity_id: int) -> ActivitySeries:
+    """One run's samples at full rate: "ok", "gone" on a 404 (deleted on Garmin), or "failed" when
+    this run alone could not be read. A 429, a dead login or an exception that is not Garmin's
+    raises."""
     try:
-        return garmin.call(
+        details = garmin.call(
             garmin.api.get_activity_details,
             str(garmin_activity_id),
             maxchart=SERIES_MAX_CHART,
             maxpoly=SERIES_MAX_POLY,
         )
-    except GarminConnectConnectionError as exc:
+    except Exception as exc:
         error = from_garmin_exception(exc)
-        if error is None or error.code is not ErrorCode.NOT_FOUND:
+        if error is None or error.code in REQUEST_FAILURES:
             raise
-        return None
+        if error.code is ErrorCode.NOT_FOUND:
+            return empty_series(garmin_activity_id, "gone")
+        # The class names only: the library's messages can quote Garmin's answer.
+        log.warning(
+            "could not read one run's series, the batch goes on",
+            extra={"code": error.code.value, "error_chain": error_names(exc)},
+        )
+        return empty_series(garmin_activity_id, "failed")
+    try:
+        return to_series(garmin_activity_id, details)
+    except ServiceError as exc:
+        # parse_details has logged the field paths where the shape broke.
+        log.warning(
+            "could not read one run's series, the batch goes on", extra={"code": exc.code.value}
+        )
+        return empty_series(garmin_activity_id, "failed")
 
 
-def to_series(garmin_activity_id: int, details: object | None) -> ActivitySeries:
+def to_series(garmin_activity_id: int, details: object) -> ActivitySeries:
+    """Every row with a timer value and a distance, in Garmin's order; raises unavailable() for a
+    shape this service cannot read.
+
+    Rows whose timer goes backwards stay: the engine cuts the run there, where this service could
+    only guess which side of the jump is right.
+    """
     elapsed_s: list[float] = []
     distance_m: list[float] = []
-    rows = [] if details is None else timed_rows(parse_details(details))
-    for elapsed, distance, _ in rows:
-        # The contract promises non-decreasing time, which a sliding window relies on.
-        if elapsed_s and elapsed < elapsed_s[-1]:
-            continue
-        elapsed_s.append(elapsed)
-        distance_m.append(distance)
+    for elapsed, distance, _ in timed_rows(parse_details(details)):
+        # Python's json reads NaN and Infinity, and neither places a sample.
+        if math.isfinite(elapsed) and math.isfinite(distance):
+            elapsed_s.append(elapsed)
+            distance_m.append(distance)
     return ActivitySeries(
-        garmin_activity_id=garmin_activity_id, elapsed_s=elapsed_s, distance_m=distance_m
+        garmin_activity_id=garmin_activity_id,
+        outcome="ok",
+        elapsed_s=elapsed_s,
+        distance_m=distance_m,
     )
 
 
-def to_records(raw: object) -> list[GarminRecord]:
-    """Garmin's running records at the app's distances, shortest first, the fastest per distance.
-
-    A record without a positive time or without any date says nothing comparable and is skipped.
-    """
-    fastest: dict[DistanceKey, GarminRecord] = {}
-    for record in _parse_records(raw):
-        distance_key = GARMIN_RECORD_DISTANCES.get(record.type_id)
-        achieved_ms = record.activity_start_date_time_in_gmt or record.pr_start_time_gmt
-        if distance_key is None or record.value is None or record.value <= 0 or not achieved_ms:
-            continue
-        mapped = GarminRecord(
-            distance_key=distance_key,
-            time_s=record.value,
-            achieved_at=_EPOCH + timedelta(milliseconds=achieved_ms),
+def fetch_records(garmin: GarminSession) -> list[GarminRecord] | None:
+    """Garmin's records, or None when they cannot be had: they are only a comparison, so they never
+    fail the series. A 429 or a dead login still raises."""
+    try:
+        raw = garmin.call(garmin.api.get_personal_record)
+    except Exception as exc:
+        error = from_garmin_exception(exc)
+        if error is not None and error.code in REQUEST_FAILURES:
+            raise
+        log.warning(
+            "could not read Garmin's records, answered without them",
+            extra={
+                "code": None if error is None else error.code.value,
+                "error_chain": error_names(exc),
+            },
         )
-        current = fastest.get(distance_key)
-        if current is None or mapped.time_s < current.time_s:
-            fastest[distance_key] = mapped
-    return [fastest[key] for key in DISTANCE_KEYS if key in fastest]
+        return None
+    return to_records(raw)
 
 
-def _parse_records(raw: object) -> list[GarminPersonalRecord]:
+def to_records(raw: object) -> list[GarminRecord] | None:
+    """Garmin's running records at the app's distances, shortest first, the fastest per distance;
+    None when the answer is not a list.
+
+    Only items whose typeId maps to a distance are read, so a change in the longest-run, step or
+    goal records cannot break anything. A mapped item that does not validate, or holds no positive
+    time or no date, says nothing comparable and is skipped.
+    """
     # The library answers {} when Garmin sends 204 No Content: an account without records.
     if raw is None or raw == {}:
         return []
+    if not isinstance(raw, list):
+        log.warning(
+            "unexpected personal records answer from Garmin, answered without them",
+            extra={"answer": type(raw).__name__},
+        )
+        return None
+    fastest: dict[DistanceKey, GarminRecord] = {}
+    for index, item in enumerate(raw):
+        mapped = _to_record(index, item)
+        if mapped is None:
+            continue
+        current = fastest.get(mapped.distance_key)
+        if current is None or mapped.time_s < current.time_s:
+            fastest[mapped.distance_key] = mapped
+    return [fastest[key] for key in DISTANCE_KEYS if key in fastest]
+
+
+def _to_record(index: int, item: Any) -> GarminRecord | None:
+    type_id = item.get("typeId") if isinstance(item, dict) else None
+    # bool is an int to Python: True would read as typeId 1.
+    if not isinstance(type_id, int) or isinstance(type_id, bool):
+        return None
+    distance_key = GARMIN_RECORD_DISTANCES.get(type_id)
+    if distance_key is None:
+        return None
     try:
-        return _RECORDS.validate_python(raw)
+        record = GarminPersonalRecord.model_validate(item)
     except ValidationError as exc:
         # Where the shape broke, never the values: they are the runner's data.
-        fields = [".".join(str(part) for part in error["loc"]) for error in exc.errors()]
-        log.warning("unexpected personal records shape from Garmin", extra={"fields": fields})
-        raise unavailable() from None
+        _skipped(
+            [".".join([str(index), *map(str, error["loc"])]) for error in exc.errors()],
+        )
+        return None
+    if record.value is None or not math.isfinite(record.value) or record.value <= 0:
+        _skipped([f"{index}.value"])
+        return None
+    achieved_ms = record.activity_start_date_time_in_gmt or record.pr_start_time_gmt
+    if not achieved_ms:
+        _skipped([f"{index}.activityStartDateTimeInGMT", f"{index}.prStartTimeGmt"])
+        return None
+    return GarminRecord(
+        distance_key=distance_key,
+        time_s=record.value,
+        achieved_at=_EPOCH + timedelta(milliseconds=achieved_ms),
+    )
+
+
+def _skipped(fields: list[str]) -> None:
+    log.warning("unreadable personal record from Garmin, skipped", extra={"fields": fields})

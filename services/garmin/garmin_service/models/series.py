@@ -30,11 +30,19 @@ class SeriesRequest(RequestModel):
     include_records: bool
 
 
+# garminSeriesOutcomeSchema. "ok": Garmin answered, with samples or none (a run it holds no detail
+# rows for); "gone": Garmin answered 404, the run was deleted there; "failed": Garmin was asked and
+# this run could not be read, so the API counts an attempt; "skipped": never asked, because the
+# route stopped early (failures in a row or its time budget), so the API leaves it as it was.
+SeriesOutcome = Literal["ok", "gone", "failed", "skipped"]
+
+
 class ActivitySeries(ResponseModel):
-    """One run's samples, row-aligned; both empty when Garmin has none or no longer has the run."""
+    """One run's samples, row-aligned; both empty unless the outcome is "ok"."""
 
     garmin_activity_id: GarminActivityId
-    # Timer seconds from the start, non-decreasing.
+    outcome: SeriesOutcome
+    # Timer seconds from the start in Garmin's row order; the engine cuts wherever they go back.
     elapsed_s: list[NonNegative]
     distance_m: list[NonNegative]
 
@@ -42,6 +50,8 @@ class ActivitySeries(ResponseModel):
     def _rows_aligned(self) -> Self:
         if len(self.distance_m) != len(self.elapsed_s):
             raise ValueError("distanceM must have the length of elapsedS")
+        if self.outcome != "ok" and self.elapsed_s:
+            raise ValueError("only an ok run carries samples")
         return self
 
 
@@ -58,5 +68,6 @@ class SeriesResponse(ResponseModel):
     token_bundle: str = Field(min_length=2)
     # One entry per requested id, in request order.
     series: list[ActivitySeries]
-    # None unless the request set includeRecords.
+    # None unless the request set includeRecords, and None when Garmin's records could not be read:
+    # they are only a comparison, so they never fail the series.
     records: list[GarminRecord] | None
