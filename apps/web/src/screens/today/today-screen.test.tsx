@@ -202,7 +202,7 @@ describe("TodayScreen", () => {
     const run = await screen.findByRole("region", { name: "Latest run" });
     const chip = within(run).getByText("Race");
     expect(chip.querySelector(".bg-type-race")).not.toBeNull();
-    expect(chip.parentElement).toHaveTextContent(/^Sun 27 Sep, 07:12·Race$/);
+    expect(chip.closest("p")).toHaveTextContent(/^Sun 27 Sep, 07:12Race$/);
     expect(within(run).getByRole("link")).toHaveAccessibleName(
       "Open the latest run, Sun 27 Sep, 07:12, Race, 10.0 km, 52:18",
     );
@@ -233,7 +233,7 @@ describe("TodayScreen", () => {
     const run = await screen.findByRole("region", { name: "Latest run" });
     const chip = await within(run).findByText("PB 5K, 10K");
     expect(chip.querySelector(".bg-pb")).toHaveAttribute("aria-hidden", "true");
-    expect(chip.parentElement).toHaveTextContent(/^Sun 27 Sep, 07:12·PB 5K, 10K$/);
+    expect(chip.closest("p")).toHaveTextContent(/^Sun 27 Sep, 07:12PB 5K, 10K$/);
     expect(within(run).getByRole("link")).toHaveAccessibleName(
       "Open the latest run, Sun 27 Sep, 07:12, PB 5K, 10K, 10.0 km, 52:18",
     );
@@ -247,7 +247,7 @@ describe("TodayScreen", () => {
     renderToday();
 
     const chip = await screen.findByText("PB 5K");
-    expect(chip.parentElement).toHaveTextContent(/^Sun 27 Sep, 07:12·Race·PB 5K$/);
+    expect(chip.closest("p")).toHaveTextContent(/^Sun 27 Sep, 07:12RacePB 5K$/);
   });
 
   it("shows no PB chip when the latest run holds no best", async () => {

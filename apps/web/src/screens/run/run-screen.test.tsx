@@ -541,7 +541,7 @@ describe("RunScreen", () => {
     renderRun();
     await detailLoaded();
 
-    expect(startLine()).toHaveTextContent(/^07:12·Race·Indoor$/);
+    expect(startLine()).toHaveTextContent(/^07:12Race·Indoor$/);
     const chip = within(startLine() as HTMLElement).getByText("Race");
     expect(chip.querySelector(".bg-type-race")).not.toBeNull();
   });

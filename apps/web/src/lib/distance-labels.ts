@@ -25,11 +25,17 @@ export function distanceLabel(key: DistanceKey): string {
   return DISTANCE_LABELS[key];
 }
 
+/** Most distances a PB chip names; past this it counts them, so it fits beside a run's date at 390 px. */
+export const PB_CHIP_MAX_NAMED = 2;
+
 /**
  * The PB chip's words for the distances a run holds as current bests, already shortest first:
- * ["5k", "10k"] → "PB 5K, 10K". Null for a run that holds none. The chip and the rows' screen-reader
- * names read it from here, so they never disagree.
+ * ["5k", "10k"] → "PB 5K, 10K", and three or more as a count, "8 PBs" (a runner's first run holds a
+ * best at every distance it reaches; the badges on Progress name them). Null for a run that holds none.
+ * The chip and the rows' screen-reader names read it from here, so they never disagree.
  */
 export function personalBestName(distances: readonly DistanceKey[]): string | null {
-  return distances.length === 0 ? null : `PB ${distances.map(distanceLabel).join(", ")}`;
+  if (distances.length === 0) return null;
+  if (distances.length > PB_CHIP_MAX_NAMED) return `${distances.length} PBs`;
+  return `PB ${distances.map(distanceLabel).join(", ")}`;
 }

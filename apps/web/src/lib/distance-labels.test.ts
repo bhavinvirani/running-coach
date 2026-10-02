@@ -28,7 +28,12 @@ describe("distance labels", () => {
 describe("personalBestName", () => {
   it("names every distance a run holds as a best after PB", () => {
     expect(personalBestName(["5k"])).toBe("PB 5K");
-    expect(personalBestName(["5k", "10k", "half"])).toBe("PB 5K, 10K, Half");
+    expect(personalBestName(["5k", "10k"])).toBe("PB 5K, 10K");
+  });
+
+  it("counts three or more, so the chip fits beside a run's date", () => {
+    expect(personalBestName(["5k", "10k", "half"])).toBe("3 PBs");
+    expect(personalBestName(["1k", "1mi", "2mi", "5k", "5mi", "10k", "15k", "10mi"])).toBe("8 PBs");
   });
 
   it("has no name for a run that holds no best", () => {

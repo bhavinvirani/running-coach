@@ -1100,7 +1100,7 @@ describe("ProgressScreen personal bests", () => {
     await findBadges();
 
     const [row] = rows(screen.getByRole("region", { name: "21–27 Sep" })) as [HTMLElement];
-    expect(row).toHaveTextContent(/^Sun 27 SepRace·PB 5K, 10K10\.0 km52:185:13 \/km$/);
+    expect(row).toHaveTextContent(/^Sun 27 SepRacePB 5K, 10K10\.0 km52:185:13 \/km$/);
     expect(within(row).getByRole("link")).toHaveAccessibleName(
       "Sun 27 Sep, Race · PB 5K, 10K, 10.0 km, 52:18, 5:13 /km",
     );
