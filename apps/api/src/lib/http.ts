@@ -26,13 +26,27 @@ export function respond<T extends z.ZodType>(
 
 // ---- Outgoing calls -------------------------------------------------------------------------
 
-export interface FetchJsonOptions<T extends z.ZodType> {
+/** A 4xx or 5xx answer; problem is its problem+json body when it sent one that parses. */
+export interface FailedResponse<P extends Problem = Problem> {
+  status: number;
+  headers: Headers;
+  problem: P | undefined;
+}
+
+export interface FetchJsonOptions<T extends z.ZodType, P extends Problem = Problem> {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Record<string, string>;
-  /** Serialized as JSON. */
+  /** Serialized as JSON. A function is called before every attempt, so a retry can send a changed body. */
   body?: unknown;
   /** Parses a 2xx body. */
   schema: T;
+  /** Parses a 4xx or 5xx body; the shared problemSchema by default. */
+  problemSchema?: z.ZodType<P>;
+  /**
+   * Awaited for every 4xx or 5xx answer, retried ones included, before the next attempt or the return. A
+   * rejection ends the call with that error.
+   */
+  onErrorResponse?: (failed: FailedResponse<P>) => void | Promise<void>;
   timeoutMs: number;
   /** Extra attempts after the first, only for network errors and 5xx. */
   retries?: number;
@@ -40,10 +54,10 @@ export interface FetchJsonOptions<T extends z.ZodType> {
   maxDelayMs?: number;
 }
 
-export type FetchJsonResult<T> =
+export type FetchJsonResult<T, P extends Problem = Problem> =
   | { ok: true; status: number; headers: Headers; data: T }
-  /** The upstream answered with 4xx or 5xx; problem is its problem+json body when it sent one. */
-  | { ok: false; status: number; headers: Headers; problem: Problem | undefined };
+  /** The upstream answered with 4xx or 5xx (after any retries). */
+  | ({ ok: false } & FailedResponse<P>);
 
 export type FetchFailureKind = "network" | "timeout" | "invalid_response";
 
@@ -69,10 +83,13 @@ function isTimeout(error: unknown): boolean {
   return error instanceof DOMException && error.name === "TimeoutError";
 }
 
-async function readProblem(response: globalThis.Response): Promise<Problem | undefined> {
+async function readProblem<P extends Problem>(
+  response: globalThis.Response,
+  schema: z.ZodType<P>,
+): Promise<P | undefined> {
   const text = await response.text().catch(() => "");
   try {
-    const parsed = problemSchema.safeParse(JSON.parse(text));
+    const parsed = schema.safeParse(JSON.parse(text));
     return parsed.success ? parsed.data : undefined;
   } catch {
     return undefined;
@@ -85,19 +102,22 @@ async function readProblem(response: globalThis.Response): Promise<Problem | und
  * not retried, because the callers' timeouts are already long and they hold a per-user lock meanwhile.
  * Forwards x-request-id from the current request or job.
  */
-export async function fetchJson<T extends z.ZodType>(
+export async function fetchJson<T extends z.ZodType, P extends Problem = Problem>(
   url: string,
-  options: FetchJsonOptions<T>,
-): Promise<FetchJsonResult<z.output<T>>> {
+  options: FetchJsonOptions<T, P>,
+): Promise<FetchJsonResult<z.output<T>, P>> {
   const { retries = 2, baseDelayMs = 250, maxDelayMs = 4000 } = options;
+  // Without a schema of its own, P is Problem.
+  const errorSchema = options.problemSchema ?? (problemSchema as unknown as z.ZodType<P>);
   const headers: Record<string, string> = { accept: "application/json", ...options.headers };
   const requestId = currentRequestId();
   if (requestId) headers["x-request-id"] = requestId;
-  let body: string | undefined;
-  if (options.body !== undefined) {
-    headers["content-type"] = "application/json";
-    body = JSON.stringify(options.body);
-  }
+  if (options.body !== undefined) headers["content-type"] = "application/json";
+  const serializeBody = (): string | undefined => {
+    const value: unknown =
+      typeof options.body === "function" ? (options.body as () => unknown)() : options.body;
+    return value === undefined ? undefined : JSON.stringify(value);
+  };
 
   for (let attempt = 0; ; attempt += 1) {
     const canRetry = attempt < retries;
@@ -106,7 +126,7 @@ export async function fetchJson<T extends z.ZodType>(
       response = await fetch(url, {
         method: options.method ?? "GET",
         headers,
-        body,
+        body: serializeBody(),
         signal: AbortSignal.timeout(options.timeoutMs),
       });
     } catch (error) {
@@ -118,18 +138,18 @@ export async function fetchJson<T extends z.ZodType>(
       throw new FetchFailure("network", url, error);
     }
 
-    if (response.status >= 500 && canRetry) {
-      await response.body?.cancel().catch(() => undefined);
-      await sleep(backoffDelay(attempt, baseDelayMs, maxDelayMs));
-      continue;
-    }
     if (!response.ok) {
-      return {
-        ok: false,
+      const failed: FailedResponse<P> = {
         status: response.status,
         headers: response.headers,
-        problem: await readProblem(response),
+        problem: await readProblem(response, errorSchema),
       };
+      await options.onErrorResponse?.(failed);
+      if (response.status >= 500 && canRetry) {
+        await sleep(backoffDelay(attempt, baseDelayMs, maxDelayMs));
+        continue;
+      }
+      return { ok: false, ...failed };
     }
 
     let json: unknown;

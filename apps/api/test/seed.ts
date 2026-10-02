@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { inject } from "vitest";
+import { inject, vi } from "vitest";
 import { db } from "../src/db/client";
 import { activity, garminConnection, user, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
@@ -8,7 +8,14 @@ import { encrypt } from "../src/lib/crypto";
 
 /** The fixture service's base bundle; `fixture` picks its behaviour (see services/garmin fake_client.py). */
 export function garminBundle(
-  fixture?: "expired" | "rate_limited" | "unavailable" | "rotate" | "rotated",
+  fixture?:
+    | "expired"
+    | "rate_limited"
+    | "unavailable"
+    | "rotate"
+    | "rotated"
+    | "rotate_then_rate_limited"
+    | "rotate_then_unavailable",
 ): string {
   return JSON.stringify({
     di_token: "fixture-token",
@@ -16,6 +23,30 @@ export function garminBundle(
     di_client_id: "fixture-client",
     ...(fixture ? { fixture } : {}),
   });
+}
+
+/** The behaviour a fixture bundle names, or undefined for the base bundle. */
+export function fixtureOf(bundle: string | undefined): string | undefined {
+  return (JSON.parse(bundle ?? "{}") as { fixture?: string }).fixture;
+}
+
+function href(input: string | URL | Request): string {
+  return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+}
+
+/**
+ * Watches calls to the Garmin service on `path` while letting them through; the returned function lists
+ * the fixture of every bundle sent so far, retries included, oldest first.
+ */
+export function fixturesSentTo(path: string): () => (string | undefined)[] {
+  const spy = vi.spyOn(globalThis, "fetch");
+  return () =>
+    spy.mock.calls
+      .filter(([input]) => href(input).endsWith(path))
+      .map(([, init]) => {
+        const body = typeof init?.body === "string" ? init.body : "{}";
+        return fixtureOf((JSON.parse(body) as { tokenBundle?: string }).tokenBundle);
+      });
 }
 
 /** A Claude key the fake answers with test/fixtures/claude/<fixture>.json; unique per call. */

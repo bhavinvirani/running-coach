@@ -72,13 +72,19 @@ def error_responses(make_client: AppFactory) -> dict[str, Any]:
             "/sync", json={"tokenBundle": bundle(fixture="rate_limited"), **FULL_RANGE}
         ),
         "unavailable": client.post("/profile", json={"tokenBundle": bundle(fixture="unavailable")}),
+        "rotate_then_rate_limited": client.post(
+            "/sync", json={"tokenBundle": bundle(fixture="rotate_then_rate_limited"), **FULL_RANGE}
+        ),
+        "rotate_then_unavailable": client.post(
+            "/sync", json={"tokenBundle": bundle(fixture="rotate_then_unavailable"), **FULL_RANGE}
+        ),
         "validation": client.post("/sync", json={"tokenBundle": bundle()}),
         "not_found": client.get("/nope"),
         "internal": make_client(connect=crashing).post("/profile", json={"tokenBundle": bundle()}),
     }
 
 
-def test_every_error_response_matches_problem(make_client: AppFactory) -> None:
+def test_every_error_response_matches_garmin_problem(make_client: AppFactory) -> None:
     responses = error_responses(make_client)
 
     assert {name: r.status_code for name, r in responses.items()} == {
@@ -86,17 +92,21 @@ def test_every_error_response_matches_problem(make_client: AppFactory) -> None:
         "expired": 401,
         "rate_limited": 429,
         "unavailable": 502,
+        "rotate_then_rate_limited": 429,
+        "rotate_then_unavailable": 502,
         "validation": 400,
         "not_found": 404,
         "internal": 500,
     }
     for response in responses.values():
         assert response.headers["content-type"] == "application/problem+json"
-        assert_valid("problem", response.json())
+        assert_valid("garmin-problem", response.json())
+    carrying_a_bundle = {name for name, r in responses.items() if "tokenBundle" in r.json()}
+    assert carrying_a_bundle == {"rotate_then_rate_limited", "rotate_then_unavailable"}
 
 
 def test_every_error_code_of_the_service_is_a_shared_code() -> None:
-    schema = json.loads((JSON_SCHEMA_DIR / "problem.json").read_text(encoding="utf-8"))
+    schema = json.loads((JSON_SCHEMA_DIR / "garmin-problem.json").read_text(encoding="utf-8"))
     shared_codes = set(schema["properties"]["code"]["enum"])
 
     assert {code.value for code in ErrorCode} <= shared_codes

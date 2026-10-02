@@ -17,7 +17,7 @@ from garmin_service.client import (
 )
 from garmin_service.errors import ServiceError
 from garmin_service.fake_client import FakeGarmin
-from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle
+from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle, rotated
 
 
 class FakeClock:
@@ -121,3 +121,50 @@ def test_fake_lists_oldest_first_when_asked() -> None:
 
     starts = [item["startTimeLocal"] for item in items]
     assert starts == sorted(starts)
+
+
+def session_after_login(dumps: str, sent: str = bundle()) -> GarminSession:
+    garmin = ScriptedGarmin(rotate_to=dumps)
+    garmin.login(tokenstore=sent)
+    return GarminSession(garmin, gap_s=0.0, sent_bundle=sent)
+
+
+def test_rotated_bundle_is_the_new_bundle_when_the_tokens_rotated() -> None:
+    new_bundle = rotated(bundle())
+
+    assert session_after_login(new_bundle).rotated_bundle() == new_bundle
+
+
+def test_rotated_bundle_is_none_when_the_tokens_did_not_change() -> None:
+    assert session_after_login(bundle()).rotated_bundle() is None
+    # Same tokens, other JSON formatting (Python's dumps adds spaces).
+    assert session_after_login(json.dumps(BASE_BUNDLE), sent=bundle()).rotated_bundle() is None
+
+
+@pytest.mark.parametrize(
+    "dumps",
+    [
+        "",
+        "not json",
+        "[]",
+        json.dumps({"di_token": None, "di_refresh_token": None, "di_client_id": None}),
+        json.dumps({**BASE_BUNDLE, "di_refresh_token": ""}),
+    ],
+)
+def test_rotated_bundle_is_none_when_the_tokens_are_missing(dumps: str) -> None:
+    assert session_after_login(dumps).rotated_bundle() is None
+
+
+def test_rotated_bundle_is_none_and_logged_when_dumps_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class Broken:
+        def dumps(self) -> str:
+            raise RuntimeError("token lock poisoned")
+
+    garmin = ScriptedGarmin()
+    session = GarminSession(garmin, gap_s=0.0, sent_bundle=bundle())
+    garmin._tokens = Broken()  # type: ignore[assignment]
+
+    assert session.rotated_bundle() is None
+    assert "could not read the token bundle" in capsys.readouterr().out

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from garminconnect import GarminConnectAuthenticationError, GarminConnectConnectionError
 
 from tests.conftest import AppFactory
-from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle
+from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle, rotated
 
 PROBLEM_JSON = "application/problem+json"
 
@@ -143,3 +144,53 @@ def test_maps_a_library_connection_error_with_403_to_unavailable(make_client: Ap
 
     assert response.status_code == 502
     assert response.json()["code"] == "garmin_unavailable"
+
+
+def profile_load_failure(status: int) -> GarminConnectAuthenticationError:
+    """What login() raises when the social profile fails to load three times."""
+    error = GarminConnectAuthenticationError("Failed to retrieve social profile")
+    error.__cause__ = GarminConnectConnectionError(f"API Error {status}")
+    return error
+
+
+@pytest.mark.parametrize(
+    ("status", "code"), [(429, "garmin_rate_limited"), (503, "garmin_unavailable")]
+)
+def test_returns_the_rotated_bundle_when_login_refreshed_the_tokens_and_then_failed(
+    make_client: AppFactory, status: int, code: str
+) -> None:
+    # The refresh inside login rotates the refresh token before the profile load fails.
+    new_bundle = rotated(bundle())
+    garmin = ScriptedGarmin(rotate_to=new_bundle, login_error=profile_load_failure(status))
+
+    response = make_client(connect=garmin.connect()).post(
+        "/profile", json={"tokenBundle": bundle()}
+    )
+
+    assert response.json()["code"] == code
+    assert response.json()["tokenBundle"] == new_bundle
+
+
+def test_never_returns_a_bundle_without_tokens_from_a_login_that_failed_half_way(
+    make_client: AppFactory,
+) -> None:
+    emptied = json.dumps({"di_token": None, "di_refresh_token": None, "di_client_id": None})
+    garmin = ScriptedGarmin(rotate_to=emptied, login_error=profile_load_failure(503))
+
+    response = make_client(connect=garmin.connect()).post(
+        "/profile", json={"tokenBundle": bundle()}
+    )
+
+    assert response.status_code == 502
+    assert "tokenBundle" not in response.json()
+
+
+@pytest.mark.parametrize("behaviour", ["rotate_then_rate_limited", "rotate_then_unavailable"])
+def test_succeeds_with_the_rotated_bundle_for_rotate_then_fail_bundles(
+    make_client: AppFactory, behaviour: str
+) -> None:
+    # /profile makes no library call after login, so only /sync reaches the simulated failure.
+    response = make_client().post("/profile", json={"tokenBundle": bundle(fixture=behaviour)})
+
+    assert response.status_code == 200
+    assert json.loads(response.json()["tokenBundle"]) == {**BASE_BUNDLE, "fixture": "rotated"}

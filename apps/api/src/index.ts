@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import { createApp } from "./app";
-import { pool } from "./db/client";
+import { closePools, pool } from "./db/client";
 import { runMigrations } from "./db/migrate";
 import { GarminServiceProcess } from "./garmin/process";
 import { startJobs, stopJobs } from "./jobs";
@@ -68,7 +68,7 @@ async function shutdown(signal: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  onShutdown("database", () => pool.end());
+  onShutdown("database", closePools);
 
   await runMigrations(pool);
   log.info("migrations applied");

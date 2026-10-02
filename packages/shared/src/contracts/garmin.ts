@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { problemSchema } from "./problem";
 
 /**
  * Messages between the API and the Garmin service (services/garmin). The Python service validates its
@@ -8,6 +9,17 @@ import { z } from "zod";
 
 /** The JSON string garminconnect's client.dumps() returns. Never logged. */
 export const garminTokenBundleSchema = z.string().min(2);
+
+/**
+ * The Garmin service's problem+json. Login can rotate the refresh token and a later call in the same
+ * request still fail; the error then carries the new bundle, or the runner would have to reconnect with
+ * 2FA. Only between the service and the API: the public problemSchema has no tokenBundle, so a bundle can
+ * never reach the browser.
+ */
+export const garminProblemSchema = problemSchema
+  .extend({ tokenBundle: garminTokenBundleSchema.optional() })
+  .strict();
+export type GarminProblem = z.infer<typeof garminProblemSchema>;
 
 /** POST /profile: the cheapest call that proves the bundle still works. */
 export const garminProfileRequestSchema = z

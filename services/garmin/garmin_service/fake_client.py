@@ -4,9 +4,12 @@ The token bundle drives the behaviour, so the API's integration tests and e2e re
 through the real service. Base bundle:
     {"di_token":"fixture-token","di_refresh_token":"fixture-refresh","di_client_id":"fixture-client"}
 Add "fixture": "expired" (401 garmin_auth_expired), "rate_limited" (429), "unavailable" (502), or
-"rotate" (success, and the returned bundle carries "fixture": "rotated"). Anything else succeeds
-with the bundle unchanged. Failures are raised the way garminconnect's login() raises them, causes
-chained, so errors.py runs exactly as in production.
+"rotate" (success, and the returned bundle carries "fixture": "rotated").
+"rotate_then_rate_limited" and "rotate_then_unavailable" rotate like "rotate" at login, then fail
+the next library call with a 429 or a 502 whose problem carries the rotated bundle (/profile makes
+no further call, so it succeeds).
+Anything else succeeds with the bundle unchanged. Failures are raised the way garminconnect raises
+them, causes chained, so errors.py runs exactly as in production.
 """
 
 from __future__ import annotations
@@ -15,7 +18,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from garminconnect import GarminConnectAuthenticationError, GarminConnectConnectionError
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
@@ -25,6 +32,19 @@ _LOGIN_FAILURES = {
     "rate_limited": "API Error 429",
     "unavailable": "API Error 503",
 }
+_ROTATE_THEN_FAIL = frozenset({"rotate_then_rate_limited", "rotate_then_unavailable"})
+
+
+def _call_failure(behaviour: str) -> Exception:
+    """What garminconnect's API-call wrapper raises for a 429, or a 503 once its retries ran out."""
+    if behaviour == "rotate_then_rate_limited":
+        error: Exception = GarminConnectTooManyRequestsError("Rate limit exceeded")
+        cause = GarminConnectConnectionError("API Error 429")
+    else:
+        error = GarminConnectConnectionError("API call HTTP error")
+        cause = GarminConnectConnectionError("API Error 503")
+    error.__cause__ = cause
+    return error
 
 
 class FakeTokenStore:
@@ -41,6 +61,7 @@ class FakeGarmin:
         self._tokens = FakeTokenStore()
         self.display_name: str | None = None
         self.full_name: str | None = None
+        self._fail_next_call: str | None = None
 
     @property
     def client(self) -> FakeTokenStore:
@@ -61,8 +82,10 @@ class FakeGarmin:
                 "Failed to retrieve social profile"
             ) from GarminConnectConnectionError(_LOGIN_FAILURES[behaviour])
 
-        if behaviour == "rotate":
+        if behaviour == "rotate" or behaviour in _ROTATE_THEN_FAIL:
             self._tokens.bundle = json.dumps({**bundle, "fixture": "rotated"})
+            if behaviour in _ROTATE_THEN_FAIL:
+                self._fail_next_call = behaviour
         else:
             self._tokens.bundle = tokenstore or ""
 
@@ -80,6 +103,9 @@ class FakeGarmin:
         activitytype: str | None = None,
         sortorder: str | None = None,
     ) -> list[dict[str, Any]]:
+        if self._fail_next_call is not None:
+            behaviour, self._fail_next_call = self._fail_next_call, None
+            raise _call_failure(behaviour)
         # activitytype is ignored on purpose: the route's own running filter must hold by itself.
         items = self._read("sync.json")
         if not isinstance(items, list):

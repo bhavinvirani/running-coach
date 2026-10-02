@@ -1,4 +1,4 @@
-"""problem+json body, mirroring problemSchema in packages/shared/src/contracts/problem.ts."""
+"""problem+json body, mirroring garminProblemSchema in packages/shared/src/contracts/garmin.ts."""
 
 from enum import StrEnum
 
@@ -35,3 +35,5 @@ class Problem(ResponseModel):
     request_id: str | None = None
     retry_after_seconds: int | None = Field(default=None, ge=0)
     issues: list[Issue] | None = None
+    # Set when login rotated the tokens before the request failed; the API writes it back.
+    token_bundle: str | None = Field(default=None, min_length=2)

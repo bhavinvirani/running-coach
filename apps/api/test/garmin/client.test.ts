@@ -1,15 +1,29 @@
-import { createServer } from "node:net";
+import { createServer as createHttpServer, type Server } from "node:http";
+import { createServer, type AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 import { ErrorCode } from "@running-coach/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createGarminClient, garminClient } from "../../src/garmin/client";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { createGarminClient, type GarminCallOptions, garminClient } from "../../src/garmin/client";
 import { config } from "../../src/lib/config";
 import { DomainError } from "../../src/lib/errors";
 import { withRequestId } from "../../src/lib/logger";
-import { garminBundle } from "../seed";
+import { fixtureOf, fixturesSentTo, garminBundle } from "../seed";
 
 // Against the real Garmin service in fixture mode (global-setup.ts); the bundle picks the behaviour.
 
 const range = { startDate: "2026-09-01", endDate: "2026-09-30" };
+
+/** Records every bundle the client hands over for writing back. */
+function writeBack(): GarminCallOptions & { saved: string[] } {
+  const saved: string[] = [];
+  return {
+    saved,
+    onTokenBundle: (tokenBundle) => {
+      saved.push(tokenBundle);
+      return Promise.resolve();
+    },
+  };
+}
 
 /** Counts calls to the service while letting them through. */
 function countServiceCalls(path: string) {
@@ -33,18 +47,21 @@ afterEach(() => {
 });
 
 describe("garminClient", () => {
-  it("returns the profile and the unchanged bundle", async () => {
-    const response = await garminClient.profile({ tokenBundle: garminBundle() });
+  it("returns the profile and the unchanged bundle, and hands nothing over to write back", async () => {
+    const options = writeBack();
+
+    const response = await garminClient.profile({ tokenBundle: garminBundle() }, options);
 
     expect(response.tokenBundle).toBe(garminBundle());
     expect(response.profile.displayName).toBe("Alex Fixture");
+    expect(options.saved).toEqual([]);
   });
 
   it("returns the runs in the range, parsed with the shared schema, and forwards the request id", async () => {
     const spy = vi.spyOn(globalThis, "fetch");
 
     const response = await withRequestId("req-sync-1", () =>
-      garminClient.sync({ tokenBundle: garminBundle(), ...range }),
+      garminClient.sync({ tokenBundle: garminBundle(), ...range }, writeBack()),
     );
 
     expect(response.activities.length).toBeGreaterThanOrEqual(5);
@@ -55,14 +72,20 @@ describe("garminClient", () => {
   });
 
   it("returns the rotated bundle when Garmin refreshed the tokens", async () => {
-    const response = await garminClient.sync({ tokenBundle: garminBundle("rotate"), ...range });
+    const options = writeBack();
 
-    expect(JSON.parse(response.tokenBundle)).toMatchObject({ fixture: "rotated" });
+    const response = await garminClient.sync(
+      { tokenBundle: garminBundle("rotate"), ...range },
+      options,
+    );
+
+    expect(fixtureOf(response.tokenBundle)).toBe("rotated");
+    expect(options.saved).toEqual([response.tokenBundle]);
   });
 
   it("throws garmin_auth_expired (409, not 401) when Garmin rejects the bundle", async () => {
     const error = await rejection(
-      garminClient.sync({ tokenBundle: garminBundle("expired"), ...range }),
+      garminClient.sync({ tokenBundle: garminBundle("expired"), ...range }, writeBack()),
     );
 
     expect(error).toBeInstanceOf(DomainError);
@@ -73,7 +96,7 @@ describe("garminClient", () => {
     const calls = countServiceCalls("/sync");
 
     const error = await rejection(
-      garminClient.sync({ tokenBundle: garminBundle("rate_limited"), ...range }),
+      garminClient.sync({ tokenBundle: garminBundle("rate_limited"), ...range }, writeBack()),
     );
 
     expect(error).toMatchObject({
@@ -88,7 +111,7 @@ describe("garminClient", () => {
     const calls = countServiceCalls("/sync");
 
     const error = await rejection(
-      garminClient.sync({ tokenBundle: garminBundle("unavailable"), ...range }),
+      garminClient.sync({ tokenBundle: garminBundle("unavailable"), ...range }, writeBack()),
     );
 
     expect(error).toMatchObject({ code: ErrorCode.garminUnavailable, status: 502 });
@@ -105,7 +128,7 @@ describe("garminClient", () => {
       secret: config.GARMIN_SERVICE_SECRET,
     });
 
-    const error = await rejection(client.profile({ tokenBundle: garminBundle() }));
+    const error = await rejection(client.profile({ tokenBundle: garminBundle() }, writeBack()));
 
     expect(error).toMatchObject({ code: ErrorCode.garminUnavailable });
   });
@@ -116,7 +139,7 @@ describe("garminClient", () => {
       secret: "not-the-test-secret-value",
     });
 
-    const error = await rejection(client.profile({ tokenBundle: garminBundle() }));
+    const error = await rejection(client.profile({ tokenBundle: garminBundle() }, writeBack()));
 
     expect(error).not.toBeInstanceOf(DomainError);
     expect(String(error)).toContain("shared secret");
@@ -126,12 +149,96 @@ describe("garminClient", () => {
     const calls = countServiceCalls("/sync");
 
     await expect(
-      garminClient.sync({
-        tokenBundle: garminBundle(),
-        startDate: "1 Sept",
-        endDate: "2026-09-30",
-      }),
+      garminClient.sync(
+        { tokenBundle: garminBundle(), startDate: "1 Sept", endDate: "2026-09-30" },
+        writeBack(),
+      ),
     ).rejects.toThrow();
     expect(calls()).toBe(0);
+  });
+
+  it("writes back the bundle Garmin rotated before a 429, then throws garmin_rate_limited (rotate then 429)", async () => {
+    const events: string[] = [];
+    const calls = countServiceCalls("/sync");
+
+    const error = await rejection(
+      garminClient
+        .sync(
+          { tokenBundle: garminBundle("rotate_then_rate_limited"), ...range },
+          {
+            onTokenBundle: async (tokenBundle) => {
+              await sleep(20);
+              events.push(`saved ${String(fixtureOf(tokenBundle))}`);
+            },
+          },
+        )
+        .finally(() => events.push("settled")),
+    );
+
+    expect(error).toMatchObject({ code: ErrorCode.garminRateLimited, retryAfterSeconds: 3600 });
+    // Written back before the call failed, and the 429 was not retried.
+    expect(events).toEqual(["saved rotated", "settled"]);
+    expect(calls()).toBe(1);
+  });
+
+  it("writes back the bundle Garmin rotated before a 502 and retries with it, not the stale one (rotate then 502)", async () => {
+    const sent = fixturesSentTo("/sync");
+    const options = writeBack();
+
+    const response = await garminClient.sync(
+      { tokenBundle: garminBundle("rotate_then_unavailable"), ...range },
+      options,
+    );
+
+    expect(sent()).toEqual(["rotate_then_unavailable", "rotated"]);
+    expect(options.saved.map(fixtureOf)).toEqual(["rotated"]);
+    expect(response.tokenBundle).toBe(options.saved[0]);
+  });
+
+  it("throws the write-back failure and does not retry when storing a rotated bundle fails", async () => {
+    const calls = countServiceCalls("/sync");
+
+    const error = await rejection(
+      garminClient.sync(
+        { tokenBundle: garminBundle("rotate_then_unavailable"), ...range },
+        { onTokenBundle: () => Promise.reject(new Error("database down")) },
+      ),
+    );
+
+    expect(String(error)).toContain("database down");
+    expect(calls()).toBe(1);
+  });
+
+  describe("against a service that breaks the contract", () => {
+    let server: Server;
+    let client: ReturnType<typeof createGarminClient>;
+    const rotated = garminBundle("rotated");
+
+    beforeAll(async () => {
+      server = createHttpServer((_req, res) => {
+        // A rotated bundle beside an activity the shared schema rejects.
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ tokenBundle: rotated, activities: [{ garminActivityId: -1 }] }));
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address() as AddressInfo;
+      client = createGarminClient({ baseUrl: `http://127.0.0.1:${port}`, secret: "unused" });
+    });
+
+    afterAll(async () => {
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    it("still writes back the bundle of a 2xx answer that breaks the contract, then throws garmin_unavailable", async () => {
+      const options = writeBack();
+
+      const error = await rejection(
+        client.sync({ tokenBundle: garminBundle(), ...range }, options),
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.garminUnavailable, status: 502 });
+      expect(options.saved).toEqual([rotated]);
+    });
   });
 });

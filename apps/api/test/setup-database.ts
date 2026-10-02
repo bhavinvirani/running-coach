@@ -61,8 +61,8 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await truncator.end();
-  const { pool } = await import("../src/db/client");
-  await pool.end();
+  const { closePools } = await import("../src/db/client");
+  await closePools();
   await withAdmin((client) =>
     client.query(`drop database if exists ${quoteIdent(database)} with (force)`),
   );

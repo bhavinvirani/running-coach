@@ -6,6 +6,11 @@ cause chained underneath as "API Error 429" or a requests ConnectionError. The m
 walks the whole __cause__/__context__ chain and lets an HTTP status found there win over the
 outer class. The connection is reported expired only on a 401 or an auth error with no other
 explanation: a false "expired" makes the runner log in again, which Garmin rate-limits hard.
+
+A refresh inside login rotates the refresh token, and the old one stops working. When a later step
+of the same request fails, the error must still hand the new bundle back, or the runner has to
+reconnect with 2FA. login() therefore registers its session with the request (track_logins) before
+it runs, and make_problem adds the session's rotated bundle to every error response.
 """
 
 from __future__ import annotations
@@ -14,8 +19,10 @@ import logging
 import re
 import traceback
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -144,6 +151,50 @@ def from_garmin_exception(exc: BaseException) -> ServiceError | None:
     return unavailable()
 
 
+class TokenSource(Protocol):
+    """A Garmin session that can say whether its tokens rotated (client.GarminSession)."""
+
+    def rotated_bundle(self) -> str | None: ...
+
+
+class RequestLogins:
+    """The Garmin session of the current request, once login has started."""
+
+    def __init__(self) -> None:
+        self.session: TokenSource | None = None
+
+
+# Set per request by the guard middleware. It holds a mutable object, not the session itself:
+# sync routes run in worker threads on a copy of the context, and the error handlers must see what
+# the route thread registered.
+_request_logins: ContextVar[RequestLogins | None] = ContextVar("request_logins", default=None)
+
+
+@contextmanager
+def track_logins() -> Iterator[RequestLogins]:
+    logins = RequestLogins()
+    token = _request_logins.set(logins)
+    try:
+        yield logins
+    finally:
+        _request_logins.reset(token)
+
+
+def remember_login(session: TokenSource) -> None:
+    """Called by login() before the library logs in: a refresh in there already rotates tokens."""
+    logins = _request_logins.get()
+    if logins is not None:
+        logins.session = session
+
+
+def rotated_bundle() -> str | None:
+    """The current request's new bundle when its tokens rotated, else None."""
+    logins = _request_logins.get()
+    if logins is None or logins.session is None:
+        return None
+    return logins.session.rotated_bundle()
+
+
 def make_problem(
     status: int,
     code: ErrorCode,
@@ -160,6 +211,7 @@ def make_problem(
         request_id=request_id_var.get(),
         retry_after_seconds=retry_after_seconds,
         issues=issues,
+        token_bundle=rotated_bundle(),
     )
 
 

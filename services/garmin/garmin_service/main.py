@@ -28,6 +28,7 @@ from garmin_service.config import Settings
 from garmin_service.errors import (
     install_error_handlers,
     internal_error_response,
+    track_logins,
     unauthorized_response,
 )
 from garmin_service.log import configure_logging, request_id_var
@@ -42,7 +43,7 @@ _SANE_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
 class GuardMiddleware:
-    """Outermost layer: request id, shared-secret check, access log, last-resort 500.
+    """Outermost layer: request id, secret check, login tracking, access log, last-resort 500.
 
     The secret is checked before any other work, for every path including /health and unknown ones.
     """
@@ -80,12 +81,13 @@ class GuardMiddleware:
             if not hmac.compare_digest(provided, self._secret):
                 await unauthorized_response()(scope, receive, send_with_request_id)
                 return
-            try:
-                await self.app(scope, receive, send_with_request_id)
-            except Exception as exc:
-                if response_started:
-                    raise
-                await internal_error_response(exc)(scope, receive, send_with_request_id)
+            with track_logins():
+                try:
+                    await self.app(scope, receive, send_with_request_id)
+                except Exception as exc:
+                    if response_started:
+                        raise
+                    await internal_error_response(exc)(scope, receive, send_with_request_id)
         finally:
             quiet = scope["path"] == "/health" and status < 400  # the API polls it
             log.log(

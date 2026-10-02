@@ -13,14 +13,17 @@ import { decrypt } from "../../src/lib/crypto";
 import { DomainError } from "../../src/lib/errors";
 import { noonUtc } from "../../src/lib/local-date";
 import { syncGarmin } from "../../src/services/garmin-sync";
-import { connectGarmin, createSettings, createUser, garminBundle } from "../seed";
+import { connectGarmin, createSettings, createUser, fixturesSentTo, garminBundle } from "../seed";
 
 // The sync job and service on the real Postgres, against the Garmin service in fixture mode. The fixture
-// runs lie between 2026-08-31 and 2026-09-27; "today" 2026-09-28 makes the first sync (30 days back) read
-// all seven in five 7-day chunks.
+// runs lie between 2026-08-31 and 2026-09-27; "today" 2026-09-28 (NOW, midday in Berlin) makes the first
+// sync (30 days back) read all seven in five 7-day chunks.
 
 const TODAY = "2026-09-28";
+const NOW = new Date("2026-09-28T10:00:00Z");
 const FIXTURE_RUNS = 7;
+// The jobs' clock; a test may move it and afterEach puts it back.
+let jobClock = NOW;
 
 async function connectedUser(bundle = garminBundle()): Promise<string> {
   const userId = await createUser();
@@ -47,11 +50,17 @@ async function runs(userId: string) {
 function recordSyncCalls() {
   const original = garminClient.sync.bind(garminClient);
   const calls: { startDate: string; endDate: string }[] = [];
-  const spy = vi.spyOn(garminClient, "sync").mockImplementation(async (request) => {
+  const spy = vi.spyOn(garminClient, "sync").mockImplementation(async (request, options) => {
     calls.push({ startDate: request.startDate, endDate: request.endDate });
-    return original(request);
+    return original(request, options);
   });
   return { calls, spy, original };
+}
+
+async function storedBundle(userId: string): Promise<{ fixture?: string }> {
+  return JSON.parse(decrypt((await connection(userId)).tokenBundleEnc, userId)) as {
+    fixture?: string;
+  };
 }
 
 async function waitForJob(id: string): Promise<JobWithMetadata> {
@@ -64,7 +73,7 @@ async function waitForJob(id: string): Promise<JobWithMetadata> {
 }
 
 beforeAll(async () => {
-  await startJobs({ pollingIntervalSeconds: 0.5 });
+  await startJobs({ pollingIntervalSeconds: 0.5, clock: () => jobClock });
 });
 
 afterAll(async () => {
@@ -73,6 +82,7 @@ afterAll(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  jobClock = NOW;
 });
 
 describe("syncGarmin", () => {
@@ -80,7 +90,7 @@ describe("syncGarmin", () => {
     const userId = await connectedUser();
     const { calls } = recordSyncCalls();
 
-    const result = await syncGarmin({ userId, today: TODAY });
+    const result = await syncGarmin({ userId, now: NOW });
 
     expect(result).toMatchObject({
       startDate: "2026-08-29",
@@ -115,11 +125,11 @@ describe("syncGarmin", () => {
 
   it("stores nothing new on a second run and only re-reads from the day before the cursor", async () => {
     const userId = await connectedUser();
-    await syncGarmin({ userId, today: TODAY });
+    await syncGarmin({ userId, now: NOW });
     const before = await runs(userId);
     const { calls } = recordSyncCalls();
 
-    const result = await syncGarmin({ userId, today: TODAY });
+    const result = await syncGarmin({ userId, now: NOW });
 
     expect(calls).toEqual([{ startDate: "2026-09-27", endDate: TODAY }]);
     expect(result).toMatchObject({ activitiesSeen: 1, activitiesWritten: 0 });
@@ -132,15 +142,15 @@ describe("syncGarmin", () => {
   it("keeps finished chunks after an error and resumes from the cursor", async () => {
     const userId = await connectedUser();
     const { calls, spy, original } = recordSyncCalls();
-    spy.mockImplementationOnce(async (request) => {
+    spy.mockImplementationOnce(async (request, options) => {
       calls.push({ startDate: request.startDate, endDate: request.endDate });
-      return original(request);
+      return original(request, options);
     });
     spy.mockImplementationOnce(() => {
       throw new DomainError(ErrorCode.garminUnavailable, 502, "Garmin is not answering.");
     });
 
-    await expect(syncGarmin({ userId, today: TODAY })).rejects.toMatchObject({
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
       code: ErrorCode.garminUnavailable,
     });
     expect(await runs(userId)).toHaveLength(1);
@@ -151,7 +161,7 @@ describe("syncGarmin", () => {
     });
 
     calls.length = 0;
-    await syncGarmin({ userId, today: TODAY });
+    await syncGarmin({ userId, now: NOW });
 
     expect(calls[0]).toEqual({ startDate: "2026-09-03", endDate: "2026-09-09" });
     expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);
@@ -162,17 +172,17 @@ describe("syncGarmin", () => {
     const userId = await connectedUser();
     const original = garminClient.sync.bind(garminClient);
     const events: string[] = [];
-    vi.spyOn(garminClient, "sync").mockImplementation(async (request) => {
+    vi.spyOn(garminClient, "sync").mockImplementation(async (request, options) => {
       events.push(`start ${request.startDate}`);
       await sleep(20);
-      const response = await original(request);
+      const response = await original(request, options);
       events.push(`end ${request.startDate}`);
       return response;
     });
 
     const [first, second] = await Promise.all([
-      syncGarmin({ userId, today: TODAY }),
-      syncGarmin({ userId, today: TODAY }),
+      syncGarmin({ userId, now: NOW }),
+      syncGarmin({ userId, now: NOW }),
     ]);
 
     // Every call ends before the next one starts.
@@ -188,7 +198,7 @@ describe("syncGarmin", () => {
   it("marks the connection expired and stores nothing when Garmin rejects the login", async () => {
     const userId = await connectedUser(garminBundle("expired"));
 
-    await expect(syncGarmin({ userId, today: TODAY })).rejects.toMatchObject({
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
       code: ErrorCode.garminAuthExpired,
     });
 
@@ -201,7 +211,7 @@ describe("syncGarmin", () => {
 
     // The dead login is not sent to Garmin again.
     const { calls } = recordSyncCalls();
-    await expect(syncGarmin({ userId, today: TODAY })).rejects.toMatchObject({
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
       code: ErrorCode.garminAuthExpired,
     });
     expect(calls).toHaveLength(0);
@@ -211,7 +221,7 @@ describe("syncGarmin", () => {
     const userId = await connectedUser(garminBundle("rotate"));
     const { calls, spy } = recordSyncCalls();
 
-    await syncGarmin({ userId, today: TODAY });
+    await syncGarmin({ userId, now: NOW });
 
     const stored = await connection(userId);
     expect(stored.tokenBundleEnc.startsWith("v1:")).toBe(true);
@@ -227,10 +237,47 @@ describe("syncGarmin", () => {
     ).toBe(true);
   });
 
+  it("writes back the bundle Garmin rotated before a 429, then throws garmin_rate_limited (rotate then 429)", async () => {
+    const userId = await connectedUser(garminBundle("rotate_then_rate_limited"));
+
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
+      code: ErrorCode.garminRateLimited,
+    });
+
+    expect(await storedBundle(userId)).toMatchObject({ fixture: "rotated" });
+    expect(await connection(userId)).toMatchObject({
+      status: "ok",
+      lastError: ErrorCode.garminRateLimited,
+    });
+    expect(await runs(userId)).toHaveLength(0);
+  });
+
+  it("writes back the bundle Garmin rotated before a 502 and retries with it, not the stale one (rotate then 502)", async () => {
+    const userId = await connectedUser(garminBundle("rotate_then_unavailable"));
+    const sent = fixturesSentTo("/sync");
+
+    const result = await syncGarmin({ userId, now: NOW });
+
+    expect(sent()).toEqual(["rotate_then_unavailable", ...Array<string>(5).fill("rotated")]);
+    expect(await storedBundle(userId)).toMatchObject({ fixture: "rotated" });
+    expect(result.activitiesWritten).toBe(FIXTURE_RUNS);
+  });
+
+  it("syncs up to the user's local date at `now`, not the UTC date", async () => {
+    const userId = await connectedUser();
+    const { calls } = recordSyncCalls();
+
+    // 00:30 on 2026-09-29 in Berlin, still 2026-09-28 in UTC.
+    const result = await syncGarmin({ userId, now: new Date("2026-09-28T22:30:00Z") });
+
+    expect(result.endDate).toBe("2026-09-29");
+    expect(calls.at(-1)?.endDate).toBe("2026-09-29");
+  });
+
   it("throws garmin_not_connected for a user without a Garmin connection", async () => {
     const userId = await createUser();
 
-    await expect(syncGarmin({ userId, today: TODAY })).rejects.toMatchObject({
+    await expect(syncGarmin({ userId, now: NOW })).rejects.toMatchObject({
       code: ErrorCode.garminNotConnected,
     });
   });
@@ -276,6 +323,37 @@ describe("sync-garmin job", () => {
       lastError: ErrorCode.garminRateLimited,
     });
     expect(await runs(userId)).toHaveLength(0);
+  });
+
+  it("writes back the bundle Garmin rotated before a 429 and still reschedules (rotate then 429)", async () => {
+    const userId = await connectedUser(garminBundle("rotate_then_rate_limited"));
+    const id = await enqueueSyncGarmin({ userId, date: TODAY });
+    if (!id) throw new Error("not enqueued");
+
+    const job = await waitForJob(id);
+
+    expect(job).toMatchObject({ state: "completed", retryCount: 0 });
+    expect(job.output).toMatchObject({ status: "rate_limited", retryAfterSeconds: 3600 });
+    const next = await getBoss().getJobById(syncJob.name, deterministicJobId(`${id}:rate-limited`));
+    expect(next?.state).toBe("created");
+    expect(await storedBundle(userId)).toMatchObject({ fixture: "rotated" });
+  });
+
+  it("syncs up to the user's local date when it runs, not the date in its data (a job deferred by a 429)", async () => {
+    const userId = await connectedUser();
+    // Queued on 2026-09-20; runs at 00:30 on 2026-09-29 in Berlin, which is still 2026-09-28 in UTC.
+    jobClock = new Date("2026-09-28T22:30:00Z");
+    const id = await enqueueSyncGarmin({ userId, date: "2026-09-20" });
+    if (!id) throw new Error("not enqueued");
+
+    const job = await waitForJob(id);
+
+    expect(job.state).toBe("completed");
+    expect(job.output).toMatchObject({
+      status: "ok",
+      endDate: "2026-09-29",
+      activitiesWritten: FIXTURE_RUNS,
+    });
   });
 
   it("completes without retrying when the Garmin login has expired", async () => {

@@ -11,6 +11,10 @@ import { deterministicJobId } from "./boss";
 
 export const name = "sync-garmin";
 
+/**
+ * `date` is the user's local date when the job was queued. It only keys the job id: the sync itself runs
+ * up to the user's local date when it runs, so a job deferred by a 429 past midnight still reads today.
+ */
 export const data = z.object({ userId: z.uuid(), date: z.iso.date() }).strict();
 export type SyncGarminData = z.infer<typeof data>;
 
@@ -44,19 +48,25 @@ export type SyncGarminOutput =
   | { status: "garmin_auth_expired" | "garmin_not_connected" };
 
 /**
- * Runs one sync. A 429 is the one failure the job handles itself: it queues a copy that starts after
- * retryAfterSeconds and completes, so the 429 never counts as a failed attempt and nothing calls Garmin
- * sooner. An expired or missing connection completes too: retrying cannot fix it, and every retry would
- * be another failed Garmin login. Anything else throws, and pg-boss retries with backoff.
+ * Runs one sync, up to the user's local date now. A 429 is the one failure the job handles itself: it
+ * queues a copy that starts after retryAfterSeconds and completes, so the 429 never counts as a failed
+ * attempt and nothing calls Garmin sooner. A bundle Garmin rotated before the 429 is already stored by
+ * then (garmin client). An expired or missing connection completes too: retrying cannot fix it, and every
+ * retry would be another failed Garmin login. Anything else throws, and pg-boss retries with backoff.
  */
-export async function handle(boss: PgBoss, job: Job<unknown>): Promise<SyncGarminOutput> {
+export async function handle(
+  boss: PgBoss,
+  job: Job<unknown>,
+  clock?: () => Date,
+): Promise<SyncGarminOutput> {
   const input = data.parse(job.data);
   return withRequestId(`job-${job.id}`, async () => {
     const log = logger.child({ module: "jobs", job: name, jobId: job.id, userId: input.userId });
     try {
       const result = await syncGarmin({
         userId: input.userId,
-        today: input.date,
+        // Not input.date: see `data`. Without a clock, the service reads the time once it holds the lock.
+        ...(clock ? { now: clock() } : {}),
         signal: job.signal,
       });
       return { status: "ok", ...result };

@@ -10,7 +10,7 @@ import pytest
 from garminconnect import GarminConnectTooManyRequestsError
 
 from tests.conftest import AppFactory
-from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle, read_fixture
+from tests.helpers import BASE_BUNDLE, ScriptedGarmin, bundle, read_fixture, rotated
 
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
 
@@ -255,3 +255,85 @@ def test_returns_the_rotated_bundle_with_the_activities(make_client: AppFactory)
     body = response.json()
     assert json.loads(body["tokenBundle"]) == {**BASE_BUNDLE, "fixture": "rotated"}
     assert len(body["activities"]) == len(read_fixture("sync.json"))
+
+
+def test_returns_429_with_the_rotated_bundle_when_garmin_rate_limits_after_login_rotated_the_tokens(
+    make_client: AppFactory,
+) -> None:
+    sent = bundle(fixture="rotate_then_rate_limited")
+
+    response = make_client().post("/sync", json=sync_body(tokenBundle=sent))
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "3600"
+    body = response.json()
+    assert body["code"] == "garmin_rate_limited"
+    assert body["retryAfterSeconds"] == 3600
+    assert json.loads(body["tokenBundle"]) == {**BASE_BUNDLE, "fixture": "rotated"}
+
+
+def test_returns_502_with_the_rotated_bundle_when_garmin_fails_after_login_rotated_the_tokens(
+    make_client: AppFactory,
+) -> None:
+    sent = bundle(fixture="rotate_then_unavailable")
+
+    response = make_client().post("/sync", json=sync_body(tokenBundle=sent))
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["code"] == "garmin_unavailable"
+    assert json.loads(body["tokenBundle"]) == {**BASE_BUNDLE, "fixture": "rotated"}
+
+
+def test_the_rotated_bundle_from_a_failed_sync_works_on_the_next_sync(
+    make_client: AppFactory,
+) -> None:
+    client = make_client()
+    failed = client.post(
+        "/sync", json=sync_body(tokenBundle=bundle(fixture="rotate_then_unavailable"))
+    )
+
+    retried = client.post("/sync", json=sync_body(tokenBundle=failed.json()["tokenBundle"]))
+
+    assert retried.status_code == 200
+    assert retried.json()["tokenBundle"] == failed.json()["tokenBundle"]
+
+
+def test_returns_no_bundle_with_an_error_when_the_tokens_did_not_rotate(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin(
+        activities_error=GarminConnectTooManyRequestsError("Rate limit exceeded")
+    )
+
+    response = make_client(connect=garmin.connect()).post("/sync", json=sync_body())
+
+    assert response.status_code == 429
+    assert "tokenBundle" not in response.json()
+
+
+def test_returns_the_rotated_bundle_with_a_500_when_the_route_crashes_after_login(
+    make_client: AppFactory,
+) -> None:
+    new_bundle = rotated(bundle())
+    garmin = ScriptedGarmin(rotate_to=new_bundle, activities_error=RuntimeError("boom"))
+
+    response = make_client(connect=garmin.connect()).post("/sync", json=sync_body())
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal"
+    assert response.json()["tokenBundle"] == new_bundle
+
+
+def test_returns_the_rotated_bundle_with_a_502_when_garmin_changes_the_item_shape_after_login(
+    make_client: AppFactory,
+) -> None:
+    broken = raw_run()
+    del broken["activityId"]
+    new_bundle = rotated(bundle())
+    garmin = ScriptedGarmin(rotate_to=new_bundle, activities=[broken])
+
+    response = make_client(connect=garmin.connect()).post("/sync", json=sync_body())
+
+    assert response.status_code == 502
+    assert response.json()["tokenBundle"] == new_bundle

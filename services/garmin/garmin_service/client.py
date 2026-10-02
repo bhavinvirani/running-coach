@@ -3,12 +3,14 @@
 Stateless by design: a client lives for one request and nothing is cached across requests.
 Garmin().login(tokenstore=<bundle JSON>) loads the tokens, refreshes them when the access token is
 within 15 minutes of expiry (the refresh token then rotates) and loads the social profile, so login
-alone proves the bundle works. Routes return client.dumps() as the new bundle.
+alone proves the bundle works. Routes return client.dumps() as the new bundle; error responses carry
+it too when it rotated (errors.py).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from typing import Annotated, Any, Protocol
@@ -16,8 +18,10 @@ from typing import Annotated, Any, Protocol
 from fastapi import Depends, Request
 from garminconnect import Garmin
 
-from garmin_service.errors import auth_expired
+from garmin_service.errors import auth_expired, remember_login
 from garmin_service.fake_client import FakeGarmin
+
+log = logging.getLogger(__name__)
 
 # At least this long between the end of one library call and the start of the next.
 GARMIN_CALL_GAP_S = 1.0
@@ -67,8 +71,10 @@ class GarminSession:
         gap_s: float,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        sent_bundle: str | None = None,
     ) -> None:
         self.api = api
+        self.sent_bundle = sent_bundle
         self._gap_s = gap_s
         self._sleep = sleep
         self._clock = clock
@@ -87,6 +93,33 @@ class GarminSession:
     def token_bundle(self) -> str:
         """The bundle to hand back: refreshed when login rotated the tokens, else unchanged."""
         return self.api.client.dumps()
+
+    def rotated_bundle(self) -> str | None:
+        """dumps() when it holds other tokens than the bundle sent, else None.
+
+        It runs while an error response is built, so it never raises, and it never returns a bundle
+        without tokens: a login that failed half-way must not overwrite the stored one.
+        """
+        if self.sent_bundle is None:
+            return None
+        try:
+            current = self.api.client.dumps()
+            if current == self.sent_bundle:
+                return None
+            tokens = json.loads(current)
+            if not isinstance(tokens, dict) or not all(
+                isinstance(tokens.get(key), str) and tokens[key]
+                for key in ("di_token", "di_refresh_token")
+            ):
+                return None
+            # Same tokens, other formatting: nothing to write back.
+            return None if tokens == json.loads(self.sent_bundle) else current
+        except Exception as exc:
+            log.warning(
+                "could not read the token bundle after a failure",
+                extra={"error_type": type(exc).__name__},
+            )
+            return None
 
     def display_name(self) -> str | None:
         """A name for the UI: Garmin's full name, else its display name (often an opaque handle)."""
@@ -107,7 +140,9 @@ def login(api: GarminApi, token_bundle: str, *, gap_s: float) -> GarminSession:
         parsed = None
     if not isinstance(parsed, dict):
         raise auth_expired()
-    session = GarminSession(api, gap_s=gap_s)
+    session = GarminSession(api, gap_s=gap_s, sent_bundle=token_bundle)
+    # Registered before login runs: its refresh can rotate the tokens, its profile load then fail.
+    remember_login(session)
     session.call(api.login, tokenstore=token_bundle)
     return session
 

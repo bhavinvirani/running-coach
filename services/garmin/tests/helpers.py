@@ -26,6 +26,11 @@ def bundle(**extra: str) -> str:
     return json.dumps({**BASE_BUNDLE, **extra})
 
 
+def rotated(sent: str) -> str:
+    """The bundle the fake returns after a simulated refresh of `sent`."""
+    return json.dumps({**json.loads(sent), "fixture": "rotated"})
+
+
 def read_fixture(name: str) -> Any:
     return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
 
@@ -39,12 +44,16 @@ class ScriptedGarmin:
         activities: list[dict[str, Any]] | None = None,
         login_error: BaseException | None = None,
         activities_error: BaseException | None = None,
+        rotate_to: str | None = None,
         full_name: str | None = "Alex Fixture",
         display_name: str | None = "fixture-runner",
     ) -> None:
         self._tokens = FakeTokenStore()
         self._activities = activities or []
         self._login_error = login_error
+        # What dumps() returns after login, set before login_error is raised (a refresh, then a
+        # failed profile load); None keeps the bundle sent.
+        self._rotate_to = rotate_to
         self._activities_error = activities_error
         self.full_name = full_name
         self.display_name = display_name
@@ -56,9 +65,12 @@ class ScriptedGarmin:
 
     def login(self, /, tokenstore: str | None = None) -> tuple[str | None, str | None]:
         self.calls.append("login")
+        if self._rotate_to is not None:
+            self._tokens.bundle = self._rotate_to
         if self._login_error is not None:
             raise self._login_error
-        self._tokens.bundle = tokenstore or ""
+        if self._rotate_to is None:
+            self._tokens.bundle = tokenstore or ""
         return None, None
 
     def get_activities_by_date(

@@ -26,8 +26,11 @@ const CHUNK_GAP_MS = config.GARMIN_FIXTURES ? 0 : 1000;
 
 export interface SyncGarminInput {
   userId: string;
-  /** The user's local date the sync runs up to, inclusive. */
-  today: string;
+  /**
+   * The sync runs up to the user's local date at this instant, inclusive; the time it takes the lock when
+   * omitted. Tests pin it; a job never passes the date it was queued for.
+   */
+  now?: Date;
   /** Aborts between chunks, when the worker stops. */
   signal?: AbortSignal;
 }
@@ -140,6 +143,17 @@ async function readConnection(userId: string) {
   return row;
 }
 
+/**
+ * Stores a bundle Garmin rotated, at once and on its own connection: the old refresh token is dead, so this
+ * write must survive whatever fails next.
+ */
+async function saveTokenBundle(userId: string, tokenBundle: string): Promise<void> {
+  await db
+    .update(garminConnection)
+    .set({ tokenBundleEnc: encrypt(tokenBundle, userId) })
+    .where(eq(garminConnection.userId, userId));
+}
+
 async function recordFailure(userId: string, error: unknown): Promise<void> {
   const code = error instanceof DomainError ? error.code : ErrorCode.internal;
   await db
@@ -174,14 +188,15 @@ async function saveChunk(
 
 /**
  * Pulls the user's runs from Garmin into `activity`, from the last sync (minus a day) or 30 days back, up
- * to `today`, in 7-day chunks oldest first. Runs inside the per-user lock, so two syncs for one user never
- * overlap. Each chunk commits on its own connection (not the lock's transaction): a kill or an error
- * keeps the finished chunks and the cursor, and the next run resumes there. A bundle Garmin rotated is
- * written back before anything else, because the old refresh token no longer works.
+ * to the user's local date today, in 7-day chunks oldest first. Runs inside the per-user lock, so two
+ * syncs for one user never overlap. Each chunk commits on its own connection (not the lock's
+ * transaction): a kill or an error keeps the finished chunks and the cursor, and the next run resumes
+ * there. A bundle Garmin rotated is written back the moment the client hands it over, before the call
+ * returns or throws, because the old refresh token no longer works.
  */
 export async function syncGarmin({
   userId,
-  today,
+  now,
   signal,
 }: SyncGarminInput): Promise<SyncGarminResult> {
   return withUserLock(userId, async () => {
@@ -193,9 +208,14 @@ export async function syncGarmin({
     if (connection.status === "expired") throw expired();
 
     const timeZone = connection.timezone ?? "UTC";
+    const today = localDateOf(now ?? new Date(), timeZone);
     const startDate = syncStartDate(connection.lastSyncAt, timeZone, today);
     const chunks = dateChunks(startDate, today, SYNC_CHUNK_DAYS);
     let bundle = decrypt(connection.tokenBundleEnc, userId);
+    const onTokenBundle = async (rotated: string): Promise<void> => {
+      await saveTokenBundle(userId, rotated);
+      bundle = rotated;
+    };
     let activitiesSeen = 0;
     let activitiesWritten = 0;
 
@@ -205,29 +225,22 @@ export async function syncGarmin({
 
       let response: GarminSyncResponse;
       try {
-        response = await garminClient.sync({
-          tokenBundle: bundle,
-          startDate: chunk.start,
-          endDate: chunk.end,
-        });
+        response = await garminClient.sync(
+          { tokenBundle: bundle, startDate: chunk.start, endDate: chunk.end },
+          { onTokenBundle },
+        );
       } catch (error) {
         await recordFailure(userId, error);
         throw error;
       }
 
-      if (response.tokenBundle !== bundle) {
-        await db
-          .update(garminConnection)
-          .set({ tokenBundleEnc: encrypt(response.tokenBundle, userId) })
-          .where(eq(garminConnection.userId, userId));
-        bundle = response.tokenBundle;
-      }
-
-      // The last chunk ends today: the cursor is now. Earlier chunks end on a past day: noon UTC of it,
-      // whose local date is that day or the next, so the one-day overlap re-reads it either way.
+      // The last chunk ends today: the cursor is now. Earlier chunks end on a past day (and so does a
+      // pinned `now` in the past): noon UTC of it, whose local date is that day or the next, so the one-day
+      // overlap re-reads it either way.
       const isLast = index === chunks.length - 1;
-      const now = new Date();
-      const cursor = isLast && localDateOf(now, timeZone) === today ? now : noonUtc(chunk.end);
+      const finishedAt = new Date();
+      const cursor =
+        isLast && localDateOf(finishedAt, timeZone) === today ? finishedAt : noonUtc(chunk.end);
       activitiesSeen += response.activities.length;
       activitiesWritten += await saveChunk(userId, response.activities, cursor);
     }

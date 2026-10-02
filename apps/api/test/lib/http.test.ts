@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { problemSchema } from "@running-coach/shared";
 import { z } from "zod";
 import { FetchFailure, fetchJson } from "../../src/lib/http";
 import { withRequestId } from "../../src/lib/logger";
@@ -9,6 +10,7 @@ import { withRequestId } from "../../src/lib/logger";
 type Reply = (req: IncomingMessage, res: ServerResponse) => void;
 let replies: Reply[] = [];
 let seen: IncomingMessage[] = [];
+let bodies: string[] = [];
 let server: Server;
 let baseUrl: string;
 
@@ -21,8 +23,13 @@ const json = (status: number, body: unknown, contentType = "application/json"): 
 beforeAll(async () => {
   server = createServer((req, res) => {
     seen.push(req);
-    const reply = replies.shift() ?? json(500, { error: "no reply queued" });
-    reply(req, res);
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      bodies.push(Buffer.concat(chunks).toString("utf8"));
+      const reply = replies.shift() ?? json(500, { error: "no reply queued" });
+      reply(req, res);
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -35,6 +42,7 @@ afterAll(async () => {
 beforeEach(() => {
   replies = [];
   seen = [];
+  bodies = [];
 });
 
 const okSchema = z.object({ status: z.literal("ok") });
@@ -139,5 +147,64 @@ describe("fetchJson", () => {
     await expect(fetchJson(`http://127.0.0.1:${port}/`, fast)).rejects.toMatchObject({
       kind: "network",
     });
+  });
+
+  it("awaits onErrorResponse for every failed answer, retried ones included, before the next attempt", async () => {
+    const problem = { type: "about:blank", title: "Bad Gateway", status: 502, code: "internal" };
+    replies = [json(502, problem), json(503, {}), json(200, { status: "ok" })];
+    const events: string[] = [];
+
+    const result = await fetchJson(`${baseUrl}/sync`, {
+      ...fast,
+      onErrorResponse: async (failed) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        events.push(`${failed.status} ${failed.problem?.code ?? "none"} after ${seen.length}`);
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(events).toEqual(["502 internal after 1", "503 none after 2"]);
+  });
+
+  it("calls a function body before every attempt, so a retry can send a changed body", async () => {
+    replies = [json(502, {}), json(200, { status: "ok" })];
+    let attempt = 0;
+
+    await fetchJson(`${baseUrl}/sync`, {
+      ...fast,
+      method: "POST",
+      body: () => ({ attempt: (attempt += 1) }),
+    });
+
+    expect(bodies).toEqual(['{"attempt":1}', '{"attempt":2}']);
+  });
+
+  it("parses a failed answer with the problem schema it is given", async () => {
+    const extended = problemSchema.extend({ extra: z.string() }).strict();
+    replies = [
+      json(429, {
+        type: "about:blank",
+        title: "x",
+        status: 429,
+        code: "rate_limited",
+        extra: "kept",
+      }),
+    ];
+
+    const result = await fetchJson(`${baseUrl}/sync`, { ...fast, problemSchema: extended });
+
+    expect(result).toMatchObject({ ok: false, problem: { extra: "kept" } });
+  });
+
+  it("ends the call with the error when onErrorResponse rejects", async () => {
+    replies = [json(502, {})];
+
+    await expect(
+      fetchJson(`${baseUrl}/sync`, {
+        ...fast,
+        onErrorResponse: () => Promise.reject(new Error("write-back failed")),
+      }),
+    ).rejects.toThrow("write-back failed");
+    expect(seen).toHaveLength(1);
   });
 });
