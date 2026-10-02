@@ -7,3 +7,4 @@ export * from "./contracts/garmin";
 export * from "./contracts/activity";
 export * from "./contracts/sync";
 export * from "./contracts/garmin-connection";
+export * from "./contracts/history-import";

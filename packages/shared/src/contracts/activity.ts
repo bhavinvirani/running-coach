@@ -29,3 +29,37 @@ export const latestActivityResponseSchema = z
   .object({ activity: activitySchema.nullable() })
   .strict();
 export type LatestActivityResponse = z.infer<typeof latestActivityResponseSchema>;
+
+/**
+ * GET /api/activities: the runner's runs grouped by week, newest first, a page of whole weeks at a time so
+ * a week's total is never split across pages. Weeks without runs are left out.
+ */
+export const activityWeeksQuerySchema = z
+  .object({
+    /** Only weeks starting before this date; the previous page's `nextBefore`. The latest weeks when absent. */
+    before: z.iso.date().optional(),
+    weeks: z.coerce.number().int().min(1).max(26).default(8),
+  })
+  .strict();
+export type ActivityWeeksQuery = z.infer<typeof activityWeeksQuerySchema>;
+
+export const activityWeekSchema = z
+  .object({
+    /** Monday of the week, from the runs' local start dates: the week the runner lived, whatever the zone. */
+    weekStart: z.iso.date(),
+    distanceM: z.number().nonnegative(),
+    durationS: z.number().nonnegative(),
+    /** Newest first. */
+    runs: z.array(activitySchema).min(1),
+  })
+  .strict();
+export type ActivityWeek = z.infer<typeof activityWeekSchema>;
+
+export const activityWeeksResponseSchema = z
+  .object({
+    weeks: z.array(activityWeekSchema),
+    /** `before` for the next page; null when no older run exists. */
+    nextBefore: z.iso.date().nullable(),
+  })
+  .strict();
+export type ActivityWeeksResponse = z.infer<typeof activityWeeksResponseSchema>;

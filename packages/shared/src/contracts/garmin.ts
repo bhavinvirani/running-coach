@@ -76,3 +76,31 @@ export const garminSyncResponseSchema = z
   })
   .strict();
 export type GarminSyncResponse = z.infer<typeof garminSyncResponseSchema>;
+
+/**
+ * POST /history: one page of the full-history import, `limit` items of Garmin's running list from offset
+ * `start`, newest first (0 is the latest run). Offsets instead of date windows: one call per page rather
+ * than one login per window, and Garmin's short last page marks the end exactly.
+ */
+export const garminHistoryRequestSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    start: z.number().int().nonnegative(),
+    limit: z.number().int().min(1).max(200),
+  })
+  .strict();
+export type GarminHistoryRequest = z.infer<typeof garminHistoryRequestSchema>;
+
+export const garminHistoryResponseSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    /** The runs in the page, newest first; non-runs and repeated ids are left out. */
+    activities: z.array(garminActivitySummarySchema),
+    /**
+     * Items Garmin listed before filtering, which is what the offset advances by. Fewer than `limit` means
+     * nothing older is left.
+     */
+    listed: z.number().int().nonnegative(),
+  })
+  .strict();
+export type GarminHistoryResponse = z.infer<typeof garminHistoryResponseSchema>;

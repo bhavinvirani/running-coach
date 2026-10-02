@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { garminProblemSchema } from "./garmin";
+import {
+  garminHistoryRequestSchema,
+  garminHistoryResponseSchema,
+  garminProblemSchema,
+} from "./garmin";
 import { problemSchema } from "./problem";
 
 const rateLimited = {
@@ -30,5 +34,29 @@ describe("garminProblemSchema", () => {
 describe("problemSchema", () => {
   it("rejects a tokenBundle, so the public API can never send one to the browser", () => {
     expect(problemSchema.safeParse({ ...rateLimited, tokenBundle: rotated }).success).toBe(false);
+  });
+});
+
+describe("garminHistoryRequestSchema", () => {
+  const request = { tokenBundle: rotated, start: 0, limit: 100 };
+
+  it("accepts the first page", () => {
+    expect(garminHistoryRequestSchema.safeParse(request).success).toBe(true);
+  });
+
+  it("rejects a page larger than 200, which would make one Garmin call too slow", () => {
+    expect(garminHistoryRequestSchema.safeParse({ ...request, limit: 201 }).success).toBe(false);
+  });
+
+  it("rejects a negative offset", () => {
+    expect(garminHistoryRequestSchema.safeParse({ ...request, start: -1 }).success).toBe(false);
+  });
+});
+
+describe("garminHistoryResponseSchema", () => {
+  it("rejects a page without the listed count the cursor advances by", () => {
+    expect(
+      garminHistoryResponseSchema.safeParse({ tokenBundle: rotated, activities: [] }).success,
+    ).toBe(false);
   });
 });
