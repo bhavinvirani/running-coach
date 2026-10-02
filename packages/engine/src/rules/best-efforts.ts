@@ -146,6 +146,9 @@ function fastestWindow(
     }
   }
 
+  // The guard above subtracts and the sweeps add, so a span equal to `meters` only up to float rounding
+  // can pass it while neither sweep finds a window: no effort then, never an infinite one.
+  if (bestTimeS === Number.POSITIVE_INFINITY) return null;
   return { timeS: bestTimeS, startS: bestStartS };
 }
 

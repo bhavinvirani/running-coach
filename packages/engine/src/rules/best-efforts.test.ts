@@ -311,6 +311,14 @@ describe("best efforts", () => {
     expect(effortAt(bestEfforts(run), "10k")).toBeUndefined();
   });
 
+  it("leaves out a distance whose span equals the segment only up to float rounding, never giving Infinity", () => {
+    // 30120.94 - 10120.94 passes a ">= 20000" check, yet 10120.94 + 20000 > 30120.94 in floats, so neither
+    // sweep finds a window; the distance must be left out, not returned as an infinite time.
+    const efforts = bestEfforts({ elapsedS: [0, 6000], distanceM: [10120.94, 30120.94] });
+    expect(efforts.every((effort) => Number.isFinite(effort.timeS))).toBe(true);
+    expect(efforts.map((effort) => effort.distanceKey)).not.toContain("20k");
+  });
+
   it("returns the efforts sorted shortest distance first", () => {
     const meters = bestEfforts(constantPace(3.125, 14_000)).map(
       (effort) => DISTANCE_METERS[effort.distanceKey],
