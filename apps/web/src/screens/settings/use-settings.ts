@@ -1,6 +1,6 @@
 import type { UpdateSettingsRequest } from "@running-coach/shared";
 import { useNavigate } from "react-router";
-import { useMe, useUpdateSettings } from "@/api/me";
+import { useMe, useRemoveClaudeKey, useSaveClaudeKey, useUpdateSettings } from "@/api/me";
 import { screenState } from "@/api/screen-state";
 import { useLogOut } from "@/api/session";
 
@@ -12,6 +12,8 @@ export function useSettingsScreen() {
   const me = useMe();
   const update = useUpdateSettings();
   const logOut = useLogOut();
+  const saveKey = useSaveClaudeKey();
+  const removeKey = useRemoveClaudeKey();
   const navigate = useNavigate();
 
   return {
@@ -20,6 +22,23 @@ export function useSettingsScreen() {
     pendingChanges: update.isPending ? update.variables : undefined,
     updateError: update.error,
     updateSettings: (changes: UpdateSettingsRequest) => update.mutate(changes),
+    claudeKey: {
+      saving: saveKey.isPending,
+      saveError: saveKey.error,
+      /** `onSaved` runs once the key is stored, so the section can let go of what was typed. */
+      save: (key: string, onSaved: () => void) => {
+        removeKey.reset();
+        saveKey.mutate(key, { onSuccess: onSaved });
+      },
+      /** Cancel on Replace key: the last attempt's error belongs to the input that is closing. */
+      clearSaveError: () => saveKey.reset(),
+      removing: removeKey.isPending,
+      removeError: removeKey.error,
+      remove: () => {
+        saveKey.reset();
+        removeKey.mutate();
+      },
+    },
     loggingOut: logOut.isPending,
     logOutError: logOut.error,
     logOut: () =>

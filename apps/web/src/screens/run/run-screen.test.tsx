@@ -34,6 +34,9 @@ type FakeRunApi = {
   bestEfforts?: RunBestEffort[];
 };
 
+/** The coach card's answer in these tests, which are about the run: no key, so one sentence and a link. */
+const noKey = () => json({ state: "no_key" });
+
 const run = activityFixture();
 const runPath = `/api/activities/${run.id}`;
 
@@ -50,6 +53,7 @@ function fakeRunApi({
   let fetches = 0;
   return stubFetch(({ method, path }) => {
     if (method === "GET" && path === "/api/me") return json(me);
+    if (method === "GET" && path === `/api/activities/${activity.id}/insight`) return noKey();
     if (method === "GET" && path === `/api/activities/${activity.id}`) {
       return json(activityResponseFixture({ activity, detail, bestEfforts }));
     }
@@ -163,6 +167,7 @@ describe("RunScreen", () => {
     let attempts = 0;
     stubFetch(({ method, path }) => {
       if (path === "/api/me") return json(meFixture());
+      if (path.endsWith("/insight")) return noKey();
       if (method === "GET") {
         attempts += 1;
         return attempts === 1
@@ -198,6 +203,7 @@ describe("RunScreen", () => {
     let failing = false;
     stubFetch(({ path }) => {
       if (path === "/api/me") return json(meFixture());
+      if (path.endsWith("/insight")) return noKey();
       return failing
         ? problem(503, ErrorCode.internal)
         : json(activityResponseFixture({ detail: activityDetailFixture() }));

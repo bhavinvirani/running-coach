@@ -1,28 +1,56 @@
-import type { MeResponse, UpdateSettingsRequest } from "@running-coach/shared";
+import type { ClaudeKeyRequest, MeResponse, UpdateSettingsRequest } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { insightKey } from "@/api/insights";
 import { detailKey } from "@/api/query-keys";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
-import { meFixture } from "@/test/fixtures";
+import { activityFixture, meFixture } from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { SettingsScreen } from "./settings-screen";
 
-/** A tiny in-memory /api/me that applies PATCHes, like the real API. */
-function fakeMeApi(initial: MeResponse) {
+/** What PUT /api/me/claude-key answers: "stored" stores the key like the real API, or any response. */
+type KeyAnswer = "stored" | Response | Promise<Response>;
+
+/**
+ * A tiny in-memory /api/me that applies PATCHes and stores or removes the Claude key, like the real API.
+ * `saveKey` decides each PUT's answer from the key sent.
+ */
+function fakeMeApi(
+  initial: MeResponse,
+  { saveKey = () => "stored" }: { saveKey?: (key: string) => KeyAnswer } = {},
+) {
   let me = initial;
+  const withKey = (hasClaudeKey: boolean) => {
+    me = { ...me, settings: { ...me.settings, hasClaudeKey } };
+    return json(me);
+  };
   return stubFetch(({ method, path, body }: FakeRequest) => {
     if (method === "GET" && path === "/api/me") return json(me);
     if (method === "PATCH" && path === "/api/me/settings") {
       me = { ...me, settings: { ...me.settings, ...(body as UpdateSettingsRequest) } };
       return json(me);
     }
+    if (method === "PUT" && path === "/api/me/claude-key") {
+      const answer = saveKey((body as ClaudeKeyRequest).key);
+      return answer === "stored" ? withKey(true) : answer;
+    }
+    if (method === "DELETE" && path === "/api/me/claude-key") return withKey(false);
     if (method === "POST" && path === "/api/auth/sign-out") return json({ success: true });
     return notFound();
   });
 }
+
+const withSavedKey = () => meFixture({ settings: { ...meFixture().settings, hasClaudeKey: true } });
+/** A fake key in the shape Anthropic issues; never a real one (tests rule). */
+const FAKE_KEY = "sk-ant-api03-fake-key-for-tests-only";
+const RUN_ID = activityFixture().id;
+const claudeKey = () => screen.getByRole("region", { name: "Claude key" });
+const findClaudeKey = () => screen.findByRole("region", { name: "Claude key" });
+const keyCalls = (calls: FakeRequest[]) =>
+  calls.filter((call) => call.path === "/api/me/claude-key").map((call) => call.method);
 
 function renderSettings() {
   return renderScreen(<SettingsScreen />, { path: "/settings" });
@@ -163,5 +191,175 @@ describe("SettingsScreen", () => {
     expect(await screen.findByText("Route not under test")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/login");
     expect(calls.some((call) => call.path === "/api/auth/sign-out")).toBe(true);
+  });
+  it("asks for a Claude key with what it costs and how it is kept, and saves nothing while the field is blank", async () => {
+    fakeMeApi(meFixture());
+    renderSettings();
+
+    const section = await findClaudeKey();
+    const field = within(section).getByLabelText("Claude API key");
+    expect(field).toHaveAttribute("type", "password");
+    expect(field).toHaveAttribute("autocomplete", "off");
+    expect(field).toHaveAttribute("spellcheck", "false");
+    expect(field).toHaveAttribute("autocapitalize", "off");
+    expect(field).toHaveAccessibleDescription(
+      "The coach uses your own Claude API key, about $1 a month, paid to Anthropic. It is stored encrypted.",
+    );
+    expect(within(section).getByText(/^The coach uses your own Claude API key/)).toHaveClass(
+      "text-ink-2",
+    );
+    const save = within(section).getByRole("button", { name: "Save key" });
+    expect(save).toBeDisabled();
+    await userEvent.type(field, "   ");
+    expect(save).toBeDisabled();
+    expect(within(section).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("checks and saves a key, then shows it as saved without the key itself", async () => {
+    let answer!: () => void;
+    const calls = fakeMeApi(meFixture(), {
+      saveKey: () =>
+        new Promise<Response>((resolve) => (answer = () => resolve(json(withSavedKey())))),
+    });
+    const { queryClient } = renderSettings();
+    // A run screen opened before cached its coach state.
+    queryClient.setQueryData(insightKey(RUN_ID), { state: "no_key" });
+
+    const section = await findClaudeKey();
+    await userEvent.type(within(section).getByLabelText("Claude API key"), ` ${FAKE_KEY} `);
+    await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
+
+    expect(await within(section).findByRole("button", { name: "Checking key…" })).toBeDisabled();
+    act(() => answer());
+
+    expect(await within(claudeKey()).findByText("Saved")).toBeInTheDocument();
+    expect(within(claudeKey()).queryByLabelText("Claude API key")).not.toBeInTheDocument();
+    expect(claudeKey()).not.toHaveTextContent(FAKE_KEY);
+    expect(within(claudeKey()).getByRole("button", { name: "Replace key" })).toBeInTheDocument();
+    expect(within(claudeKey()).getByRole("button", { name: "Remove key" })).toBeInTheDocument();
+    expect(calls.filter((call) => call.method === "PUT").map((call) => call.body)).toEqual([
+      { key: FAKE_KEY },
+    ]);
+    // The answer is the whole MeResponse: no second GET, and every run's coach state is read again.
+    expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(1);
+    expect(queryClient.getQueryState(insightKey(RUN_ID))?.isInvalidated).toBe(true);
+  });
+
+  it("says Claude rejected the key and keeps what was typed (invalid or expired key message on Settings)", async () => {
+    const calls = fakeMeApi(meFixture(), {
+      saveKey: () => problem(422, ErrorCode.claudeKeyInvalid),
+    });
+    renderSettings();
+
+    const section = await findClaudeKey();
+    const field = within(section).getByLabelText("Claude API key");
+    await userEvent.type(field, FAKE_KEY);
+    await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
+
+    const alert = await within(section).findByRole("alert");
+    expect(alert).toHaveTextContent(
+      /^Claude rejected this key\. Copy it again from the Claude Console and save it\.$/,
+    );
+    expect(alert).toHaveClass("text-body", "text-ink");
+    expect(field).toHaveValue(FAKE_KEY);
+    expect(within(section).getByRole("button", { name: "Save key" })).toBeEnabled();
+    expect(within(section).queryByText("Saved")).not.toBeInTheDocument();
+    expect(keyCalls(calls)).toEqual(["PUT"]);
+  });
+
+  it("says Claude did not answer and stores nothing when Claude is down", async () => {
+    fakeMeApi(meFixture(), { saveKey: () => problem(502, ErrorCode.claudeUnavailable) });
+    renderSettings();
+
+    const section = await findClaudeKey();
+    await userEvent.type(within(section).getByLabelText("Claude API key"), FAKE_KEY);
+    await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
+
+    expect(await within(section).findByRole("alert")).toHaveTextContent(
+      errorMessages.claude_unavailable,
+    );
+    expect(within(section).getByLabelText("Claude API key")).toHaveValue(FAKE_KEY);
+    expect(within(section).queryByText("Saved")).not.toBeInTheDocument();
+  });
+
+  it("opens the field with Cancel on Replace key, closes it on Cancel and saves a new key", async () => {
+    const calls = fakeMeApi(withSavedKey(), {
+      saveKey: (key) => (key === FAKE_KEY ? "stored" : problem(422, ErrorCode.claudeKeyInvalid)),
+    });
+    renderSettings();
+
+    const section = await findClaudeKey();
+    expect(within(section).getByText("Saved")).toBeInTheDocument();
+    expect(within(section).queryByLabelText("Claude API key")).not.toBeInTheDocument();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Replace key" }));
+    await userEvent.type(within(section).getByLabelText("Claude API key"), "sk-ant-wrong");
+    await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
+    expect(await within(section).findByRole("alert")).toHaveTextContent(
+      errorMessages.claude_key_invalid,
+    );
+
+    await userEvent.click(within(section).getByRole("button", { name: "Cancel" }));
+    expect(within(section).getByText("Saved")).toBeInTheDocument();
+    expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
+
+    // Opened again: empty, with no error from the last try.
+    await userEvent.click(within(section).getByRole("button", { name: "Replace key" }));
+    const field = within(section).getByLabelText("Claude API key");
+    expect(field).toHaveValue("");
+    expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
+    await userEvent.type(field, FAKE_KEY);
+    await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
+
+    expect(await within(section).findByText("Saved")).toBeInTheDocument();
+    expect(within(section).queryByLabelText("Claude API key")).not.toBeInTheDocument();
+    expect(keyCalls(calls)).toEqual(["PUT", "PUT"]);
+  });
+
+  it("removes the key without a confirm dialog and asks for one again", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    const calls = fakeMeApi(withSavedKey());
+    const { queryClient } = renderSettings();
+
+    await userEvent.click(
+      within(await findClaudeKey()).getByRole("button", { name: "Remove key" }),
+    );
+
+    expect(await within(claudeKey()).findByLabelText("Claude API key")).toBeInTheDocument();
+    expect(within(claudeKey()).queryByText("Saved")).not.toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(keyCalls(calls)).toEqual(["DELETE"]);
+    expect(queryClient.getQueryData<MeResponse>(detailKey("me"))?.settings.hasClaudeKey).toBe(
+      false,
+    );
+  });
+
+  it("explains a failed removal and keeps the key", async () => {
+    stubFetch(({ method }) =>
+      method === "DELETE" ? problem(500, ErrorCode.internal) : json(withSavedKey()),
+    );
+    renderSettings();
+
+    await userEvent.click(
+      within(await findClaudeKey()).getByRole("button", { name: "Remove key" }),
+    );
+
+    expect(await within(claudeKey()).findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(within(claudeKey()).getByText("Saved")).toBeInTheDocument();
+  });
+
+  it("places the Claude key between units and coach detail and Garmin", async () => {
+    fakeMeApi(meFixture());
+    renderSettings();
+    await findClaudeKey();
+
+    const named = screen
+      .getAllByRole("region")
+      .map((region) => region.getAttribute("aria-label"))
+      .filter((name) => name !== null);
+    expect(named).toEqual(["Claude key", "Garmin", "Account"]);
+    expect(claudeKey().previousElementSibling).toContainElement(
+      screen.getByRole("radio", { name: "Standard" }),
+    );
   });
 });

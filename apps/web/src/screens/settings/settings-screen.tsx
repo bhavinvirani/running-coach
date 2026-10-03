@@ -3,6 +3,7 @@ import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { AccountSection } from "./parts/account-section";
+import { ClaudeKeySection } from "./parts/claude-key-section";
 import { CoachDetailField } from "./parts/coach-detail-field";
 import { GarminSection } from "./parts/garmin-section";
 import { Section } from "./parts/section";
@@ -52,6 +53,7 @@ export function SettingsScreen() {
           {errorMessage(screen.updateError)}
         </p>
       ) : null}
+      <ClaudeKeySection hasKey={data.settings.hasClaudeKey} {...screen.claudeKey} />
       <GarminSection garmin={data.garmin} timeZone={data.settings.timezone} />
       <AccountSection
         email={data.user.email}
@@ -78,6 +80,7 @@ function SettingsSkeleton() {
     <SettingsLayout busy>
       <div role="status" aria-label="Loading settings" className="flex flex-col gap-4">
         <SkeletonCard rows={2} tall />
+        <SkeletonCard rows={1} title />
         <SkeletonCard rows={2} title />
         <SkeletonCard rows={2} title />
       </div>
