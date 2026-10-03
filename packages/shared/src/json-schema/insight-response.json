@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "ready"
+        },
+        "insight": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "content": {
+              "type": "object",
+              "properties": {
+                "headline": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "whatHappened": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "whatItMeans": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "nextStep": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "caution": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "easy_next",
+                    "rest_and_check"
+                  ]
+                }
+              },
+              "required": [
+                "headline",
+                "whatHappened",
+                "whatItMeans",
+                "nextStep",
+                "caution"
+              ],
+              "additionalProperties": false
+            },
+            "fallbackReason": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "missing_key",
+                    "key_invalid",
+                    "refusal",
+                    "max_tokens",
+                    "invalid_output",
+                    "timeout",
+                    "unavailable",
+                    "request_rejected"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "feedback": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "up",
+                    "down"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "content",
+            "fallbackReason",
+            "feedback",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "state",
+        "insight"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "pending"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "retrying"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "none"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "no_key"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+ALTER TABLE "coach_message" DROP CONSTRAINT "coach_message_fallback_reason_check";--> statement-breakpoint
+ALTER TABLE "coach_message" ADD CONSTRAINT "coach_message_fallback_reason_check" CHECK ("coach_message"."fallback_reason" in ('missing_key', 'key_invalid', 'refusal', 'max_tokens', 'invalid_output', 'timeout', 'unavailable', 'request_rejected'));

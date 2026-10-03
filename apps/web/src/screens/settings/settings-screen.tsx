@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { AccountSection } from "./parts/account-section";
+import { ClaudeKeySection } from "./parts/claude-key-section";
 import { CoachDetailField } from "./parts/coach-detail-field";
 import { GarminSection } from "./parts/garmin-section";
 import { Section } from "./parts/section";
@@ -52,6 +54,7 @@ export function SettingsScreen() {
           {errorMessage(screen.updateError)}
         </p>
       ) : null}
+      <ClaudeKeySection hasKey={data.settings.hasClaudeKey} {...screen.claudeKey} />
       <GarminSection garmin={data.garmin} timeZone={data.settings.timezone} />
       <AccountSection
         email={data.user.email}
@@ -78,10 +81,39 @@ function SettingsSkeleton() {
     <SettingsLayout busy>
       <div role="status" aria-label="Loading settings" className="flex flex-col gap-4">
         <SkeletonCard rows={2} tall />
+        <ClaudeKeySkeleton />
         <SkeletonCard rows={2} title />
         <SkeletonCard rows={2} title />
       </div>
     </SettingsLayout>
+  );
+}
+
+/**
+ * The Claude key card as it loads without a key: the title, the field's label, the field, the helper text's
+ * two lines at 390 px, then Save key. Each block sits in a box at its text's line height, as in the card.
+ */
+function ClaudeKeySkeleton() {
+  return (
+    <div className="rounded-md border border-line bg-surface-1 px-4 pb-4">
+      <div className="mt-4 flex h-5.5 items-center">
+        <div className="h-4 w-24 rounded-sm bg-surface-2" />
+      </div>
+      <div className="flex flex-col gap-2 py-4">
+        <div className="flex h-5.5 items-center">
+          <div className="h-4 w-28 rounded-sm bg-surface-2" />
+        </div>
+        <div className="h-11 rounded-sm border border-line bg-surface-0" />
+        <div>
+          {["w-full", "w-1/2"].map((width) => (
+            <div key={width} className="flex h-4 items-center">
+              <div className={cn("h-3 rounded-sm bg-surface-2", width)} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="h-11 w-24 rounded-sm bg-surface-2" />
+    </div>
   );
 }
 

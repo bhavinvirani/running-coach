@@ -92,6 +92,20 @@
       "when": 1791022781536,
       "tag": "0012_add_workout_push",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791038565379,
+      "tag": "0013_add_coach_fallback_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791041376581,
+      "tag": "0014_add_request_rejected_fallback_reason",
+      "breakpoints": true
     }
   ]
 }

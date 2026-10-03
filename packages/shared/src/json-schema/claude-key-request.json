@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[\\x21-\\x7E]+$"
+    }
+  },
+  "required": [
+    "key"
+  ],
+  "additionalProperties": false
+}

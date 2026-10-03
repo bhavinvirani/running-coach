@@ -52,6 +52,9 @@ const configObject = z.object({
   // Only e2e raises it: every e2e test is the one seeded runner, so six a minute would fail a test for what
   // the tests before it sent. Integration tests keep the default and cover the limit.
   GARMIN_ROUTE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(6),
+  // Requests a minute per user on each route that calls Claude or queues a call (coachRouteLimit in
+  // lib/rate-limit.ts): saving a key, Ask the coach. Raised only where one runner sends many (e2e).
+  COACH_ROUTE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(6),
   // The daily cron's bearer token (POST /api/cron/sync); required in production (configSchema).
   CRON_SECRET: optional(z.string().min(16)),
   OWNER_EMAIL: optional(z.email()),

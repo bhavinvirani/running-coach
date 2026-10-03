@@ -1,0 +1,46 @@
+{
+  "input": {
+    "activity": {
+      "type": "running",
+      "startLocal": "2026-10-01 07:00:00",
+      "distanceM": 12400,
+      "durationS": 4340,
+      "avgHr": 152,
+      "maxHr": 165,
+      "cadence": 170,
+      "calories": 820,
+      "elevationGainM": 60,
+      "isIndoor": false,
+      "isManual": false
+    },
+    "settings": {
+      "units": "km",
+      "coachDetail": "standard"
+    },
+    "plan": {
+      "planned": [
+        {
+          "date": "2026-10-01",
+          "type": "easy",
+          "title": null,
+          "distanceM": 8000,
+          "durationS": 2880
+        }
+      ],
+      "next": {
+        "date": "2026-10-03",
+        "type": "easy",
+        "title": null,
+        "distanceM": 6000,
+        "durationS": 2160
+      }
+    }
+  },
+  "output": {
+    "headline": "12.4 km at 5:50 /km, 4.4 km over the planned 8.0 km easy run.",
+    "whatHappened": "12.4 km in 1:12:20 at 5:50 /km against a planned easy 8.0 km in 48:00. Average heart rate 152 bpm, max 165 bpm, with 60 m of climbing.",
+    "whatItMeans": "That is 55% more distance than planned for the day. 152 bpm says the pace stayed easy, but the extra 4.4 km is load the plan did not ask for, and a jump in load raises the risk of injury.",
+    "nextStep": "Next is the easy run on Saturday 3 October: 6.0 km in 36:00, as written. Keep it to 6.0 km and run no more than the plan this week.",
+    "caution": "easy_next"
+  }
+}

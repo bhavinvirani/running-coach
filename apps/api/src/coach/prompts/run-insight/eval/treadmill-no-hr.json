@@ -13,13 +13,26 @@
       "isIndoor": true,
       "isManual": false
     },
-    "settings": { "units": "km", "coachDetail": "short" }
+    "settings": {
+      "units": "km",
+      "coachDetail": "short"
+    },
+    "plan": {
+      "planned": [],
+      "next": {
+        "date": "2026-09-26",
+        "type": "tempo",
+        "title": null,
+        "distanceM": 7000,
+        "durationS": 2100
+      }
+    }
   },
   "output": {
-    "headline": "8.0 km on the treadmill in 45:00.",
+    "headline": "8.0 km on the treadmill in 45:00, on a day with nothing planned.",
     "whatHappened": "8.0 km indoors at 5:38 /km by the watch's estimate, cadence 172.",
     "whatItMeans": "No heart rate was recorded, so the effort is unknown; treadmill pace is an estimate.",
-    "nextStep": "Run the next planned session as written.",
+    "nextStep": "Run Saturday's tempo as written: 7.0 km in 35:00.",
     "caution": "none"
   }
 }

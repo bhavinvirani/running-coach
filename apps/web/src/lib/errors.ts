@@ -18,7 +18,9 @@ export const errorMessages: Record<ErrorCode, string> = {
   garmin_unavailable: "Garmin is not responding. Try again later.",
   garmin_mfa_required: "Garmin asked for a two-factor code. Reconnect in Settings.",
   claude_key_missing: "No Claude API key is set. Add one in Settings.",
-  claude_key_invalid: "Claude rejected your API key. Update it in Settings.",
+  // Shown on Settings, where the key is saved; a run's card for a rejected key links to Settings itself.
+  claude_key_invalid:
+    "Claude rejected this key. Copy it again from the Claude Console and save it.",
   claude_unavailable: "Claude is not responding. Try again in a few minutes.",
   plan_missing: "Workouts read their paces from your plan. Set a goal first.",
   session_locked:

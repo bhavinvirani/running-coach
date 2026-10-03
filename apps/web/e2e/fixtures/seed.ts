@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { expect, type APIRequestContext } from "@playwright/test";
 import { garminWorkout, generatePlan } from "@running-coach/engine";
 import {
@@ -9,6 +9,8 @@ import {
   meResponseSchema,
   personalBestsResponseSchema,
   syncResponseSchema,
+  type CoachFallbackReason,
+  type CoachFeedback,
   type DistanceKey,
   type GeneratedPlan,
   type MeResponse,
@@ -17,6 +19,7 @@ import {
   type PlanPaces,
   type PlanPhase,
   type RecentTime,
+  type RunInsight,
   type SessionSteps,
   type SessionTarget,
   type SessionType,
@@ -42,6 +45,19 @@ export type Runner = typeof runner;
 /** The database the e2e API runs on; playwright.config.ts hands the same URL to the API it starts. */
 export const e2eDatabaseUrl =
   process.env.E2E_DATABASE_URL ?? "postgres://postgres:postgres@localhost:5434/running_coach_e2e";
+
+/**
+ * The e2e API's MASTER_KEY (playwright.config.ts): a fake value for e2e only, here so seeded secrets are
+ * encrypted the way that API decrypts them.
+ */
+export const e2eMasterKey = "ZTJlLW9ubHktbWFzdGVyLWtleS0zMi1ieXRlcy1vayE=";
+
+/**
+ * The fake Claude playwright.config.ts starts beside the API (apps/api/test/fake-claude-cli.ts) and points
+ * its CLAUDE_BASE_URL at: it replays apps/api/test/fixtures/claude and never reaches Anthropic.
+ */
+export const fakeClaudePort = 8776;
+export const fakeClaudeUrl = `http://127.0.0.1:${fakeClaudePort}`;
 
 /** What a new account starts with (created with the account); every test starts from them. */
 export const defaultSettings = {
@@ -161,25 +177,37 @@ async function clearPushes(db: pg.Client): Promise<void> {
     .toBe(0);
 }
 
+/** The runner's coach jobs on the analyze-run queue (apps/api/src/jobs/analyze-run-queue.ts), by user. */
+const runnerInsightJobs = `from pgboss.job where name = 'analyze-run'
+  and data->>'userId' = (select id::text from "user" where email = $1)`;
+
 /**
- * Every test starts from "no goal or plan, no runs, no history import, Garmin not connected, default
- * settings": no workout push of the runner is left (clearPushes), then the runner's plan sessions, plans,
- * goal, runs, import progress and Garmin connection are deleted, then the settings go back to the defaults
- * through the API, the way the app changes them, so the MeResponse returned already shows the reset state.
- * An import page job left queued by an earlier test finds no progress row and does nothing; a best-efforts
- * batch left waiting is deleted (clearBestEffortsBatches).
+ * Every test starts from "no goal or plan, no runs, no coach cards, no history import, Garmin not
+ * connected, no Claude key, default settings": no workout push of the runner is left (clearPushes), coach
+ * jobs still waiting are deleted, then the runner's plan sessions, plans, goal, coach cards, runs, import
+ * progress, Garmin connection and Claude key are deleted, then the settings go back to the defaults through
+ * the API, the way the app changes them, so the MeResponse returned already shows the reset state. An
+ * import page job left queued by an earlier test finds no progress row and does nothing; a best-efforts
+ * batch left waiting is deleted (clearBestEffortsBatches); a coach job already running finds its run gone
+ * and stores nothing.
  */
 export async function resetRunner(request: APIRequestContext): Promise<MeResponse> {
   await withDatabase(async (db) => {
     await clearPushes(db);
-    // Sessions before their plans, plans before their goal: each would go with its parent (on delete
-    // cascade), but each table is emptied by its own user_id so none is left behind if that ever changes.
+    await db.query(`delete ${runnerInsightJobs} and state in ('created', 'retry')`, [runner.email]);
+    // Sessions before their plans, plans before their goal, cards before their runs: each would go with
+    // its parent (on delete cascade), but each table is emptied by its own user_id so none is left behind
+    // if that ever changes.
     await db.query(`delete from plan_session where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from plan where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from goal where user_id = ${runnerId}`, [runner.email]);
+    await db.query(`delete from coach_message where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from activity where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from import_progress where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from garmin_connection where user_id = ${runnerId}`, [runner.email]);
+    await db.query(`update user_settings set claude_key_enc = null where user_id = ${runnerId}`, [
+      runner.email,
+    ]);
     await clearBestEffortsBatches(db);
   });
   const response = await request.patch("/api/me/settings", { data: defaultSettings });
@@ -310,6 +338,153 @@ export async function syncGarmin(request: APIRequestContext): Promise<SyncRespon
     throw new Error(`Syncing the fixture Garmin account failed with ${response.status()}`);
   }
   return syncResponseSchema.parse(await response.json());
+}
+
+/**
+ * The fake Claude's fixtures (apps/api/test/fixtures/claude) the e2e flows use: "valid" accepts the key and
+ * writes the 18 km long run's card; "key-invalid" rejects the key (401).
+ */
+export type ClaudeFixture = "valid" | "key-invalid";
+
+let fakeKeysMade = 0;
+
+/**
+ * A key of the form the fake Claude reads, "test-<fixture>.<nonce>": it answers with that fixture. The
+ * nonce differs per key, so each test reads only its own calls from the fake's log (fakeClaudeCalls).
+ */
+export function fakeClaudeKey(fixture: ClaudeFixture): string {
+  fakeKeysMade += 1;
+  return `test-${fixture}.e2e-${fakeKeysMade}`;
+}
+
+/** apps/api/src/lib/crypto.ts's encrypt with the e2e MASTER_KEY: "v1:" + base64url(iv | text | tag). */
+function encryptForUser(plaintext: string, userId: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", Buffer.from(e2eMasterKey, "base64"), iv, {
+    authTagLength: 16,
+  });
+  // The user id is the additional data, as the API binds every secret to its owner.
+  cipher.setAAD(Buffer.from(userId, "utf8"));
+  const body = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return `v1:${Buffer.concat([iv, body, cipher.getAuthTag()]).toString("base64url")}`;
+}
+
+/**
+ * Stores a fake Claude key for the runner, encrypted as PUT /api/me/claude-key stores one, without the
+ * check that route makes: a key whose fixture fails (key-invalid, unavailable) can be seeded too, as a key
+ * that worked when it was saved. Returns the key, for fakeClaudeCalls.
+ */
+export async function seedClaudeKey(fixture: ClaudeFixture): Promise<string> {
+  const key = fakeClaudeKey(fixture);
+  await withDatabase(async (db) => {
+    const { rows } = await db.query<{ id: string }>(`select id from "user" where email = $1`, [
+      runner.email,
+    ]);
+    const userId = rows[0]?.id;
+    if (userId === undefined) throw new Error("The runner's account does not exist");
+    const stored = await db.query(
+      "update user_settings set claude_key_enc = $2 where user_id = $1",
+      [userId, encryptForUser(key, userId)],
+    );
+    if (stored.rowCount !== 1) throw new Error("The runner has no settings to store a key on");
+  });
+  return key;
+}
+
+/** The runner's Claude key as the database holds it: encrypted, or null when none is set. */
+export async function storedClaudeKey(): Promise<string | null> {
+  return withDatabase(async (db) => {
+    const { rows } = await db.query<{ claude_key_enc: string | null }>(
+      `select claude_key_enc from user_settings where user_id = ${runnerId}`,
+      [runner.email],
+    );
+    return rows[0]?.claude_key_enc ?? null;
+  });
+}
+
+/**
+ * The calls the API made to the fake Claude with this key, oldest first: "models" is the key check on
+ * save (GET /v1/models), "messages" a coach card (POST /v1/messages).
+ */
+export async function fakeClaudeCalls(
+  request: APIRequestContext,
+  key: string,
+  kind: "models" | "messages",
+): Promise<unknown[]> {
+  const path = `${fakeClaudeUrl}/__requests/${encodeURIComponent(key)}`;
+  const response = await request.get(kind === "models" ? `${path}/models` : path);
+  if (!response.ok()) throw new Error(`The fake Claude's log answered ${response.status()}`);
+  return (await response.json()) as unknown[];
+}
+
+/**
+ * A coach card for seedLongRun's 18 km run with seedRunDetail's outdoor laps and zones, in the coach's
+ * voice: what happened, what it means, what to do next, in numbers. Fictional, as every seed.
+ */
+export const longRunInsight = {
+  headline: "18.0 km in 1:42:00 at 5:40 /km, with the last km the fastest at 5:06.",
+  whatHappened:
+    "Heart rate stayed between 140 and 155 bpm for 16 km. It rose to 158 bpm on the climb at km 10, run at 6:06, and to 165 bpm on the last km.",
+  whatItMeans:
+    "52 of the 102 minutes were in zone 3. An even pace at a steady heart rate means 18 km is within your aerobic range. The fast last km added load the plan did not ask for.",
+  nextStep:
+    "Keep the next run easy: 30 to 40 minutes at 6:20 /km or slower. On the next long run, hold the last km at the pace of the rest.",
+  caution: "easy_next",
+} as const satisfies RunInsight;
+
+/**
+ * The fallback card the API builds for seedLongRun's run when Claude does not answer (buildRunInsightFallback
+ * in apps/api/src/coach/prompts/run-insight/fallback.ts, reason unavailable, no plan): the run's numbers only.
+ */
+export const longRunFallbackInsight = {
+  headline: "18.0 km in 1:42:00 at 5:40 /km.",
+  whatHappened:
+    "Average heart rate 148 bpm, max 166 bpm. Cadence 168 steps per minute. Elevation gain 142 m.",
+  whatItMeans:
+    "No coach review: Claude is not answering right now. These are the run's numbers only.",
+  nextStep:
+    "Keep your next run easy, or take a rest day. Rest or run easy if anything hurts or you feel unwell.",
+  caution: "none",
+} as const satisfies RunInsight;
+
+/** When seeded cards were written: two hours after seedLongRun's run ended. Nothing on screen shows it. */
+const insightWrittenAt = "2026-09-27T09:42:00Z";
+
+/**
+ * Stores a coach card for an already stored run, as the analyze-run job stores it (analyzeRun in
+ * apps/api/src/services/insights.ts): the model's card, or with `fallbackReason` the fallback card, which
+ * has no model. `feedback` is a thumb the runner already gave. Goes with the run (on delete cascade).
+ */
+export async function seedInsight(
+  garminActivityId: number,
+  content: RunInsight,
+  {
+    fallbackReason = null,
+    feedback = null,
+  }: { fallbackReason?: CoachFallbackReason | null; feedback?: CoachFeedback | null } = {},
+): Promise<void> {
+  await withDatabase(async (db) => {
+    const inserted = await db.query(
+      `insert into coach_message (user_id, kind, activity_id, prompt_version, model, content,
+         fallback_reason, feedback, usage, created_at, updated_at)
+       select activity.user_id, 'insight', activity.id, 'run-insight/v1', $3, $4::jsonb, $5, $6, $7::jsonb,
+         $8, $8
+       from activity where activity.user_id = ${runnerId} and activity.garmin_activity_id = $2`,
+      [
+        runner.email,
+        garminActivityId,
+        fallbackReason === null ? "claude-opus-5-5" : null,
+        JSON.stringify(content),
+        fallbackReason,
+        feedback,
+        fallbackReason === null ? JSON.stringify({ inputTokens: 1180, outputTokens: 164 }) : null,
+        insightWrittenAt,
+      ],
+    );
+    if (inserted.rowCount !== 1) {
+      throw new Error(`No stored run with Garmin id ${garminActivityId} to add a coach card to`);
+    }
+  });
 }
 
 /** Garmin ids of the fixture account's runs that tests store or open (services/garmin sync.json). */

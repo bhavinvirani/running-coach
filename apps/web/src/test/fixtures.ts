@@ -7,12 +7,14 @@ import {
   garminPushStatusSchema,
   goalSchema,
   importProgressSchema,
+  insightResponseSchema,
   meResponseSchema,
   personalBestSchema,
   personalBestsResponseSchema,
   planResponseSchema,
   planSchema,
   runBestEffortSchema,
+  runInsightCardSchema,
   sessionDetailResponseSchema,
   type Activity,
   type ActivityDetail,
@@ -22,6 +24,7 @@ import {
   type GarminPushStatus,
   type Goal,
   type ImportProgress,
+  type InsightResponse,
   type MeResponse,
   type PersonalBest,
   type PersonalBestsResponse,
@@ -29,6 +32,7 @@ import {
   type PlanResponse,
   type PlanSession,
   type RunBestEffort,
+  type RunInsightCard,
   type SessionDetailResponse,
   type SessionSteps,
   type SessionTarget,
@@ -512,4 +516,53 @@ export function sessionDetailFixture(
     garmin: garminPushStatusFixture(),
     ...overrides,
   });
+}
+
+/**
+ * The coach's card for activityFixture's run as the model writes it, no thumbs yet. Parsed with the shared
+ * contract like meFixture.
+ */
+export function insightCardFixture(overrides: Partial<RunInsightCard> = {}): RunInsightCard {
+  return runInsightCardSchema.parse({
+    id: "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+    content: {
+      headline: "10.0 km at 5:13 /km, even from start to finish.",
+      whatHappened:
+        "You ran 10.0 km in 52:18 at 148 bpm. Every full kilometer was within 13 s of the others.",
+      whatItMeans: "Most of it sat in zone 3, so this was a steady effort, not an easy one.",
+      nextStep: "Tuesday's easy 45 minutes: keep it under 140 bpm.",
+      caution: "none",
+    },
+    fallbackReason: null,
+    feedback: null,
+    createdAt: "2026-09-27T07:10:00Z",
+    ...overrides,
+  });
+}
+
+/**
+ * The card built without the model when Claude declined (refusal), in the same shape: its text already says
+ * why. Pass another reason for max_tokens, a timeout or a rejected key.
+ */
+export function fallbackCardFixture(
+  fallbackReason: NonNullable<RunInsightCard["fallbackReason"]> = "refusal",
+): RunInsightCard {
+  return insightCardFixture({
+    id: "1f2e3d4c-5b6a-4978-8a6b-5c4d3e2f1a0b",
+    content: {
+      headline: "No coach review for this run.",
+      whatHappened: "The coach could not write a review this time.",
+      whatItMeans: "Your run is saved and your plan has not changed.",
+      nextStep: "Try again later, or carry on with the plan.",
+      caution: "none",
+    },
+    fallbackReason,
+  });
+}
+
+/** GET /api/activities/:id/insight with a stored card: the model's unless another is given. */
+export function insightReadyFixture(
+  insight: RunInsightCard = insightCardFixture(),
+): InsightResponse {
+  return insightResponseSchema.parse({ state: "ready", insight });
 }

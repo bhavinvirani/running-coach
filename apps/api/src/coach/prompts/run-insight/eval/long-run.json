@@ -13,13 +13,34 @@
       "isIndoor": false,
       "isManual": false
     },
-    "settings": { "units": "km", "coachDetail": "standard" }
+    "settings": {
+      "units": "km",
+      "coachDetail": "standard"
+    },
+    "plan": {
+      "planned": [
+        {
+          "date": "2026-09-27",
+          "type": "long",
+          "title": null,
+          "distanceM": 18000,
+          "durationS": 6300
+        }
+      ],
+      "next": {
+        "date": "2026-09-29",
+        "type": "easy",
+        "title": null,
+        "distanceM": 8000,
+        "durationS": 2880
+      }
+    }
   },
   "output": {
-    "headline": "18.0 km long run at 5:40 /km.",
-    "whatHappened": "18.0 km in 1:42:00 at 5:40 /km on Sunday morning. Average heart rate 148 bpm, max 166 bpm, with 142 m of climbing.",
-    "whatItMeans": "148 bpm at 5:40 /km for 1:42:00 is an aerobic effort. The pace held steady for the whole run, which is what a long run is for.",
-    "nextStep": "Make the next run easy, 30 to 40 minutes, then follow the plan.",
+    "headline": "18.0 km long run at 5:40 /km, the distance the plan asked for.",
+    "whatHappened": "18.0 km in 1:42:00 at 5:40 /km on Sunday morning, against a planned 18.0 km in 1:45:00. Average heart rate 148 bpm, max 166 bpm, with 142 m of climbing.",
+    "whatItMeans": "148 bpm at 5:40 /km for 1:42:00 is an aerobic effort. The distance matched the plan and the pace held steady, which is what a long run is for.",
+    "nextStep": "Next is the easy run on Tuesday 29 September: 8.0 km in 48:00, as written.",
     "caution": "easy_next"
   }
 }

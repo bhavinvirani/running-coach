@@ -4,7 +4,9 @@ import { expect, test } from "../fixtures/login";
 import {
   fixtureRunIds,
   longRunBestEfforts,
+  longRunInsight,
   seedBestEfforts,
+  seedInsight,
   seedLongRun,
   seedRaceDayRun,
   seedRunDetail,
@@ -93,4 +95,31 @@ test("run shows a treadmill run without route or elevation", async ({ page }) =>
 
   await fitViewportToPage(page);
   await expect(page).toHaveScreenshot("run-treadmill.png", { fullPage: true });
+});
+
+test("run shows the coach's review of the long run under its stats, rated helpful", async ({
+  page,
+}) => {
+  await seedLongRun();
+  await seedRunDetail(fixtureRunIds.longRun, "outdoor");
+  // The model's card with a caution, already rated: every part the card can show, with the thumb
+  // pressed. The card's date is the seed's, and nothing on it reads the clock.
+  await seedInsight(fixtureRunIds.longRun, longRunInsight, { feedback: "up" });
+
+  await openSeededRun(page);
+  const coach = section(page, "Coach");
+  await expect(coach.getByText(longRunInsight.headline, { exact: true })).toBeVisible();
+  await expect(coach.getByRole("button", { name: "Helpful", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  // The last section on the screen: once its line is drawn, every section above it has rendered.
+  await expect(
+    section(page, "Elevation")
+      .getByRole("img", { name: "Elevation chart" })
+      .locator(".recharts-line-curve"),
+  ).toBeVisible();
+
+  await fitViewportToPage(page);
+  await expect(page).toHaveScreenshot("run-coach.png", { fullPage: true });
 });

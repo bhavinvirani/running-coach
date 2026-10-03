@@ -44,20 +44,23 @@ export function formatElevation(meters: number, units: Units): string {
   return `${Math.round(elevationInUnits(meters, units))} ${units === "km" ? "m" : "ft"}`;
 }
 
-/** "Sunday 27 September 2026, 08:00" from Garmin's wall-clock "2026-09-27 08:00:00" (no zone math). */
-export function formatLocalStart(startLocal: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(startLocal);
-  if (!match) return startLocal;
-  const [, year, month, day, hour, minute] = match.map(Number) as [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
+const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})/;
+
+/** "Thursday 8 October 2026" from a local date "2026-10-08" (no zone math), or the input unchanged. */
+export function formatLocalDate(localDate: string): string {
+  const match = LOCAL_DATE.exec(localDate);
+  if (!match) return localDate;
+  const [year, month, day] = match.slice(1).map(Number) as [number, number, number];
   const date = new Date(Date.UTC(year, month - 1, day));
   const weekday = date.toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
   const monthName = date.toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
-  return `${weekday} ${day} ${monthName} ${year}, ${pad(hour)}:${pad(minute)}`;
+  return `${weekday} ${day} ${monthName} ${year}`;
+}
+
+/** "Sunday 27 September 2026, 08:00" from Garmin's wall-clock "2026-09-27 08:00:00" (no zone math). */
+export function formatLocalStart(startLocal: string): string {
+  const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/.exec(startLocal);
+  if (!match) return startLocal;
+  const [, localDate = "", hour = "", minute = ""] = match;
+  return `${formatLocalDate(localDate)}, ${hour}:${minute}`;
 }

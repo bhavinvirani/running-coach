@@ -17,6 +17,8 @@ const log = logger.child({ module: "coach" });
 
 export const INSIGHT_MAX_TOKENS = 4096;
 export const PLAN_MAX_TOKENS = 16_384;
+/** The key check is free and the user waits for it on Settings, so it gets far less than a message. */
+export const CLAUDE_KEY_CHECK_TIMEOUT_MS = 10_000;
 
 const DEFAULT_BASE_URL = "https://api.anthropic.com";
 const RETRY_BASE_DELAY_MS = 1000;
@@ -28,7 +30,13 @@ export interface CoachUsage {
 }
 
 export type CoachFailure =
-  "refusal" | "max_tokens" | "invalid_output" | "timeout" | "unavailable" | "key_invalid";
+  | "refusal"
+  | "max_tokens"
+  | "invalid_output"
+  | "timeout"
+  | "unavailable"
+  | "key_invalid"
+  | "request_rejected";
 
 export type CoachResult<T> =
   | { ok: true; output: T; model: string; usage: CoachUsage; requestId: string | null }
@@ -53,6 +61,19 @@ export interface CoachCall<T extends z.ZodType> {
   maxTokens: number;
 }
 
+/** A client on the user's key alone: never a token or base URL from the server's environment. */
+function clientFor(apiKey: string, timeout: number): Anthropic {
+  return new Anthropic({
+    apiKey,
+    authToken: null,
+    baseURL: config.CLAUDE_BASE_URL ?? DEFAULT_BASE_URL,
+    timeout,
+    // Retries are the caller's: callCoach moves its one retry to the fallback model, the key check has none.
+    maxRetries: 0,
+    logLevel: "off",
+  });
+}
+
 const promptCache = new Map<string, string>();
 
 /** A prompt file, read once per process. */
@@ -69,21 +90,61 @@ function usageOf(message: Anthropic.Message): CoachUsage {
   return { inputTokens: message.usage.input_tokens, outputTokens: message.usage.output_tokens };
 }
 
-function isRetryable(error: unknown): boolean {
-  if (error instanceof Anthropic.APIConnectionTimeoutError) return false;
-  if (error instanceof Anthropic.APIConnectionError) return true;
-  if (error instanceof Anthropic.APIError && typeof error.status === "number") {
-    return error.status === 429 || error.status >= 500;
-  }
-  return false;
-}
+type ThrownFailure = Extract<
+  CoachFailure,
+  "timeout" | "key_invalid" | "unavailable" | "request_rejected"
+>;
 
-function failureOf(error: unknown): CoachFailure | undefined {
+/**
+ * What a thrown SDK error means for a message; undefined is not Claude's. Only unavailable is worth
+ * another try: a timeout already spent the budget, and a rejected key or request gets the same answer.
+ */
+function failureOf(error: unknown): ThrownFailure | undefined {
   if (error instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
+  if (error instanceof Anthropic.APIConnectionError) return "unavailable";
   if (error instanceof Anthropic.AuthenticationError) return "key_invalid";
   if (error instanceof Anthropic.PermissionDeniedError) return "key_invalid";
-  if (error instanceof Anthropic.APIError) return "unavailable";
+  if (error instanceof Anthropic.APIError) {
+    const status: unknown = error.status;
+    // No status means no answer. 408, 409, 429 and 5xx (529 overloaded included): Claude busy or down.
+    if (typeof status !== "number" || [408, 409, 429].includes(status) || status >= 500) {
+      return "unavailable";
+    }
+    // Any other 4xx (400 credit balance too low, 404 model not found, 413): Claude turned this request
+    // down for good, so a retry would only bill the same refusal again.
+    return "request_rejected";
+  }
   return undefined;
+}
+
+/** The status and Claude's request id of a failed call, for the log. */
+/** Longest stretch of Claude's error message a log line keeps. */
+const ERROR_MESSAGE_MAX = 300;
+
+interface ErrorContext {
+  status: number | null;
+  claudeRequestId: string | null;
+  /** Claude's error.type, e.g. "invalid_request_error". */
+  errorType: string | null;
+  /**
+   * Claude's own words, e.g. "Your credit balance is too low...", so a rejected request says why in the
+   * log. Claude's text about the request, never the key or the prompt; it never reaches a response.
+   */
+  errorMessage: string | null;
+}
+
+function errorContext(error: unknown): ErrorContext {
+  if (!(error instanceof Anthropic.APIError)) {
+    return { status: null, claudeRequestId: null, errorType: null, errorMessage: null };
+  }
+  const body = error.error as { error?: { message?: unknown } } | undefined;
+  const message = body?.error?.message;
+  return {
+    status: typeof error.status === "number" ? error.status : null,
+    claudeRequestId: error.requestID ?? null,
+    errorType: error.type ?? null,
+    errorMessage: typeof message === "string" ? message.slice(0, ERROR_MESSAGE_MAX) : null,
+  };
 }
 
 type Parsed<T> = { ok: true; output: T } | { ok: false; issues: string[] };
@@ -110,25 +171,18 @@ function parseOutput<T extends z.ZodType>(
 }
 
 /**
- * Calls Claude once with COACH_MODEL at low effort. On 429, 529, 5xx or a dropped connection it waits
- * with jitter and tries once more, on COACH_FALLBACK_MODEL: the primary is likely still overloaded and
- * the fallback has its own rate limits. A timeout is not retried; the 60 s already spent is the budget.
+ * Calls Claude once with COACH_MODEL at low effort. On 408, 409, 429, 5xx (529 included) or a dropped
+ * connection it waits with jitter and tries once more, on COACH_FALLBACK_MODEL: the primary is likely
+ * still overloaded and the fallback has its own rate limits. A timeout is not retried, the 60 s already
+ * spent is the budget; nor is a rejected key or any other 4xx, which would get the same answer. A 4xx
+ * from the fallback model after a transient failure comes back as unavailable (see below).
  */
 export async function callCoach<T extends z.ZodType>(
   call: CoachCall<T>,
 ): Promise<CoachResult<z.output<T>>> {
   const system = await loadPrompt(call.prompt, call.version);
   const promptVersion = `${call.prompt}/${call.version}`;
-  const client = new Anthropic({
-    apiKey: call.apiKey,
-    // Only the user's key: never a token or base URL from the server's environment.
-    authToken: null,
-    baseURL: config.CLAUDE_BASE_URL ?? DEFAULT_BASE_URL,
-    timeout: config.CLAUDE_TIMEOUT_MS,
-    // Retries are ours, below, so the fallback model takes the second attempt.
-    maxRetries: 0,
-    logLevel: "off",
-  });
+  const client = clientFor(call.apiKey, config.CLAUDE_TIMEOUT_MS);
   const requestId = currentRequestId();
   const models = [config.COACH_MODEL, config.COACH_FALLBACK_MODEL];
 
@@ -186,23 +240,61 @@ export async function callCoach<T extends z.ZodType>(
         requestId: context.claudeRequestId,
       };
     } catch (error) {
-      const status =
-        error instanceof Anthropic.APIError && typeof error.status === "number"
-          ? error.status
-          : null;
-      const claudeRequestId =
-        error instanceof Anthropic.APIError ? (error.requestID ?? null) : null;
-      if (isRetryable(error) && attempt < models.length - 1) {
+      const context = errorContext(error);
+      const { status, claudeRequestId } = context;
+      const failure = failureOf(error);
+      if (!failure) throw error;
+      if (failure === "unavailable" && attempt < models.length - 1) {
         log.warn({ promptVersion, model, status, claudeRequestId }, "coach call failed; retrying");
         await sleep(RETRY_BASE_DELAY_MS + Math.random() * RETRY_BASE_DELAY_MS);
         continue;
       }
-      const failure = failureOf(error);
-      if (!failure) throw error;
-      log.warn({ promptVersion, model, status, claudeRequestId, failure }, "coach call failed");
+      // Only a transient failure of the primary reaches the fallback model, so its 4xx most likely means a
+      // misconfigured or retired COACH_FALLBACK_MODEL (404), not this request or the account: unavailable
+      // lets the job retry with backoff on the primary instead of storing a card that blames billing.
+      if (failure === "request_rejected" && attempt > 0) {
+        log.error(
+          { promptVersion, model, ...context },
+          "coach fallback model rejected the request; check COACH_FALLBACK_MODEL",
+        );
+        return { ok: false, failure: "unavailable", usage: null, requestId: claudeRequestId };
+      }
+      log.warn({ promptVersion, model, ...context, failure }, "coach call failed");
       return { ok: false, failure, usage: null, requestId: claudeRequestId };
     }
   }
   // Unreachable: the last attempt always returns or throws.
   throw new Error("coach call ended without a result");
+}
+
+/** What Claude said about a key: it works, it was rejected (401 or 403), or Claude could not tell us. */
+export type ClaudeKeyCheck = "ok" | "key_invalid" | "unavailable" | "timeout";
+
+/**
+ * Checks a key with GET /v1/models, which costs nothing, before it is stored. One try: the user is
+ * waiting on Settings and can press Save again. The wait is CLAUDE_KEY_CHECK_TIMEOUT_MS, or the message
+ * timeout when that is shorter (tests). Logs the status and Claude's request id, never the key.
+ */
+export async function checkClaudeKey(apiKey: string): Promise<ClaudeKeyCheck> {
+  const client = clientFor(apiKey, Math.min(CLAUDE_KEY_CHECK_TIMEOUT_MS, config.CLAUDE_TIMEOUT_MS));
+  const requestId = currentRequestId();
+  const started = Date.now();
+  try {
+    const { request_id: claudeRequestId } = await client.models
+      .list({ limit: 1 }, requestId ? { headers: { "x-request-id": requestId } } : undefined)
+      .withResponse();
+    log.info({ claudeRequestId, durationMs: Date.now() - started }, "claude key accepted");
+    return "ok";
+  } catch (error) {
+    const failure = failureOf(error);
+    if (!failure) throw error;
+    // GET /v1/models takes no model and no credit, so any other 4xx says nothing against the key: Claude
+    // could not tell us, and the user can press Save again.
+    const result: ClaudeKeyCheck = failure === "request_rejected" ? "unavailable" : failure;
+    log.warn(
+      { ...errorContext(error), result, durationMs: Date.now() - started },
+      "claude key check failed",
+    );
+    return result;
+  }
 }

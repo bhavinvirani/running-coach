@@ -14,3 +14,4 @@ export * from "./contracts/goal";
 export * from "./contracts/plan";
 export * from "./contracts/sessions";
 export * from "./contracts/calendar";
+export * from "./contracts/coach";

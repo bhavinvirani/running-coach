@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "none",
+    "easy_next",
+    "rest_and_check"
+  ]
+}

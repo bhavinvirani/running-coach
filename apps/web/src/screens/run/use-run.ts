@@ -1,6 +1,7 @@
-import type { ActivityDetail } from "@running-coach/shared";
+import type { ActivityDetail, CoachFeedback } from "@running-coach/shared";
 import { useEffect, useRef } from "react";
 import { useActivity, useFetchActivityDetail } from "@/api/activities";
+import { useAskCoach, useInsight, useInsightFeedback } from "@/api/insights";
 import { useSettings } from "@/api/me";
 import { screenState } from "@/api/screen-state";
 
@@ -15,12 +16,15 @@ export type DetailState =
  * screen asks the API to fetch it from Garmin, once: the ref keeps a re-render, a background reload of the
  * run or StrictMode's second effect from asking again, and only Retry repeats a failed fetch. The screen is
  * keyed by run id, so a new run starts with a fresh ref. Units come from /api/me, which the authenticated
- * loader caches before any screen renders.
+ * loader caches before any screen renders. The coach card loads beside the run, not after it.
  */
 export function useRunScreen(id: string) {
   const run = useActivity(id);
   const settings = useSettings();
   const fetchDetail = useFetchActivityDetail(id);
+  const insight = useInsight(id);
+  const ask = useAskCoach(id);
+  const feedback = useInsightFeedback(id);
   const { mutate } = fetchDetail;
   const state = screenState(run);
 
@@ -47,5 +51,16 @@ export function useRunScreen(id: string) {
     units: settings.data?.units,
     detail: detailState,
     retryDetail: () => mutate(),
+    coach: {
+      state: screenState(insight),
+      // Unknown only before /api/me loads: offer Try again, and a 409 swaps it for Add Claude key.
+      hasKey: settings.data?.hasClaudeKey !== false,
+      asking: ask.isPending,
+      askError: ask.error,
+      ask: () => ask.mutate(),
+      feedbackError: feedback.error,
+      setFeedback: (insightId: string, value: CoachFeedback | null) =>
+        feedback.mutate({ insightId, feedback: value }),
+    },
   };
 }
