@@ -2,7 +2,6 @@ import {
   DISTANCE_METERS,
   distanceInUnits,
   type Goal,
-  type PaceZone,
   type PlanPaces,
   type PlanWarning,
   type Units,
@@ -32,19 +31,6 @@ export const planCopy = {
   /** Said after a week's name to a screen reader; on screen the selected border says it. */
   thisWeek: "this week",
 } as const;
-
-const PACE_ZONE_NAMES: Readonly<Record<PaceZone, string>> = {
-  easy: "Easy",
-  marathon: "Marathon",
-  threshold: "Threshold",
-  interval: "Interval",
-  repetition: "Repetition",
-  race: "Race",
-};
-
-export function paceZoneName(zone: PaceZone): string {
-  return PACE_ZONE_NAMES[zone];
-}
 
 /**
  * The goal card's figure: the plan's weeks still to run, "20" and "weeks" (for a race, the weeks until it;

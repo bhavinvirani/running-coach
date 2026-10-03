@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planFixture } from "@/test/fixtures";
+import { customSessionFixture, planFixture } from "@/test/fixtures";
 import {
   dayType,
   phaseName,
@@ -46,6 +46,15 @@ describe("dayType", () => {
     const day = { weekday: "tue", date: "2026-10-06", sessions: [strength!, easy!] } as const;
     expect(dayType(day)).toBe("easy");
     expect(dayType({ ...day, sessions: [strength!] })).toBe("strength");
+  });
+
+  it("leaves skipped sessions out: rest when all are, else what the runner still runs", () => {
+    const [easy] = first!.sessions;
+    const skipped = { ...easy!, status: "skipped" as const };
+    const day = { weekday: "tue" as const, date: easy!.date, sessions: [skipped] };
+
+    expect(dayType(day)).toBe("rest");
+    expect(dayType({ ...day, sessions: [skipped, customSessionFixture()] })).toBe("tempo");
   });
 });
 

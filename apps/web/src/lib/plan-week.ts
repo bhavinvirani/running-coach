@@ -43,10 +43,12 @@ export function weekdayInitial(weekday: Weekday): string {
 
 /**
  * The type a day is shown as: its run when it has one (a strength session can share the day, slice 11),
- * else its first session, else rest.
+ * else its first session, else rest. A skipped session is not run, so a day of only skipped ones is rest,
+ * and a workout the runner added beside a skipped one shows.
  */
 export function dayType(day: PlanDay): SessionType {
-  const main = day.sessions.find((session) => session.type !== "strength") ?? day.sessions[0];
+  const sessions = day.sessions.filter((session) => session.status !== "skipped");
+  const main = sessions.find((session) => session.type !== "strength") ?? sessions[0];
   return main?.type ?? "rest";
 }
 

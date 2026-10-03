@@ -26,4 +26,12 @@ describe("SessionTypeChip", () => {
     expect(dot).toHaveClass("size-3", "rounded-sm", expected[type].color);
     expect(dot).toHaveAttribute("aria-hidden", "true");
   });
+
+  it("names a custom workout by its title beside its type's dot", () => {
+    render(<SessionTypeChip type="tempo" name="Hill reps" />);
+
+    const chip = screen.getByText("Hill reps");
+    expect(chip.querySelector("span")).toHaveClass("bg-type-tempo");
+    expect(screen.queryByText("Tempo")).not.toBeInTheDocument();
+  });
 });

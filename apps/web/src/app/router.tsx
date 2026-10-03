@@ -74,6 +74,33 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               },
             },
             {
+              // A workout of the runner's own; "new" outranks ":id" in React Router's matching.
+              path: "plan/sessions/new",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () =>
+                  (await import("@/screens/workout-builder/workout-builder-screen"))
+                    .WorkoutBuilderScreen,
+              },
+            },
+            {
+              path: "plan/sessions/:id",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () =>
+                  (await import("@/screens/session/session-screen")).SessionScreen,
+              },
+            },
+            {
+              path: "plan/sessions/:id/edit",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: async () =>
+                  (await import("@/screens/workout-builder/workout-builder-screen"))
+                    .WorkoutBuilderScreen,
+              },
+            },
+            {
               path: "progress",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {

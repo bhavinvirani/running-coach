@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { goalFixture, planFixture } from "@/test/fixtures";
-import { goalFacts, goalPaceFacts, goalWeeks, paceZoneName, warningSentence } from "./plan-copy";
+import { goalFacts, goalPaceFacts, goalWeeks, warningSentence } from "./plan-copy";
 
 describe("goalWeeks", () => {
   it("gives the weeks left as the figure and its unit, singular for one", () => {
@@ -76,14 +76,6 @@ describe("goalPaceFacts", () => {
       "Target 49:00",
       "Race pace 7:53-8:00 /mi, about 49:20",
     ]);
-  });
-});
-
-describe("paceZoneName", () => {
-  it("names each zone in words", () => {
-    expect(paceZoneName("easy")).toBe("Easy");
-    expect(paceZoneName("threshold")).toBe("Threshold");
-    expect(paceZoneName("repetition")).toBe("Repetition");
   });
 });
 

@@ -11,9 +11,13 @@ import {
   activityDetailFixture,
   activityFixture,
   activityResponseFixture,
+  calendarFixture,
+  customSessionFixture,
   importProgressFixture,
   meFixture,
   planResponseFixture,
+  planSessionId,
+  sessionDetailFixture,
   weekFixture,
 } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
@@ -35,7 +39,7 @@ function renderApp(path: string) {
  * The API for a signed-in runner with one stored run, a finished import and a plan, who synced a moment
  * ago, so opening the app sends no sync: that has its own test below.
  */
-function signedIn({ path }: FakeRequest): Response {
+function signedIn({ path, query }: FakeRequest): Response {
   if (path === "/api/me") {
     return json(meFixture({ garmin: { status: "ok", lastSyncAt: new Date().toISOString() } }));
   }
@@ -47,6 +51,11 @@ function signedIn({ path }: FakeRequest): Response {
     return json({ weeks: [weekFixture("2026-09-21", [activityFixture()])], nextBefore: null });
   }
   if (path === "/api/plan") return json(planResponseFixture());
+  if (path === "/api/calendar") return json(calendarFixture(query.get("from") ?? "2026-10-05"));
+  if (path === `/api/sessions/${planSessionId("2026-10-08")}`) return json(sessionDetailFixture());
+  if (path === `/api/sessions/${customSessionFixture().id}`) {
+    return json(sessionDetailFixture({ session: customSessionFixture() }));
+  }
   if (path === "/api/import") {
     return json(
       importProgressFixture({ status: "done", runsStored: 1, finishedAt: "2026-09-27T06:20:00Z" }),
@@ -128,6 +137,38 @@ describe("app routes", () => {
     expect(router.state.location.pathname).toBe("/plan/goal");
     expect(await screen.findByRole("button", { name: "Save goal" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Tabs" })).toBeInTheDocument();
+  });
+
+  it("opens a session from its week row inside the tab shell, and Back returns to the week", async () => {
+    stubFetch(signedIn);
+    const router = renderApp("/plan/weeks/1");
+    const days = await screen.findByRole("region", { name: "Days" });
+
+    await userEvent.click(within(days).getByRole("link", { name: /^Intervals, Thu 8 Oct/ }));
+
+    expect(await screen.findByRole("heading", { name: "Thu 8 Oct" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/plan/sessions/${planSessionId("2026-10-08")}`);
+    expect(screen.getByRole("link", { name: "Plan" })).toHaveAttribute("aria-current", "page");
+
+    await userEvent.click(screen.getByRole("link", { name: "Back" }));
+
+    expect(await screen.findByRole("heading", { name: "Week 1" })).toBeInTheDocument();
+  });
+
+  it("opens the workout builder at /plan/sessions/new, not as a session id, inside the tab shell", async () => {
+    stubFetch(signedIn);
+    renderApp("/plan/sessions/new?date=2026-10-10");
+
+    expect(await screen.findByRole("heading", { name: "New workout" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Save workout" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Tabs" })).toBeInTheDocument();
+  });
+
+  it("opens a custom workout in the builder at /plan/sessions/:id/edit", async () => {
+    stubFetch(signedIn);
+    renderApp(`/plan/sessions/${customSessionFixture().id}/edit`);
+
+    expect(await screen.findByRole("heading", { name: "Edit workout" })).toBeInTheDocument();
   });
 
   it("opens Progress on /progress inside the tab shell and selects only its tab", async () => {

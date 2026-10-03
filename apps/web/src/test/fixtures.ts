@@ -3,6 +3,8 @@ import {
   activityResponseSchema,
   activitySchema,
   activityWeekSchema,
+  calendarResponseSchema,
+  garminPushStatusSchema,
   goalSchema,
   importProgressSchema,
   meResponseSchema,
@@ -11,10 +13,13 @@ import {
   planResponseSchema,
   planSchema,
   runBestEffortSchema,
+  sessionDetailResponseSchema,
   type Activity,
   type ActivityDetail,
   type ActivityResponse,
   type ActivityWeek,
+  type CalendarResponse,
+  type GarminPushStatus,
   type Goal,
   type ImportProgress,
   type MeResponse,
@@ -24,6 +29,7 @@ import {
   type PlanResponse,
   type PlanSession,
   type RunBestEffort,
+  type SessionDetailResponse,
   type SessionSteps,
   type SessionTarget,
   type SessionType,
@@ -251,15 +257,30 @@ function easyFor(durationS: number): Step {
   return { kind: "run", zone: "easy", distanceM: null, durationS };
 }
 
-/** A planned session; its id is built from its date, which no two fixture sessions share. */
+/** The id of planFixture's session on a date, which no two of its sessions share. */
+export function planSessionId(date: string): string {
+  return `00000000-0000-4000-8000-${date.replaceAll("-", "")}0000`;
+}
+
+/** A planned session of the plan, not yet on Garmin. */
 function session(
   date: string,
   type: Exclude<SessionType, "rest">,
   target: SessionTarget,
   steps: SessionSteps,
 ): PlanSession {
-  const id = `00000000-0000-4000-8000-${date.replaceAll("-", "")}0000`;
-  return { id, date, type, target, steps, status: "planned", activityId: null };
+  return {
+    id: planSessionId(date),
+    date,
+    type,
+    target,
+    steps,
+    status: "planned",
+    source: "plan",
+    title: null,
+    activityId: null,
+    onGarmin: false,
+  };
 }
 
 /**
@@ -397,4 +418,98 @@ export function planFixture(overrides: Partial<Plan> = {}): Plan {
 /** GET /api/plan once goalFixture is saved: the goal and its plan. */
 export function planResponseFixture(overrides: Partial<PlanResponse> = {}): PlanResponse {
   return planResponseSchema.parse({ goal: goalFixture(), plan: planFixture(), ...overrides });
+}
+
+/** planFixture's sessions, every week's in the order the plan lists them. */
+export function planSessionsFixture(): PlanSession[] {
+  return planFixture().weeks.flatMap((week) => week.sessions);
+}
+
+/** The session of planFixture on a date, with the overrides for the test; throws for a rest day. */
+export function planSessionFixture(
+  date: string,
+  overrides: Partial<PlanSession> = {},
+): PlanSession {
+  const found = planSessionsFixture().find((candidate) => candidate.date === date);
+  if (found === undefined) throw new Error(`planFixture has no session on ${date}`);
+  return { ...found, ...overrides };
+}
+
+/**
+ * A tempo the runner built on Fri 9 Oct, "Hill reps": 15 min warm-up, 4 x (400 m at threshold, 2 min
+ * recovery), 10 min cool-down, with the target the engine gives it at planFixture's paces.
+ */
+export function customSessionFixture(overrides: Partial<PlanSession> = {}): PlanSession {
+  return {
+    id: "c0ffee00-0000-4000-8000-000000000001",
+    date: "2026-10-09",
+    type: "tempo",
+    target: { distanceM: 7062, durationS: 2464, zone: "threshold" },
+    steps: [
+      { kind: "warmup", zone: "easy", distanceM: null, durationS: 900 },
+      {
+        repeat: 4,
+        steps: [
+          { kind: "work", zone: "threshold", distanceM: 400, durationS: null },
+          { kind: "recovery", zone: "easy", distanceM: null, durationS: 120 },
+        ],
+      },
+      { kind: "cooldown", zone: "easy", distanceM: null, durationS: 600 },
+    ],
+    status: "planned",
+    source: "custom",
+    title: "Hill reps",
+    activityId: null,
+    onGarmin: false,
+    ...overrides,
+  };
+}
+
+/** Where sending workouts stands for a runner whose Garmin login works: nothing sending, nothing failed. */
+export function garminPushStatusFixture(
+  overrides: Partial<GarminPushStatus> = {},
+): GarminPushStatus {
+  return garminPushStatusSchema.parse({
+    connection: "ok",
+    pushing: false,
+    pushedAt: "2026-10-08T05:00:00Z",
+    error: null,
+    others: [],
+    ...overrides,
+  });
+}
+
+/**
+ * GET /api/calendar from `from` to six days later: planFixture's sessions on those days (and `extra`
+ * sessions, a custom one), the plan's paces and the push status. Parsed with the shared contract.
+ */
+export function calendarFixture(
+  from: string,
+  { extra = [], ...overrides }: Partial<CalendarResponse> & { extra?: PlanSession[] } = {},
+): CalendarResponse {
+  const sessions = [...planSessionsFixture(), ...extra];
+  const days = Array.from({ length: 7 }, (_, offset) => {
+    const day = new Date(`${from}T00:00:00Z`);
+    day.setUTCDate(day.getUTCDate() + offset);
+    const date = day.toISOString().slice(0, 10);
+    return { date, sessions: sessions.filter((candidate) => candidate.date === date) };
+  });
+  return calendarResponseSchema.parse({
+    days,
+    paces: planFixture().paces,
+    garmin: garminPushStatusFixture(),
+    ...overrides,
+  });
+}
+
+/** GET /api/sessions/:id: a session (the intervals on Thu 8 Oct unless given), the plan's paces, the push status. */
+export function sessionDetailFixture(
+  overrides: Partial<SessionDetailResponse> = {},
+): SessionDetailResponse {
+  return sessionDetailResponseSchema.parse({
+    session: planSessionFixture("2026-10-08"),
+    paces: planFixture().paces,
+    garmin: garminPushStatusFixture(),
+    ...overrides,
+  });
 }

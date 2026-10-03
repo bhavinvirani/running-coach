@@ -5,13 +5,15 @@ import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { errorCodeMessage, errorMessage } from "@/lib/errors";
 import { LatestRun } from "./parts/latest-run";
+import { NextSevenDays } from "./parts/next-seven-days";
 import { ReconnectGarminLink } from "./parts/reconnect-garmin-link";
 import { SyncNowButton } from "./parts/sync-now-button";
 import { useTodayScreen } from "./use-today";
 
 /**
- * Today tab: Sync now, or Reconnect Garmin once the login expired, and the latest run. Empty until the
- * first sync stores a run.
+ * Today tab: Sync now, or Reconnect Garmin once the login expired, the latest run, and with an active plan
+ * the next 7 days and where their workouts stand on Garmin. Empty until the first sync stores a run; the
+ * next 7 days show below the empty state too, since a plan can start before any run is stored.
  */
 export function TodayScreen() {
   const screen = useTodayScreen();
@@ -59,6 +61,16 @@ export function TodayScreen() {
   const refetchFailed = screen.refetchError ? (
     <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
   ) : null;
+  const nextSevenDays =
+    screen.today === undefined ? null : (
+      <NextSevenDays
+        calendar={screen.calendar}
+        today={screen.today}
+        units={units}
+        send={screen.send}
+        unschedule={screen.unschedule}
+      />
+    );
 
   // Empty: the sentence carries the one action, so the header leaves it out.
   if (data === null) {
@@ -74,6 +86,7 @@ export function TodayScreen() {
           {action}
         </div>
         {syncOutcome}
+        {nextSevenDays}
       </TodayLayout>
     );
   }
@@ -84,6 +97,7 @@ export function TodayScreen() {
       {syncOutcome}
       {refetchFailed}
       <LatestRun activity={data} units={units} bests={screen.runBests.get(data.id) ?? NO_BESTS} />
+      {nextSevenDays}
     </TodayLayout>
   );
 }
