@@ -29,9 +29,9 @@
     }
   },
   "output": {
-    "headline": "8.0 km on the treadmill in 45:00, on a day with nothing planned.",
-    "whatHappened": "8.0 km indoors at 5:38 /km by the watch's estimate, cadence 172.",
-    "whatItMeans": "No heart rate was recorded, so the effort is unknown; treadmill pace is an estimate.",
+    "headline": "8.0 km on the treadmill in 45:00 on a day with no session planned.",
+    "whatHappened": "You ran 8.0 km on the treadmill in 45:00 at about 5:38 /km, with a cadence of 172. No run was planned that day, and both distance and pace are the watch's estimates.",
+    "whatItMeans": "This was 8.0 km you didn't plan, and with no heart rate recorded it isn't clear how hard it was.",
     "nextStep": "Run Saturday's tempo as written: 7.0 km in 35:00.",
     "caution": "none"
   }

@@ -37,10 +37,10 @@
     }
   },
   "output": {
-    "headline": "8.7 mi in 1:17:00 at 8:51 /mi, 0.3 mi short of the planned 9.0 mi.",
-    "whatHappened": "8.7 mi on Sunday morning at 8:51 /mi against a planned 9.0 mi in 1:21:00. Average heart rate 146 bpm, max 160 bpm. Cadence 167 and 289 ft of climbing.",
-    "whatItMeans": "146 bpm at 8:51 /mi is a controlled aerobic run. A max of 160 bpm shows no hard surges. Being 0.3 mi short changes nothing: this is the steady volume that builds endurance.",
-    "nextStep": "Next is Hill repeats on Tuesday 22 September: 6.0 mi in 55:00, as written. Do not add the missing 0.3 mi to it or to any other run this week.",
-    "caution": "none"
+    "headline": "Long run of 8.7 mi in 1:17:00 at 8:51 /mi, 0.3 mi short of the planned 9.0 mi.",
+    "whatHappened": "A Sunday morning long run of 8.7 mi in 1:17:00 against a planned 9.0 mi in 1:21:00. Average pace was 8:51 /mi, a little quicker than the 9:00 /mi the plan implies. Heart rate averaged 146 bpm with a max of 160 bpm, over 289 ft of climbing at a cadence of 167.",
+    "whatItMeans": "A 146 bpm average with a peak only 14 bpm higher points to an even, controlled effort for a long run. Running 9 s/mi faster than planned while climbing 289 ft added a bit of load, even though the distance came in slightly short. The numbers fit a steady aerobic long run.",
+    "nextStep": "Keep Monday easy or rest. Run Tuesday 22 September's hill repeats as written: 6.0 mi in 55:00. Don't add back the missing 0.3 mi.",
+    "caution": "easy_next"
   }
 }
