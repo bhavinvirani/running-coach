@@ -20,11 +20,18 @@ export interface LongRunInput {
   maxRunM: number;
 }
 
-export interface LongRunFloorInput extends LongRunInput {
+export interface LongRunRoomInput {
+  weekVolumeM: number;
+  daysPerWeek: number;
+  /** 20 min at the easy midpoint: what each easy run needs at least. */
+  minRunM: number;
+  /** The week's quality sessions at their unpadded size; the other days are easy runs. */
+  qualityM: readonly number[];
+}
+
+export interface LongRunFloorInput extends LongRunInput, LongRunRoomInput {
   /** The baseline's longest run of the last 30 days; 0 with none. */
   baselineLongestM: number;
-  /** 20 min at the easy midpoint: what each of the week's other runs needs at least. */
-  minRunM: number;
 }
 
 export interface LongestInWindowInput {
@@ -55,19 +62,35 @@ export function longRunM({
 }
 
 /**
+ * What the week leaves its long run once its quality sessions and a 20 min run on every easy day are
+ * placed; negative when they pass the week. Quality sessions count unpadded: padding only takes meters
+ * the easy runs cannot.
+ */
+export function longRunRoomM({
+  weekVolumeM,
+  daysPerWeek,
+  minRunM,
+  qualityM,
+}: LongRunRoomInput): number {
+  const easySlots = daysPerWeek - 1 - qualityM.length;
+  if (easySlots < 0) {
+    throw new RangeError(`${qualityM.length} quality sessions do not fit ${daysPerWeek} days`);
+  }
+  return weekVolumeM - qualityM.reduce((sum, meters) => sum + meters, 0) - easySlots * minRunM;
+}
+
+/**
  * What a base, build or peak week's long run never drops under: the runner's own longest recent run,
- * as far as 150 min easy, 110% of the recent longest and the week less 20 min on every other day
- * allow; 0 with no runs. The share cap keeps the long run from growing past its share of the week; it
- * does not shrink what the runner already runs, which would be a regression no runner would accept.
- * Taper and race weeks do not use it: there the share cap is the point.
+ * as far as 150 min easy, 110% of the recent longest and the room the other days leave allow; 0 with no
+ * runs. The share cap keeps the long run from growing past its share of the week; it does not shrink
+ * what the runner already runs, which would be a regression no runner would accept. Taper and race
+ * weeks do not use it: there the share cap is the point.
  */
 export function longRunFloorM({
   baselineLongestM,
-  weekVolumeM,
-  daysPerWeek,
   easyPaceSPerKm,
   maxRunM,
-  minRunM,
+  ...room
 }: LongRunFloorInput): number {
   return Math.max(
     0,
@@ -75,9 +98,40 @@ export function longRunFloorM({
       baselineLongestM,
       distanceForDurationM(LONG_RUN_MAX_S, easyPaceSPerKm),
       maxRunM,
-      weekVolumeM - (daysPerWeek - 1) * minRunM,
+      longRunRoomM(room),
     ),
   );
+}
+
+/**
+ * The long run gives way before a day the runner asked for is dropped: it takes no more than the room
+ * the other days leave, though never under 20 min itself. Below that a quality session gives way, then
+ * a day. A long run already under 20 min stays as it is.
+ */
+export function longRunGivingWayM({
+  longM,
+  roomM,
+  minRunM,
+}: {
+  longM: number;
+  roomM: number;
+  minRunM: number;
+}): number {
+  return Math.min(longM, Math.max(roomM, minRunM));
+}
+
+/**
+ * The long run is the week's longest run: no quality session, unpadded, passes it. Padding never takes
+ * a session past the long run either.
+ */
+export function longRunHoldsQuality({
+  longM,
+  qualityM,
+}: {
+  longM: number;
+  qualityM: readonly number[];
+}): boolean {
+  return qualityM.every((meters) => meters <= longM);
 }
 
 /** No run over 110% of the longest recent run, in whole meters. */

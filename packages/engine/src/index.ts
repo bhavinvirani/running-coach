@@ -13,13 +13,21 @@ export {
   longestRunSeedM,
   longRunDaysConflict,
   longRunFloorM,
+  longRunGivingWayM,
+  longRunHoldsQuality,
   longRunM,
+  longRunRoomM,
   longRunShare,
   longRunWarning,
   maxRunM,
   requiredLongRunM,
 } from "./rules/long-run";
-export type { LongestInWindowInput, LongRunFloorInput, LongRunInput } from "./rules/long-run";
+export type {
+  LongestInWindowInput,
+  LongRunFloorInput,
+  LongRunInput,
+  LongRunRoomInput,
+} from "./rules/long-run";
 export { planLength } from "./rules/plan-length";
 export type { PlanLengthInput, PlanLengthResult } from "./rules/plan-length";
 export { predictTimeS, racePace } from "./rules/prediction";
@@ -51,7 +59,7 @@ export { paceAtShareSPerKm, pacesFromVdot, roundVdot, vdotFromPerformance } from
 export type { Performance, TrainingPaces } from "./rules/vdot";
 export { baseCurveM, downWeekM, isDownWeek, weekTargetM } from "./rules/volume-curve";
 export type { BaseCurveInput, WeekTargetInput } from "./rules/volume-curve";
-export { fillWeek, minRunDistanceM, tooManyDaysConflict } from "./rules/week-fill";
+export { daysHeld, fillWeek, minRunDistanceM, tooManyDaysConflict } from "./rules/week-fill";
 export type { FillWeekInput, FillWeekResult } from "./rules/week-fill";
 export { clampWeeklyVolume, maxWeeklyVolumeM } from "./rules/weekly-volume";
 export type { WeeklyVolumeInput, WeeklyVolumeResult } from "./rules/weekly-volume";

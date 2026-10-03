@@ -1,4 +1,4 @@
-import type { PlanConflict } from "@running-coach/shared";
+import type { GeneratedWeek, PlanConflict } from "@running-coach/shared";
 import { MIN_RUN_S } from "../constants";
 
 export interface FillWeekInput {
@@ -26,23 +26,48 @@ export function minRunDistanceM(easyPaceSPerKm: number): number {
   return Math.ceil((MIN_RUN_S * 1000) / easyPaceSPerKm);
 }
 
-/** Week 1 cannot hold a 20 min run on every day the runner asked for. */
+/**
+ * The days a week of this volume holds with a run of at least 20 min on each, the long run included:
+ * at most the days asked for, and at least the long run.
+ */
+export function daysHeld({
+  weekVolumeM,
+  daysPerWeek,
+  minRunM,
+}: {
+  weekVolumeM: number;
+  daysPerWeek: number;
+  minRunM: number;
+}): number {
+  return Math.max(1, Math.min(daysPerWeek, Math.floor(weekVolumeM / minRunM)));
+}
+
+/**
+ * Week 1, as built, does not hold a run of at least 20 min on every day the runner asked for: it holds
+ * fewer sessions, or its volume is under 20 min a day, which fillWeek meets with runs shorter than
+ * 20 min. The long run, then the quality sessions, have already given way. The most days is the fewer
+ * of the two. A plan that starts in race week is not judged by it: that week runs only the days before
+ * the race, whatever the runner asked for.
+ */
 export function tooManyDaysConflict({
   daysPerWeek,
+  weekOne,
   startVolumeM,
   minRunM,
 }: {
   daysPerWeek: number;
+  /** Week 1 as built. */
+  weekOne: Pick<GeneratedWeek, "phase" | "sessions" | "distanceM">;
   startVolumeM: number;
   minRunM: number;
 }): PlanConflict | null {
-  return daysPerWeek * minRunM > startVolumeM
-    ? {
-        code: "too_many_days",
-        daysPerWeek,
-        maxDaysPerWeek: Math.floor(startVolumeM / minRunM),
-        baselineWeeklyM: startVolumeM,
-      }
+  if (weekOne.phase === "race") return null;
+  const maxDaysPerWeek = Math.min(
+    weekOne.sessions.length,
+    daysHeld({ weekVolumeM: weekOne.distanceM, daysPerWeek, minRunM }),
+  );
+  return maxDaysPerWeek < daysPerWeek
+    ? { code: "too_many_days", daysPerWeek, maxDaysPerWeek, baselineWeeklyM: startVolumeM }
     : null;
 }
 

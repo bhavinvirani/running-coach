@@ -6,7 +6,10 @@ import {
   longestRunSeedM,
   longRunDaysConflict,
   longRunFloorM,
+  longRunGivingWayM,
+  longRunHoldsQuality,
   longRunM,
+  longRunRoomM,
   longRunShare,
   longRunWarning,
   maxRunM,
@@ -26,6 +29,7 @@ const floorOf = (overrides: Partial<Parameters<typeof longRunFloorM>[0]>) =>
     easyPaceSPerKm: PACE,
     maxRunM: 16_500,
     minRunM: MIN_RUN,
+    qualityM: [],
     ...overrides,
   });
 
@@ -176,6 +180,35 @@ describe("long run", () => {
     expect(floorOf({ maxRunM: 12_000 })).toBe(12_000);
   });
 
+  it("floor binds at the week less the unpadded tempo and a 20 min run on each easy day: one below, at and one above", () => {
+    // A 6000 m tempo and 2 easy runs of 3334 m leave 15_000 m of a 27_668 m week.
+    const at = (weekVolumeM: number) => floorOf({ weekVolumeM, qualityM: [6000] });
+    expect(at(27_667)).toBe(14_999);
+    expect(at(27_668)).toBe(15_000);
+    expect(at(27_669)).toBe(15_000);
+  });
+
+  it("floor counts every quality session at its unpadded size and only the days left as easy runs", () => {
+    // 5 days: the long run, intervals of 5500 m, a tempo of 6500 m and 2 easy runs of 3334 m.
+    expect(floorOf({ weekVolumeM: 30_000, daysPerWeek: 5, qualityM: [5500, 6500] })).toBe(
+      30_000 - 5500 - 6500 - 2 * MIN_RUN,
+    );
+    // 3 days and one tempo: one easy run beside it.
+    expect(floorOf({ weekVolumeM: 20_000, daysPerWeek: 3, qualityM: [6000] })).toBe(
+      20_000 - 6000 - MIN_RUN,
+    );
+  });
+
+  it("floor is zero when the quality sessions and easy runs take the whole week", () => {
+    expect(floorOf({ weekVolumeM: 6000 + 2 * MIN_RUN, qualityM: [6000] })).toBe(0);
+    expect(floorOf({ weekVolumeM: 6000 + 2 * MIN_RUN - 1, qualityM: [6000] })).toBe(0);
+  });
+
+  it("rejects more quality sessions than the week's other days as a programmer error", () => {
+    expect(() => floorOf({ daysPerWeek: 3, qualityM: [6000, 6000, 6000] })).toThrow(RangeError);
+    expect(floorOf({ daysPerWeek: 3, weekVolumeM: 40_000, qualityM: [6000, 6000] })).toBe(15_000);
+  });
+
   it("floor is the smallest of the baseline longest, 150 min, 110% and the week less the other days, never under 0", () => {
     fc.assert(
       fc.property(
@@ -184,7 +217,8 @@ describe("long run", () => {
         fc.integer({ min: 3, max: 6 }),
         fc.double({ min: 180, max: 600, noNaN: true }),
         fc.integer({ min: 5500, max: 40_000 }),
-        (baselineLongestM, weekVolumeM, daysPerWeek, easyPaceSPerKm, cap) => {
+        fc.array(fc.integer({ min: 3000, max: 20_000 }), { maxLength: 2 }),
+        (baselineLongestM, weekVolumeM, daysPerWeek, easyPaceSPerKm, cap, qualityM) => {
           const minRunM = Math.ceil((1200 * 1000) / easyPaceSPerKm);
           const floorM = longRunFloorM({
             baselineLongestM,
@@ -193,7 +227,9 @@ describe("long run", () => {
             easyPaceSPerKm,
             maxRunM: cap,
             minRunM,
+            qualityM,
           });
+          const qualitySumM = qualityM.reduce((sum, m) => sum + m, 0);
           expect(Number.isInteger(floorM)).toBe(true);
           expect(floorM).toBe(
             Math.max(
@@ -202,12 +238,97 @@ describe("long run", () => {
                 baselineLongestM,
                 Math.floor((9000 * 1000) / easyPaceSPerKm),
                 cap,
-                weekVolumeM - (daysPerWeek - 1) * minRunM,
+                weekVolumeM - qualitySumM - (daysPerWeek - 1 - qualityM.length) * minRunM,
               ),
             ),
           );
           expect(floorM).toBeLessThanOrEqual(Math.max(0, baselineLongestM));
-          expect(floorM).toBeLessThanOrEqual(weekVolumeM);
+          if (floorM > 0) {
+            // What the floor leaves holds every quality session and a 20 min run on every other day.
+            expect(weekVolumeM - floorM).toBeGreaterThanOrEqual(
+              qualitySumM + (daysPerWeek - 1 - qualityM.length) * minRunM,
+            );
+          }
+        },
+      ),
+    );
+  });
+
+  it("leaves the long run the week less its unpadded quality sessions and 20 min on each easy day", () => {
+    const room = (overrides: Partial<Parameters<typeof longRunRoomM>[0]>) =>
+      longRunRoomM({
+        weekVolumeM: 30_000,
+        daysPerWeek: 4,
+        minRunM: MIN_RUN,
+        qualityM: [],
+        ...overrides,
+      });
+    expect(room({})).toBe(30_000 - 3 * MIN_RUN);
+    expect(room({ qualityM: [6000] })).toBe(30_000 - 6000 - 2 * MIN_RUN);
+    expect(room({ daysPerWeek: 5, qualityM: [5500, 6500] })).toBe(30_000 - 12_000 - 2 * MIN_RUN);
+    expect(room({ daysPerWeek: 3, qualityM: [6000, 6000] })).toBe(18_000);
+    expect(room({ weekVolumeM: 10_000, qualityM: [6000] })).toBe(10_000 - 6000 - 2 * MIN_RUN);
+  });
+
+  it("rejects more quality sessions than the week's other days as a programmer error, room too", () => {
+    expect(() =>
+      longRunRoomM({ weekVolumeM: 30_000, daysPerWeek: 3, minRunM: MIN_RUN, qualityM: [1, 1, 1] }),
+    ).toThrow(RangeError);
+  });
+
+  it("gives way to the other days: the room 1 m under, at and 1 m over the long run", () => {
+    const at = (roomM: number) => longRunGivingWayM({ longM: 15_000, roomM, minRunM: MIN_RUN });
+    expect(at(14_999)).toBe(14_999);
+    expect(at(15_000)).toBe(15_000);
+    expect(at(15_001)).toBe(15_000);
+  });
+
+  it("gives way no further than 20 min: the room 1 m under, at and 1 m over a 20 min run", () => {
+    const at = (roomM: number) => longRunGivingWayM({ longM: 15_000, roomM, minRunM: MIN_RUN });
+    expect(at(MIN_RUN - 1)).toBe(MIN_RUN);
+    expect(at(MIN_RUN)).toBe(MIN_RUN);
+    expect(at(MIN_RUN + 1)).toBe(MIN_RUN + 1);
+    expect(at(-5000)).toBe(MIN_RUN);
+  });
+
+  it("never lengthens a long run already under 20 min", () => {
+    expect(longRunGivingWayM({ longM: 3000, roomM: 0, minRunM: MIN_RUN })).toBe(3000);
+  });
+
+  it("gives way to the room down to 20 min and never lengthens the long run", () => {
+    fc.assert(
+      fc.property(
+        fc.nat({ max: 40_000 }),
+        fc.integer({ min: -50_000, max: 150_000 }),
+        fc.integer({ min: 1500, max: 5000 }),
+        (longM, roomM, minRunM) => {
+          const givenM = longRunGivingWayM({ longM, roomM, minRunM });
+          expect(givenM).toBeLessThanOrEqual(longM);
+          expect(givenM).toBeGreaterThanOrEqual(Math.min(longM, minRunM));
+          if (roomM >= minRunM) expect(givenM).toBeLessThanOrEqual(roomM);
+          if (roomM >= longM) expect(givenM).toBe(longM);
+        },
+      ),
+    );
+  });
+
+  it("holds the quality sessions while the longest is 1 m over or at the long run, not 1 m under it", () => {
+    const holds = (longM: number) => longRunHoldsQuality({ longM, qualityM: [6321, 6007] });
+    expect(holds(6320)).toBe(false);
+    expect(holds(6321)).toBe(true);
+    expect(holds(6322)).toBe(true);
+    expect(longRunHoldsQuality({ longM: 3046, qualityM: [] })).toBe(true);
+  });
+
+  it("holds the quality sessions exactly when none passes the long run", () => {
+    fc.assert(
+      fc.property(
+        fc.nat({ max: 40_000 }),
+        fc.array(fc.integer({ min: 3000, max: 20_000 }), { maxLength: 2 }),
+        (longM, qualityM) => {
+          expect(longRunHoldsQuality({ longM, qualityM })).toBe(
+            qualityM.length === 0 || Math.max(...qualityM) <= longM,
+          );
         },
       ),
     );

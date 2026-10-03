@@ -109,17 +109,15 @@ function buildWeeks(
       );
       return;
     }
-    // A plan that starts in race week has no long run before it: its own volume sets the cap.
-    const capM = Math.min(
-      runCapM,
-      previous?.longRunCapM ??
-        longRunM({
-          weekVolumeM: targetM,
-          daysPerWeek: ctx.daysPerWeek,
-          easyPaceSPerKm: ctx.easyPaceSPerKm,
-          maxRunM: runCapM,
-        }),
-    );
+    // No run in race week passes the long run last week's volume allowed. Its scheduled long run is no
+    // measure: it may have given way so every day could run. A plan that starts in race week has no
+    // week before it: its own volume sets the cap.
+    const capM = longRunM({
+      weekVolumeM: previous?.week.distanceM ?? targetM,
+      daysPerWeek: ctx.daysPerWeek,
+      easyPaceSPerKm: ctx.easyPaceSPerKm,
+      maxRunM: runCapM,
+    });
     built.push(buildRaceWeek(ctx, { number, weekStart, targetM, capM, lastHardDate }));
   });
   return built;
@@ -155,13 +153,6 @@ export function generatePlan(rawInput: PlanGenerationInput): PlanGenerationResul
   const easyPaceSPerKm = bandMidpointSPerKm(paces.easy);
   const minRunM = minRunDistanceM(easyPaceSPerKm);
   const start = startVolume({ baseline, distanceKey });
-  const daysOverVolume = tooManyDaysConflict({
-    daysPerWeek: goal.daysPerWeek,
-    startVolumeM: start.startVolumeM,
-    minRunM,
-  });
-  if (daysOverVolume !== null) return { ok: false, conflict: daysOverVolume };
-
   const built = buildWeeks(
     {
       distanceKey,
@@ -180,6 +171,14 @@ export function generatePlan(rawInput: PlanGenerationInput): PlanGenerationResul
       seedM: longestRunSeedM(baseline.longestRunM),
     },
   );
+  // Only the week as built knows whether it holds a run on every day asked for.
+  const daysOverVolume = tooManyDaysConflict({
+    daysPerWeek: goal.daysPerWeek,
+    weekOne: built[0]!.week,
+    startVolumeM: start.startVolumeM,
+    minRunM,
+  });
+  if (daysOverVolume !== null) return { ok: false, conflict: daysOverVolume };
   const preTaperLongRunsM = built
     .filter((week) => PRE_TAPER.includes(week.week.phase) && week.longRunM !== null)
     .map((week) => week.longRunM!);

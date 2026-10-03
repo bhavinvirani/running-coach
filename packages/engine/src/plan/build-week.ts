@@ -11,7 +11,13 @@ import { DISTANCE_METERS } from "@running-coach/shared";
 import { addDays, daysBetween, weekdayIndex } from "../dates";
 import { hardShareHolds, hardTimeS } from "../rules/easy-share";
 import { weekLayout } from "../rules/hard-days";
-import { longRunFloorM, longRunM } from "../rules/long-run";
+import {
+  longRunFloorM,
+  longRunGivingWayM,
+  longRunHoldsQuality,
+  longRunM,
+  longRunRoomM,
+} from "../rules/long-run";
 import {
   dropRep,
   QUALITY_SESSION_TYPE,
@@ -43,8 +49,6 @@ export interface PlanContext {
 
 export interface BuiltWeek {
   week: GeneratedWeek;
-  /** The long run this week's volume allowed, scheduled or not; the race week runs nothing longer. */
-  longRunCapM: number;
   /** The scheduled long run, null in the race week or when its day is the day before the race. */
   longRunM: number | null;
   /** The longest run, the race excluded; 0 with none. */
@@ -68,7 +72,7 @@ export interface RaceWeekInput {
   weekStart: string;
   /** The week's running, the race excluded. */
   targetM: number;
-  /** No run this week passes last week's long run or 110% of the recent longest. */
+  /** No run this week passes the long run last week's volume allowed or 110% of the recent longest. */
   capM: number;
   lastHardDate: string | null;
 }
@@ -165,7 +169,7 @@ function finish(
   phase: PlanPhase,
   weekStart: string,
   unsorted: GeneratedSession[],
-): Omit<BuiltWeek, "longRunCapM" | "longRunM"> {
+): Omit<BuiltWeek, "longRunM"> {
   const sessions = [...unsorted].sort((a, b) => daysBetween(b.date, a.date));
   const hard = sessions.filter((session) => HARD_TYPES.has(session.type));
   return {
@@ -181,10 +185,14 @@ function finish(
 /**
  * A base, build, peak or taper week. The long run and quality sessions come first, then easy runs
  * fill the week's volume. Before the taper the long run never drops under the runner's own longest
- * (longRunFloorM). The long run and each session's work are measured against the week as built: a week
- * that holds less than its target shortens the long run to the longest the week holds, or sizes the
- * work from what it holds, and builds again; reps come off the hardest session while easy time is
- * under 80%. Each pass shortens the long run or the work or drops a rep, so the loop ends.
+ * (longRunFloorM), but every day the runner asked for comes first: the long run gives way down to
+ * 20 min (longRunGivingWayM), then the last quality session gives its day to an easy run, so a 20 min
+ * run fits on every day the volume allows. The long run stays the week's longest run: a second quality
+ * session it would be shorter than runs easy, a lone one loses reps. The long run and each session's
+ * work are measured against the week as built: a week that holds less than its target shortens the
+ * long run to the longest the week holds, or sizes the work from what it holds and the long run again,
+ * and builds again; reps come off the hardest session while easy time is under 80%. Each pass shortens
+ * the long run, or shrinks the work, which only shrinks, so the loop ends.
  */
 export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): BuiltWeek {
   const { number, phase, weekStart, targetM, maxRunM, lastHardDate } = input;
@@ -197,7 +205,7 @@ export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): B
   });
   const dateOf = (day: Weekday) => addDays(weekStart, weekdayIndex(day));
   // Only the week before a Monday race holds the day before the race: its Sunday is rest, and a session
-  // planned there moves to the latest free day as an easy run.
+  // planned there, the long run too, moves to the latest free day as an easy run.
   const blocked = ctx.raceDate === null ? null : addDays(ctx.raceDate, -1);
   const longDate = dateOf(layout.longRun);
   const qualityDates = layout.quality.map(dateOf);
@@ -209,44 +217,71 @@ export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): B
   const easyDates = layout.easy.map(dateOf).map(movable);
   const qualitySlotDates = qualityDates.map(movable);
   const hasLong = longDate !== blocked;
+  const longSlotDates = hasLong ? [] : [movable(longDate)];
 
-  // The long run a week of this volume allows: the share and its caps, and before the taper never
-  // under the runner's own longest run.
-  const longFor = (weekVolumeM: number) => {
+  let workSizeM = targetM;
+  const drops = zones.map(() => 0);
+  const roomIn = (weekVolumeM: number, qualityM: readonly number[]) =>
+    longRunRoomM({ weekVolumeM, daysPerWeek: ctx.daysPerWeek, minRunM: ctx.minRunM, qualityM });
+  const sizesOf = (quality: readonly (Placed | null)[]) =>
+    quality.filter((p): p is Placed => p !== null).map((p) => baseM(p.work, ctx.paces));
+  // The quality sessions and the long run a week of this volume holds, as sized now; null for a session
+  // with no work or on the day before the race. The long run takes the share and its caps, before the
+  // taper never under the runner's own longest run, and gives way to the room the quality sessions and
+  // 20 min on every easy day leave, though never under 20 min. A day the runner asked for comes first,
+  // and the long run stays the week's longest run: the last session runs easy instead while the room is
+  // under 20 min or a second session passes the long run, and a lone session that passes it loses reps.
+  const shapeFor = (weekVolumeM: number) => {
     const sized = {
       weekVolumeM,
       daysPerWeek: ctx.daysPerWeek,
       easyPaceSPerKm: ctx.easyPaceSPerKm,
       maxRunM,
     };
-    return KEEPS_BASELINE_LONGEST.has(phase)
-      ? Math.max(
-          longRunM(sized),
-          longRunFloorM({ ...sized, baselineLongestM: ctx.baselineLongestM, minRunM: ctx.minRunM }),
-        )
-      : longRunM(sized);
-  };
-
-  let workSizeM = targetM;
-  const drops = zones.map(() => 0);
-  const build = (longM: number) => {
-    const restM = targetM - (hasLong ? longM : 0);
     const quality = zones.map((zone, k): Placed | null => {
       if (qualityDates[k] === blocked) return null;
       const work = sizedWork(ctx, zone, workSizeM, drops[k]!, maxRunM);
       return work === null ? null : { date: qualityDates[k]!, work };
     });
-    // The last session goes first while the long run and quality sessions alone pass the week.
-    for (let k = quality.length - 1; k >= 0; k -= 1) {
-      const qualityM = quality.reduce(
-        (sum, p) => sum + (p === null ? 0 : baseM(p.work, ctx.paces)),
-        0,
-      );
-      if (qualityM <= restM) break;
-      quality[k] = null;
+    for (;;) {
+      const qualityM = sizesOf(quality);
+      const roomM = roomIn(weekVolumeM, qualityM);
+      const capM = KEEPS_BASELINE_LONGEST.has(phase)
+        ? Math.max(
+            longRunM(sized),
+            longRunFloorM({
+              ...sized,
+              baselineLongestM: ctx.baselineLongestM,
+              minRunM: ctx.minRunM,
+              qualityM,
+            }),
+          )
+        : longRunM(sized);
+      const longM = longRunGivingWayM({ longM: capM, roomM, minRunM: ctx.minRunM });
+      const last = quality.findLastIndex((p) => p !== null);
+      if (last === -1 || (roomM >= ctx.minRunM && longRunHoldsQuality({ longM, qualityM }))) {
+        return { quality, longM };
+      }
+      const lone = quality.at(last)!;
+      if (qualityM.length > 1 || roomM < ctx.minRunM) {
+        quality[last] = null;
+      } else {
+        const work = dropRep(lone.work);
+        quality[last] = work === null ? null : { ...lone, work };
+      }
     }
+  };
+  const longFor = (weekVolumeM: number) => shapeFor(weekVolumeM).longM;
+
+  const build = (longM: number) => {
+    const restM = targetM - (hasLong ? longM : 0);
+    const { quality } = shapeFor(targetM);
     const placed = quality.filter((p): p is Placed => p !== null);
-    const slots = [...easyDates, ...qualitySlotDates.filter((_, k) => quality[k] === null)];
+    const slots = [
+      ...easyDates,
+      ...longSlotDates,
+      ...qualitySlotDates.filter((_, k) => quality[k] === null),
+    ];
     const fill = fillWeek({
       restM,
       capM: longM,
@@ -283,17 +318,19 @@ export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): B
       longM = longestHeldM(longFor(actualM), longM);
       continue;
     }
+    // Shorter work leaves the long run more room, so it is sized again.
     if (placed.some((p) => p.work.reps * p.work.repM > workCapM(p.work.zone, actualM))) {
       workSizeM = actualM;
+      longM = longFor(targetM);
       continue;
     }
     if (!holdsEasyShare(sessions, ctx.paces)) {
       drops[zones.indexOf(placed[hardIndexToDrop(placed, ctx.paces)]!.work.zone)]! += 1;
+      longM = longFor(targetM);
       continue;
     }
     return {
       ...finish(number, phase, weekStart, sessions),
-      longRunCapM: longM,
       longRunM: hasLong ? longM : null,
     };
   }
@@ -347,6 +384,6 @@ export function buildRaceWeek(ctx: PlanContext, input: RaceWeekInput): BuiltWeek
       drops += 1;
       continue;
     }
-    return { ...finish(number, "race", weekStart, sessions), longRunCapM: capM, longRunM: null };
+    return { ...finish(number, "race", weekStart, sessions), longRunM: null };
   }
 }
