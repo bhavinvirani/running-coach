@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { garminWorkout, sessionTarget } from "@running-coach/engine";
 import {
   GARMIN_WORKOUT_NAME_MAX,
+  garminWorkoutName,
   type GarminWorkoutResult,
   type SessionSteps,
 } from "@running-coach/shared";
@@ -15,7 +16,6 @@ import {
   planWorkoutPush,
   type PushSession,
   pushWindow,
-  workoutName,
 } from "../../src/services/workout-push-plan";
 import { EASY_STEPS, FASTER_PACES, INTERVAL_STEPS, PACES, TEMPO_STEPS } from "../seed";
 
@@ -72,22 +72,27 @@ function plan(sessions: PushSession[], values: { activePlan?: typeof ACTIVE | nu
 
 const actionsOf = (planned: PlannedAction[]) => planned.map((p) => p.action);
 
-describe("workoutName", () => {
+describe("garminWorkoutName", () => {
   it("names a session by its type and target distance in km with one decimal", () => {
     const tempo = session(TODAY, { type: "tempo", steps: TEMPO_STEPS });
 
     expect(tempo.target.distanceM).toBe(8800);
-    expect(workoutName(tempo, "km")).toBe("Tempo 8.8 km");
-    expect(workoutName({ ...tempo, type: "long" }, "km")).toBe("Long run 8.8 km");
+    expect(garminWorkoutName(tempo, "km")).toBe("Tempo 8.8 km");
+    expect(garminWorkoutName({ ...tempo, type: "long" }, "km")).toBe("Long run 8.8 km");
   });
 
   it("names it in miles for a runner in miles (unit conversion)", () => {
-    expect(workoutName(session(TODAY, { type: "easy" }), "mi")).toBe("Easy 5.0 mi");
+    expect(garminWorkoutName(session(TODAY, { type: "easy" }), "mi")).toBe("Easy 5.0 mi");
   });
 
   it("uses a custom workout's title, and cuts a long one so the distance always shows", () => {
-    expect(workoutName(session(TODAY, { title: "Hill reps" }), "km")).toBe("Hill reps 8.0 km");
-    const long = workoutName(session(TODAY, { title: "x".repeat(GARMIN_WORKOUT_NAME_MAX) }), "km");
+    expect(garminWorkoutName(session(TODAY, { title: "Hill reps" }), "km")).toBe(
+      "Hill reps 8.0 km",
+    );
+    const long = garminWorkoutName(
+      session(TODAY, { title: "x".repeat(GARMIN_WORKOUT_NAME_MAX) }),
+      "km",
+    );
 
     expect(long).toHaveLength(GARMIN_WORKOUT_NAME_MAX);
     expect(long.endsWith(" 8.0 km")).toBe(true);

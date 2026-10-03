@@ -2,7 +2,8 @@ import { z } from "zod";
 import { activityDetailSchema } from "./activity";
 import { errorCodeSchema } from "../error-codes";
 import { garminRecordSchema } from "./personal-bests";
-import { paceBandSchema } from "./plan";
+import { distanceInUnits, type Units } from "../units";
+import { paceBandSchema, type PlanSession, SESSION_TYPE_NAMES } from "./plan";
 import { problemSchema } from "./problem";
 
 /**
@@ -228,6 +229,22 @@ export type GarminWorkoutRepeat = z.infer<typeof garminWorkoutRepeatSchema>;
 
 /** Garmin's workout name limit is longer; this keeps a name readable on a watch face. */
 export const GARMIN_WORKOUT_NAME_MAX = 60;
+
+/**
+ * The name a session's workout carries on the watch: the runner's title or the type's name, then the
+ * target distance in the runner's units with one decimal ("Tempo 6.2 km"). A long title is cut so the
+ * distance always shows. Part of the workout's content hash, so a change of units re-sends the workouts.
+ */
+export function garminWorkoutName(
+  session: Pick<PlanSession, "title" | "type" | "target">,
+  units: Units,
+): string {
+  const suffix = ` ${distanceInUnits(session.target.distanceM, units).toFixed(1)} ${units}`;
+  const base = (session.title ?? SESSION_TYPE_NAMES[session.type])
+    .slice(0, GARMIN_WORKOUT_NAME_MAX - suffix.length)
+    .trimEnd();
+  return `${base}${suffix}`;
+}
 
 /** A running workout as the engine's garminWorkout builds it from a session's steps and the plan's paces. */
 export const garminWorkoutSchema = z

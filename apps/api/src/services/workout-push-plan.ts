@@ -1,14 +1,12 @@
 import { createHash } from "node:crypto";
 import { garminWorkout } from "@running-coach/engine";
 import {
-  distanceInUnits,
-  GARMIN_WORKOUT_NAME_MAX,
   type GarminWorkout,
+  garminWorkoutName,
   type GarminWorkoutAction,
   type GarminWorkoutResult,
   type PlanPaces,
   PUSH_WINDOW_DAYS,
-  SESSION_TYPE_NAMES,
   type SessionStatus,
   type SessionSteps,
   type SessionTarget,
@@ -60,21 +58,6 @@ const WANTED_STATUSES: ReadonlySet<SessionStatus> = new Set(["planned", "moved"]
 // Done and missed sessions are history: what Garmin holds for them stays.
 const REMOVABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["planned", "moved", "skipped"]);
 
-/**
- * The name on the watch: the runner's title or the type's name, then the target distance in the runner's
- * units with one decimal ("Tempo 6.2 km"). A long title is cut so the distance always shows.
- */
-export function workoutName(
-  session: Pick<PushSession, "title" | "type" | "target">,
-  units: Units,
-): string {
-  const suffix = ` ${distanceInUnits(session.target.distanceM, units).toFixed(1)} ${units}`;
-  const base = (session.title ?? SESSION_TYPE_NAMES[session.type])
-    .slice(0, GARMIN_WORKOUT_NAME_MAX - suffix.length)
-    .trimEnd();
-  return `${base}${suffix}`;
-}
-
 export interface DesiredWorkout {
   workout: GarminWorkout;
   /** sha256 hex of the workout's JSON: another name, step or pace band is another hash. */
@@ -88,7 +71,11 @@ export function desiredWorkout(
   units: Units,
 ): DesiredWorkout | null {
   if (NOT_ON_THE_WATCH.has(session.type) || session.steps.length === 0) return null;
-  const workout = garminWorkout({ name: workoutName(session, units), steps: session.steps, paces });
+  const workout = garminWorkout({
+    name: garminWorkoutName(session, units),
+    steps: session.steps,
+    paces,
+  });
   return { workout, hash: createHash("sha256").update(JSON.stringify(workout)).digest("hex") };
 }
 
