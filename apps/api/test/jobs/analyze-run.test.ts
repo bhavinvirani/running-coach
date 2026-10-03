@@ -8,8 +8,8 @@ import { coachMessage } from "../../src/db/schema";
 import { enqueueAnalyzeRun, startJobs, stopJobs } from "../../src/jobs";
 import * as analyzeRunJob from "../../src/jobs/analyze-run";
 import { getBoss } from "../../src/jobs/boss";
-import { config } from "../../src/lib/config";
-import { getInsight } from "../../src/services/insights";
+import { COACH_CALL_BUDGET_MS, config } from "../../src/lib/config";
+import { askCoach, getInsight } from "../../src/services/insights";
 import {
   configureCoachService,
   PLAN_OWNER_EMAIL,
@@ -79,12 +79,13 @@ function runningJob(
 }
 
 describe("analyze-run job", () => {
-  it("expires a job only after the plan path's default wake and call budgets (wake plus Claude Code's start-up inside the timeout)", () => {
+  it("expires a job only a minute after the longest coach call boot allows, so pg-boss never runs it again mid-call (wake plus Claude Code's start-up inside the timeout)", () => {
     expect(analyzeRunJob.jobOptions.expireInSeconds).toBe(600);
-    expect(config.COACH_SERVICE_WAKE_MS + config.COACH_SERVICE_TIMEOUT_MS).toBe(270_000);
-    expect(analyzeRunJob.jobOptions.expireInSeconds * 1000).toBeGreaterThan(
-      config.COACH_SERVICE_WAKE_MS + config.COACH_SERVICE_TIMEOUT_MS,
+    expect(analyzeRunJob.jobOptions.expireInSeconds * 1000).toBe(COACH_CALL_BUDGET_MS + 60_000);
+    expect(config.COACH_SERVICE_WAKE_MS + config.COACH_SERVICE_TIMEOUT_MS).toBeLessThanOrEqual(
+      COACH_CALL_BUDGET_MS,
     );
+    expect(2 * config.CLAUDE_TIMEOUT_MS).toBeLessThanOrEqual(COACH_CALL_BUDGET_MS);
   });
 
   it("stores the coach's card for the run and completes", async () => {
@@ -284,7 +285,39 @@ describe("analyze-run job on the Claude plan", () => {
     expect(waitS).toBeGreaterThan(5400 - 30);
     expect(waitS).toBeLessThanOrEqual(5400);
     expect(await db.select().from(coachMessage)).toEqual([]);
-    expect(await getInsight(userId, run.id)).toEqual({ state: "retrying" });
+    expect(await getInsight(userId, run.id)).toEqual({
+      state: "retrying",
+      resumesAt: successor?.startAfter.toISOString(),
+    });
+    expect(coach.runs).toHaveLength(1);
+  });
+
+  it("runs a run deferred to the plan's reset on the API key once the owner switched Settings and tapped Try again (Claude quota)", async () => {
+    coach.use({
+      run: { kind: "failure", failure: "plan_limited", retryAfterSeconds: 6 * 24 * 3600 },
+    });
+    const { userId, run } = await ownerOnPlan();
+    const first = await waitForJobState(await enqueueAnalyzeRun({ userId, activityId: run.id }), [
+      "completed",
+      "retry",
+      "failed",
+    ]);
+    const [held] = (await runJobs(run.id)).filter((job) => job.id !== first.id);
+    expect(await getInsight(userId, run.id)).toMatchObject({
+      state: "retrying",
+      resumesAt: held?.startAfter.toISOString(),
+    });
+    const key = claudeKey("valid");
+    await setSettings(userId, { claudeKey: key, coachCredential: "key" });
+
+    expect(await askCoach(userId, run.id)).toEqual({ state: "pending" });
+
+    const job = await waitForJobState(held?.id ?? null, ["completed", "retry", "failed"]);
+    expect(job).toMatchObject({ state: "completed", output: { status: "stored" } });
+    expect(await db.select().from(coachMessage)).toMatchObject([
+      { activityId: run.id, model: config.COACH_MODEL, fallbackReason: null },
+    ]);
+    expect(await claudeRequests(key)).toHaveLength(1);
     expect(coach.runs).toHaveLength(1);
   });
 
@@ -301,7 +334,10 @@ describe("analyze-run job on the Claude plan", () => {
     const [successor] = await runJobs(run.id);
     expect(successor).toMatchObject({ state: "created", retryCount: 0 });
     expect(await db.select().from(coachMessage)).toEqual([]);
-    expect(await getInsight(userId, run.id)).toEqual({ state: "retrying" });
+    expect(await getInsight(userId, run.id)).toEqual({
+      state: "retrying",
+      resumesAt: successor?.startAfter.toISOString(),
+    });
   });
 
   it("stores the plan_auth_failed card at once, without a retry (token expiry)", async () => {

@@ -90,8 +90,55 @@ const configObject = z.object({
   COACH_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(150_000),
 });
 
+/**
+ * The longest one coach call may take: on the plan, COACH_SERVICE_WAKE_MS plus COACH_SERVICE_TIMEOUT_MS;
+ * on a key, CLAUDE_TIMEOUT_MS twice (the call and its one retry on the fallback model). The analyze-run
+ * job's expireInSeconds (src/jobs/analyze-run-queue.ts) is this plus a minute: pg-boss runs a job it
+ * expired mid-call again, which spends the plan's usage or the key's credit a second time.
+ */
+export const COACH_CALL_BUDGET_MS = 540_000;
+
+// Plain http reaches the coach service only on this machine: anywhere else the shared secret and the
+// prompt would cross the network in cleartext, and Render answers http with a redirect that turns the
+// POST into a GET.
+const LOCAL_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"]);
+
+// zod runs the refinement below even when a field failed its own check, with that field's raw value:
+// these skip such a value, which its own check already reports.
+function isRemotePlainHttp(origin: string): boolean {
+  if (!URL.canParse(origin)) return false;
+  const url = new URL(origin);
+  return url.protocol === "http:" && !LOCAL_HOSTS.has(url.hostname);
+}
+
+function exceeds(budgetMs: number, ...parts: number[]): boolean {
+  return parts.every(Number.isFinite) && parts.reduce((sum, part) => sum + part, 0) > budgetMs;
+}
+
 const configSchema = configObject.superRefine((value, ctx) => {
+  if (exceeds(COACH_CALL_BUDGET_MS, value.COACH_SERVICE_WAKE_MS, value.COACH_SERVICE_TIMEOUT_MS)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["COACH_SERVICE_TIMEOUT_MS"],
+      message: `plus COACH_SERVICE_WAKE_MS must be at most ${COACH_CALL_BUDGET_MS} ms, so a coach call ends before its job expires and runs again`,
+    });
+  }
+  if (exceeds(COACH_CALL_BUDGET_MS, 2 * value.CLAUDE_TIMEOUT_MS)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["CLAUDE_TIMEOUT_MS"],
+      message: `must be at most ${COACH_CALL_BUDGET_MS / 2} ms, so a coach call and its retry end before their job expires and runs again`,
+    });
+  }
   if (value.NODE_ENV !== "production") return;
+  if (value.COACH_SERVICE_URL !== undefined && isRemotePlainHttp(value.COACH_SERVICE_URL)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["COACH_SERVICE_URL"],
+      message:
+        "must be https in production (http only for localhost or 127.0.0.1): over http the secret and the prompt travel in cleartext",
+    });
+  }
   // Without it the cron endpoint refuses every call and no daily sync ever runs, silently.
   if (value.CRON_SECRET === undefined) {
     ctx.addIssue({ code: "custom", path: ["CRON_SECRET"], message: "is required in production" });

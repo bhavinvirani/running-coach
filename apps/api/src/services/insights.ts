@@ -20,7 +20,11 @@ import {
   user,
   userSettings,
 } from "../db/schema";
-import { analyzeRunState, enqueueAnalyzeRun } from "../jobs/analyze-run-queue";
+import {
+  analyzeRunState,
+  enqueueAnalyzeRun,
+  pullAnalyzeRunForward,
+} from "../jobs/analyze-run-queue";
 import { decrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
 import { localDateOf } from "../lib/local-date";
@@ -78,8 +82,9 @@ function ready(card: CoachMessage): InsightResponse {
 
 /**
  * GET /api/activities/:id/insight. The coach's card wins; else a live job means the coach is writing one
- * (retrying once it has failed or waits for the plan's limit to reset), which also covers Try again on
- * a fallback card; else the fallback card; else none, or no_key when the coach has no credential.
+ * (retrying once it has failed, or with resumesAt while it waits for the plan's limit to reset), which
+ * also covers Try again on a fallback card; else the fallback card; else none, or no_key when the coach
+ * has no credential.
  */
 export async function getInsight(userId: string, activityId: string): Promise<InsightResponse> {
   await ownRun(userId, activityId);
@@ -88,15 +93,18 @@ export async function getInsight(userId: string, activityId: string): Promise<In
   const live = await analyzeRunState(activityId);
   const card = await readCard(activityId);
   if (card && card.model !== null) return ready(card);
-  if (live) return { state: live };
+  if (live) return live;
   if (card) return ready(card);
   return { state: (await coachCredentialOf(userId)) === "none" ? "no_key" : "none" };
 }
 
 /**
  * POST /api/activities/:id/insight: Ask the coach, or Try again on a fallback card. Queues the job unless
- * the coach's card exists; a tap while a job waits folds into it (stately queue), a job deferred to the
- * plan's reset included. 409 without a credential: no key and not on the plan.
+ * the coach's card exists; a tap while a job waits folds into it (stately queue). Two exceptions:
+ * a job held back to the plan's reset is pulled forward to now, so switching to a key, or a limit that
+ * reset early, does not wait out the reset (up to days); a job retrying after a failure is left to its
+ * backoff, since stately keeps one job per state and a send would queue a second beside it. 409 without
+ * a credential: no key and not on the plan.
  */
 export async function askCoach(userId: string, activityId: string): Promise<InsightResponse> {
   await ownRun(userId, activityId);
@@ -109,8 +117,19 @@ export async function askCoach(userId: string, activityId: string): Promise<Insi
       "Add your Claude key in Settings to get a coach review.",
     );
   }
-  await enqueueAnalyzeRun({ userId, activityId });
-  return { state: (await analyzeRunState(activityId)) ?? "pending" };
+  const live = await analyzeRunState(activityId);
+  if (live?.state !== "retrying") {
+    await enqueueAnalyzeRun({ userId, activityId });
+  } else if (live.resumesAt === undefined) {
+    return live;
+  } else {
+    await pullAnalyzeRunForward({ userId, activityId });
+    log.info(
+      { userId, activityId, resumesAt: live.resumesAt },
+      "held-back run insight pulled forward",
+    );
+  }
+  return (await analyzeRunState(activityId)) ?? { state: "pending" };
 }
 
 /** PUT /api/insights/:id/feedback: thumbs up, down, or null to clear, on the user's own card. */

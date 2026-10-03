@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import type { CoachRunFailure } from "@running-coach/shared";
+import { COACH_RUN_MAX_RETRY_AFTER_S, type CoachRunFailure } from "@running-coach/shared";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callCoach, INSIGHT_MAX_TOKENS } from "../../src/coach/client";
 import { PLAN_LIMIT_DEFAULT_RETRY_S } from "../../src/coach/plan-client";
@@ -249,6 +249,42 @@ describe("callCoach on the Claude plan", () => {
       retryAfterSeconds: PLAN_LIMIT_DEFAULT_RETRY_S,
     });
     expect(PLAN_LIMIT_DEFAULT_RETRY_S).toBe(3600);
+  });
+
+  it("passes the service's reset through unchanged at the contract's cap, the plan's longest window plus a day (Claude quota)", async () => {
+    coach.use({
+      run: {
+        kind: "failure",
+        failure: "plan_limited",
+        retryAfterSeconds: COACH_RUN_MAX_RETRY_AFTER_S,
+      },
+    });
+
+    expect(await callPlan()).toMatchObject({
+      failure: "plan_limited",
+      retryAfterSeconds: COACH_RUN_MAX_RETRY_AFTER_S,
+    });
+  });
+
+  it("answers unavailable, not plan_limited, when the service names a reset past the contract's cap, so no run waits longer than 8 days (Claude quota)", async () => {
+    coach.use({
+      run: {
+        kind: "failure",
+        failure: "plan_limited",
+        retryAfterSeconds: COACH_RUN_MAX_RETRY_AFTER_S + 1,
+      },
+    });
+
+    expect(await callPlan()).toEqual({
+      ok: false,
+      failure: "unavailable",
+      usage: null,
+      requestId: null,
+    });
+    const refused = coachLog.error.mock.calls.find(
+      (call) => call[1] === "coach service answered outside its contract",
+    );
+    expect((refused?.[0] as { issues: string[] }).issues).toEqual(["retryAfterSeconds"]);
   });
 
   it("answers invalid_output and logs the issue paths, never the text, when the output fails its schema", async () => {

@@ -100,6 +100,20 @@ async function failOnce(userId: string, activityId: string) {
   return id!;
 }
 
+/**
+ * Queues the run's job as analyze-run's deferral to the plan's reset leaves it: waiting, never failed,
+ * to start this many seconds from now (beside a job in retry, as the stately queue allows).
+ */
+async function holdBack(userId: string, activityId: string, seconds: number) {
+  const job = { userId, activityId };
+  const id = await getBoss().send(analyzeRunQueue.name, job, {
+    ...analyzeRunQueue.sendOptions(job),
+    startAfter: seconds,
+  });
+  expect(id).not.toBeNull();
+  return id!;
+}
+
 const insightPath = (id: string) => `/api/activities/${id}/insight`;
 
 describe("GET /api/activities/:id/insight", () => {
@@ -152,6 +166,28 @@ describe("GET /api/activities/:id/insight", () => {
 
     const [again] = await getBoss().fetch(analyzeRunQueue.name, { ignoreStartAfter: true });
     expect(again).toMatchObject({ retryCount: 1 });
+    expect((await agent.get(insightPath(run.id))).body).toEqual({ state: "retrying" });
+  });
+
+  it("answers retrying with resumesAt, the held-back job's start, while the run's job waits for the plan's reset (Claude quota)", async () => {
+    const { agent, userId, run } = await owner({ plan: true });
+    await holdBack(userId, run.id, 5400);
+    const [held] = await runJobs(run.id);
+
+    const response = await agent.get(insightPath(run.id));
+
+    expect(insightResponseSchema.parse(response.body)).toEqual({
+      state: "retrying",
+      resumesAt: held!.startAfter.toISOString(),
+    });
+  });
+
+  it("answers retrying without resumesAt beside a held-back job when another job of the run retries sooner (Claude timeout)", async () => {
+    const { agent, userId, run } = await owner({ key: true });
+    await failOnce(userId, run.id);
+    await holdBack(userId, run.id, 5400);
+    expect((await runJobs(run.id)).map((job) => job.state).sort()).toEqual(["created", "retry"]);
+
     expect((await agent.get(insightPath(run.id))).body).toEqual({ state: "retrying" });
   });
 
@@ -304,20 +340,45 @@ describe("POST /api/activities/:id/insight", () => {
     expect(await runJobs(run.id)).toMatchObject([{ data: { userId, activityId: run.id } }]);
   });
 
-  it("answers retrying and queues no second job while the run's job waits for the plan's reset (Claude quota)", async () => {
+  it("pulls a job held back to the plan's reset forward to now on Try again, without a second job, and answers pending (Claude quota)", async () => {
     const { agent, userId, run } = await owner({ plan: true });
-    await getBoss().send(
-      analyzeRunQueue.name,
-      { userId, activityId: run.id },
-      { ...analyzeRunQueue.sendOptions({ userId, activityId: run.id }), startAfter: 5400 },
-    );
+    const heldId = await holdBack(userId, run.id, 5400);
 
-    const read = await agent.get(insightPath(run.id));
     const tryAgain = await agent.post(insightPath(run.id));
 
-    expect(read.body).toEqual({ state: "retrying" });
-    expect(tryAgain.body).toEqual({ state: "retrying" });
-    expect(await runJobs(run.id)).toHaveLength(1);
+    expect(insightResponseSchema.parse(tryAgain.body)).toEqual({ state: "pending" });
+    const jobs = await runJobs(run.id);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ id: heldId, state: "created", retryCount: 0 });
+    expect(jobs[0]!.startAfter.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+  });
+
+  it("pulls the held-back job forward once the owner switched Settings from the Claude plan to the API key, instead of waiting out the reset (Claude quota)", async () => {
+    const { agent, userId, run } = await owner({ plan: true });
+    const heldId = await holdBack(userId, run.id, 7 * 24 * 60 * 60);
+    await setSettings(userId, { claudeKey: claudeKey("valid"), coachCredential: "key" });
+
+    const tryAgain = await agent.post(insightPath(run.id));
+
+    expect(tryAgain.body).toEqual({ state: "pending" });
+    const [job] = await runJobs(run.id);
+    expect(job).toMatchObject({ id: heldId, state: "created" });
+    expect(job!.startAfter.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+    // Fetchable now: the next worker poll runs it on the key.
+    expect((await getBoss().fetch(analyzeRunQueue.name))?.[0]?.id).toBe(heldId);
+  });
+
+  it("answers retrying and queues no second job on Try again while the run's job waits out a retry after a failure (Claude quota or timeout)", async () => {
+    const { agent, userId, run } = await owner({ key: true });
+    const id = await failOnce(userId, run.id);
+    const [before] = await runJobs(run.id);
+
+    const tryAgain = await agent.post(insightPath(run.id));
+
+    expect(insightResponseSchema.parse(tryAgain.body)).toEqual({ state: "retrying" });
+    const jobs = await runJobs(run.id);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ id, state: "retry", startAfter: before!.startAfter });
   });
 
   it("returns 404 for another user's run and queues nothing", async () => {

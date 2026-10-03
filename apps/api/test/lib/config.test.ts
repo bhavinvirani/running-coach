@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { coachServiceOf, coachServiceWarning, parseConfig } from "../../src/lib/config";
+import {
+  COACH_CALL_BUDGET_MS,
+  coachServiceOf,
+  coachServiceWarning,
+  parseConfig,
+} from "../../src/lib/config";
 
 const valid = {
   NODE_ENV: "production",
@@ -194,6 +199,82 @@ describe("the coach service", () => {
       "COACH_SERVICE_URL",
     ]);
     expect(JSON.stringify(result.problems)).not.toContain("too-short-secret");
+  });
+
+  it("refuses a plain http COACH_SERVICE_URL off this machine in production, which would send the secret and the prompt in cleartext", () => {
+    const result = parseConfig({
+      ...valid,
+      COACH_SERVICE_URL: "http://running-coach-coach.onrender.com",
+      COACH_SERVICE_SECRET: COACH_SECRET,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.problems.map((problem) => problem.variable)).toEqual(["COACH_SERVICE_URL"]);
+    expect(result.problems[0]?.message).toContain("must be https in production");
+    expect(JSON.stringify(result.problems)).not.toContain(COACH_SECRET);
+  });
+
+  it.each(["http://localhost:8787", "http://127.0.0.1:8787", "https://coach.example.com"])(
+    "accepts %s as COACH_SERVICE_URL in production (https, or http on this machine)",
+    (url) => {
+      const result = parseConfig({
+        ...valid,
+        COACH_SERVICE_URL: url,
+        COACH_SERVICE_SECRET: COACH_SECRET,
+      });
+
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it("accepts a plain http COACH_SERVICE_URL off this machine outside production", () => {
+    const result = parseConfig({
+      ...valid,
+      NODE_ENV: "development",
+      COACH_SERVICE_URL: "http://coach.internal:8787",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses wake and call budgets that add up past the analyze-run job's expiry margin, in every environment, so the job never runs again mid-call", () => {
+    for (const NODE_ENV of ["production", "development", "test"]) {
+      const result = parseConfig({
+        ...valid,
+        NODE_ENV,
+        COACH_SERVICE_WAKE_MS: "120000",
+        COACH_SERVICE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS - 120_000 + 1),
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.problems.map((problem) => problem.variable)).toEqual([
+        "COACH_SERVICE_TIMEOUT_MS",
+      ]);
+      expect(result.problems[0]?.message).toContain("COACH_SERVICE_WAKE_MS");
+    }
+  });
+
+  it("accepts wake and call budgets that add up to exactly COACH_CALL_BUDGET_MS", () => {
+    const result = parseConfig({
+      ...valid,
+      COACH_SERVICE_WAKE_MS: "120000",
+      COACH_SERVICE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS - 120_000),
+    });
+
+    expect(COACH_CALL_BUDGET_MS).toBe(540_000);
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses a Claude timeout whose call and retry on the fallback model would outlast the analyze-run job", () => {
+    const over = parseConfig({ ...valid, CLAUDE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS / 2 + 1) });
+    const at = parseConfig({ ...valid, CLAUDE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS / 2) });
+
+    expect(over.ok).toBe(false);
+    if (over.ok) return;
+    expect(over.problems.map((problem) => problem.variable)).toEqual(["CLAUDE_TIMEOUT_MS"]);
+    expect(at.ok).toBe(true);
   });
 
   it("treats empty coach service values as unset", () => {
