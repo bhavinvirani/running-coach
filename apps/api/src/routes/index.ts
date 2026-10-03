@@ -2,6 +2,7 @@ import { type Express, Router } from "express";
 import { requireUser } from "../auth/require-user";
 import { notFoundHandler } from "../lib/errors";
 import { activitiesRouter } from "./activities";
+import { calendarRouter } from "./calendar";
 import { cronRouter } from "./cron";
 import { garminRouter } from "./garmin";
 import { goalRouter } from "./goal";
@@ -10,6 +11,7 @@ import { importRouter } from "./import";
 import { meRouter } from "./me";
 import { personalBestsRouter } from "./personal-bests";
 import { planRouter } from "./plan";
+import { sessionsRouter } from "./sessions";
 import { syncRouter } from "./sync";
 
 /**
@@ -31,6 +33,8 @@ export function registerRoutes(app: Express): void {
   api.use(personalBestsRouter);
   api.use(goalRouter);
   api.use(planRouter);
+  api.use(sessionsRouter);
+  api.use(calendarRouter);
   api.use(notFoundHandler);
   app.use("/api", api);
 }

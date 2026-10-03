@@ -2,6 +2,7 @@ import type { WorkOptions } from "pg-boss";
 import * as bestEfforts from "./best-efforts";
 import { startBoss, stopBoss } from "./boss";
 import * as importHistory from "./import-history";
+import * as pushWorkouts from "./push-workouts";
 import * as syncGarmin from "./sync-garmin";
 
 // Registers every queue and worker. Services enqueue through the functions re-exported below.
@@ -39,6 +40,11 @@ export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
       : undefined,
   );
 
+  await boss.createQueue(pushWorkouts.name, pushWorkouts.queue);
+  await boss.work(pushWorkouts.name, work, async ([job]) =>
+    job ? pushWorkouts.handle(boss, job, options.clock) : undefined,
+  );
+
   await boss.createQueue(bestEfforts.name, bestEfforts.queue);
   await boss.work(bestEfforts.name, work, async ([job]) =>
     job
@@ -66,3 +72,6 @@ export { enqueueImportHistory } from "./import-history-queue";
 
 /** Queues a batch of the user's best efforts unless one waits (best-efforts-queue.ts). */
 export { enqueueBestEfforts } from "./best-efforts-queue";
+
+/** Queues a push of the user's next seven days to Garmin unless one waits (push-workouts-queue.ts). */
+export { enqueuePushWorkouts } from "./push-workouts-queue";

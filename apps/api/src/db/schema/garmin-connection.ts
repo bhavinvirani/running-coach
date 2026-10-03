@@ -1,4 +1,10 @@
-import { type GarminRecord, garminStatusSchema } from "@running-coach/shared";
+import {
+  type ErrorCode,
+  errorCodeSchema,
+  type GarminRecord,
+  garminStatusSchema,
+  type OtherGarminWorkout,
+} from "@running-coach/shared";
 import { sql } from "drizzle-orm";
 import { check, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
@@ -29,12 +35,25 @@ export const garminConnection = pgTable(
     // empties the pending list. Null until then.
     garminRecords: jsonb("garmin_records").$type<GarminRecord[]>(),
     garminRecordsAt: timestamp("garmin_records_at", { withTimezone: true }),
+    // When the workout push (services/workout-push.ts) last finished every change it had; null before.
+    workoutsPushedAt: timestamp("workouts_pushed_at", { withTimezone: true }),
+    // Why the last push or unschedule stopped short, null once a push finishes.
+    workoutsPushError: text("workouts_push_error").$type<ErrorCode>(),
+    // Workouts in the push window the app did not create, from the last calendar read.
+    garminCalendar: jsonb("garmin_calendar")
+      .$type<OtherGarminWorkout[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     ...timestamps(),
   },
   (table) => [
     check(
       "garmin_connection_status_check",
       sql`${table.status} in (${inList(connectionStatusSchema.options)})`,
+    ),
+    check(
+      "garmin_connection_workouts_push_error_check",
+      sql`${table.workoutsPushError} in (${inList(errorCodeSchema.options)})`,
     ),
   ],
 );

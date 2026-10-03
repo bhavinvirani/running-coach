@@ -2,10 +2,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { ErrorCode, RACE_EVENT_TYPE, syncResponseSchema } from "@running-coach/shared";
 import { eq, inArray } from "drizzle-orm";
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
+import { startBoss, stopBoss } from "../../src/jobs/boss";
+import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { decrypt } from "../../src/lib/crypto";
 import { type DateRange, dateChunks } from "../../src/lib/local-date";
 import { connectGarminLimiter } from "../../src/routes/garmin";
@@ -16,9 +18,19 @@ import { connectGarmin, fixtureOf, fixturesSentTo, garminBundle } from "../seed"
 
 // Sync now on the real Postgres against the Garmin service in fixture mode. The route syncs up to today,
 // so each connection starts with a cursor of 2026-09-01: the sync then re-reads from 2026-08-31 and finds
-// all seven fixture runs (2026-08-31 to 2026-09-27) whatever today's date.
+// all seven fixture runs (2026-08-31 to 2026-09-27) whatever today's date. pg-boss runs without workers, so
+// the workout push a reconnect queues stays queued.
 
 const app = createTestApp();
+
+beforeAll(async () => {
+  const boss = await startBoss();
+  await boss.createQueue(pushQueue.name, pushQueue.queue);
+});
+
+afterAll(async () => {
+  await stopBoss();
+});
 const PATH = "/api/sync";
 const CURSOR = new Date("2026-09-01T12:00:00Z");
 const FIXTURE_RUNS = 7;

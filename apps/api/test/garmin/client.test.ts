@@ -1,13 +1,24 @@
 import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ErrorCode, GARMIN_SERIES_BATCH_MAX } from "@running-coach/shared";
+import { garminWorkout } from "@running-coach/engine";
+import {
+  ErrorCode,
+  GARMIN_SERIES_BATCH_MAX,
+  GARMIN_WORKOUT_BATCH_MAX,
+  type GarminWorkoutAction,
+} from "@running-coach/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createGarminClient, type GarminCallOptions, garminClient } from "../../src/garmin/client";
+import {
+  createGarminClient,
+  type GarminCallOptions,
+  garminClient,
+  workoutStopError,
+} from "../../src/garmin/client";
 import { config } from "../../src/lib/config";
 import { DomainError } from "../../src/lib/errors";
 import { withRequestId } from "../../src/lib/logger";
-import { fixtureOf, fixturesSentTo, garminBundle } from "../seed";
+import { EASY_STEPS, fixtureOf, fixturesSentTo, garminBundle, PACES } from "../seed";
 
 // Against the real Garmin service in fixture mode (global-setup.ts); the bundle picks the behaviour.
 
@@ -542,6 +553,112 @@ describe("garminClient", () => {
         ),
       ).rejects.toThrow();
       expect(calls()).toBe(0);
+    });
+  });
+
+  describe("syncWorkouts", () => {
+    const calendarRange = { calendarStart: "2026-10-01", calendarEnd: "2026-10-07" };
+    const create = (ref: string, date = "2026-10-02"): GarminWorkoutAction => ({
+      action: "create",
+      ref,
+      date,
+      workout: garminWorkout({ name: "Easy 8.0 km", steps: EASY_STEPS, paces: PACES }),
+    });
+
+    it("creates and schedules a workout, then answers the range's calendar (push)", async () => {
+      const options = writeBack();
+
+      const response = await garminClient.syncWorkouts(
+        { tokenBundle: garminBundle(), actions: [create("session-1")], ...calendarRange },
+        options,
+      );
+
+      expect(response.results).toEqual([
+        {
+          ref: "session-1",
+          action: "create",
+          outcome: "done",
+          workoutId: expect.any(Number) as number,
+          scheduleId: expect.any(Number) as number,
+        },
+      ]);
+      expect(response.stopped).toBeNull();
+      expect(response.calendar?.length).toBeGreaterThan(0);
+      for (const entry of response.calendar ?? []) {
+        expect(
+          entry.date >= calendarRange.calendarStart && entry.date <= calendarRange.calendarEnd,
+        ).toBe(true);
+      }
+      expect(options.saved).toEqual([]);
+    });
+
+    it("answers the results so far and the stop, without throwing, when Garmin fails mid-batch (Garmin outage)", async () => {
+      const response = await garminClient.syncWorkouts(
+        {
+          tokenBundle: garminBundle("workout_outage"),
+          actions: [create("first"), create("second"), create("third")],
+          ...calendarRange,
+        },
+        writeBack(),
+      );
+
+      expect(response.results.map((result) => [result.ref, result.outcome])).toEqual([
+        ["first", "done"],
+        ["second", "failed"],
+        ["third", "skipped"],
+      ]);
+      expect(response.stopped).toEqual({ code: ErrorCode.garminUnavailable });
+      expect(response.calendar).toBeNull();
+      expect(workoutStopError(response.stopped!)).toMatchObject({
+        code: ErrorCode.garminUnavailable,
+        status: 502,
+      });
+    });
+
+    it("throws garmin_auth_expired (409) when the login fails, with nothing done (token expiry)", async () => {
+      const error = await rejection(
+        garminClient.syncWorkouts(
+          { tokenBundle: garminBundle("expired"), actions: [create("first")], ...calendarRange },
+          writeBack(),
+        ),
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.garminAuthExpired, status: 409 });
+    });
+
+    it("rejects a batch over the contract's limit before calling the service", async () => {
+      const calls = countServiceCalls("/workouts/sync");
+      const actions = Array.from({ length: GARMIN_WORKOUT_BATCH_MAX + 1 }, (_, index) =>
+        create(`session-${index}`),
+      );
+
+      await expect(
+        garminClient.syncWorkouts(
+          { tokenBundle: garminBundle(), actions, ...calendarRange },
+          writeBack(),
+        ),
+      ).rejects.toThrow();
+      expect(calls()).toBe(0);
+    });
+
+    it("turns a stop into the error the whole request would have thrown", () => {
+      expect(workoutStopError({ code: ErrorCode.garminAuthExpired })).toMatchObject({
+        code: ErrorCode.garminAuthExpired,
+        status: 409,
+      });
+      expect(
+        workoutStopError({ code: ErrorCode.garminRateLimited, retryAfterSeconds: 120 }),
+      ).toMatchObject({ code: ErrorCode.garminRateLimited, status: 429, retryAfterSeconds: 120 });
+      expect(workoutStopError({ code: ErrorCode.garminRateLimited })).toMatchObject({
+        retryAfterSeconds: 3600,
+      });
+      expect(workoutStopError({ code: ErrorCode.notFound })).toMatchObject({
+        code: ErrorCode.notFound,
+        status: 404,
+      });
+      const bug = workoutStopError({ code: ErrorCode.internal });
+      expect(bug).not.toBeInstanceOf(DomainError);
+      expect(bug.message).toContain("internal");
     });
   });
 

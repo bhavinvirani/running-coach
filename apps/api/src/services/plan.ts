@@ -19,13 +19,14 @@ import {
   type PlanResponse,
   type PlanSession,
   type PlanWeek,
+  type Units,
   paceSecondsPerUnit,
   RECENT_TIME_PACE_S_PER_KM,
   type RecentTime,
   type SaveGoalResponse,
   type VdotSource,
 } from "@running-coach/shared";
-import { and, asc, desc, eq, gte, inArray, lt, max, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, max, ne, or, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
 import {
   activity,
@@ -40,6 +41,8 @@ import {
 } from "../db/schema";
 import { addDays, daysBetween, localDateOf, mondayOf } from "../lib/local-date";
 import { counted } from "./best-efforts";
+import { toPlanSession } from "./session-view";
+import { queueWorkoutPush } from "./workout-push";
 
 // The goal and its plans (SPEC: Plan engine). Saving the goal measures the runner (VDOT source and
 // baseline, in the runner's time zone), asks the engine for a plan and stores it as the next version;
@@ -264,27 +267,20 @@ function toGoal(row: GoalRow): Goal {
   };
 }
 
-function toSession(row: PlanSessionRow): PlanSession {
-  return {
-    id: row.id,
-    date: row.date,
-    type: row.type,
-    target: row.target,
-    steps: row.steps,
-    status: row.status,
-    activityId: row.activityId,
-  };
+/** How many Monday-to-Sunday weeks the plan spans, the race week included. */
+function weekCount(row: PlanRow): number {
+  return Math.floor(daysBetween(row.startDate, row.endDate) / 7) + 1;
 }
 
 /**
- * The plan's weeks rebuilt from its sessions: consecutive Mondays from the start date to the end date,
- * each with its sessions' phase. The engine gives every week sessions; a week left without any (once
- * sessions can move) takes the phase of the week before it, or after it for the first week, since the
- * engine sets phases in runs of whole weeks.
+ * The plan's weeks rebuilt from its sessions and the runner's custom workouts in them: consecutive Mondays
+ * from the start date to the end date, each with its plan sessions' phase. The engine gives every week
+ * sessions; a week left without any (once sessions can move) takes the phase of the week before it, or
+ * after it for the first week, since the engine sets phases in runs of whole weeks. A week's distance
+ * leaves skipped sessions out.
  */
-function toWeeks(row: PlanRow, sessions: PlanSessionRow[]): PlanWeek[] {
-  const count = Math.floor(daysBetween(row.startDate, row.endDate) / 7) + 1;
-  const weeks = Array.from({ length: count }, (_, index) => ({
+function toWeeks(row: PlanRow, sessions: PlanSessionRow[], units: Units): PlanWeek[] {
+  const weeks = Array.from({ length: weekCount(row) }, (_, index) => ({
     number: index + 1,
     startDate: addDays(row.startDate, 7 * index),
     phase: null as PlanPhase | null,
@@ -294,9 +290,10 @@ function toWeeks(row: PlanRow, sessions: PlanSessionRow[]): PlanWeek[] {
   for (const session of sessions) {
     const week = weeks[Math.floor(daysBetween(row.startDate, session.date) / 7)];
     if (!week) throw new Error(`Plan ${row.id} has a session outside its weeks`);
-    week.phase ??= session.phase;
-    week.distanceM += session.target.distanceM;
-    week.sessions.push(toSession(session));
+    if (session.phase !== null) week.phase ??= session.phase;
+    if (session.status !== "skipped") week.distanceM += session.target.distanceM;
+    // A custom workout reads the active plan's paces, which a plan shown here always is.
+    week.sessions.push(toPlanSession(session, row.paces, units));
   }
   return weeks.map((week, index) => {
     const phase =
@@ -308,12 +305,33 @@ function toWeeks(row: PlanRow, sessions: PlanSessionRow[]): PlanWeek[] {
   });
 }
 
+/**
+ * The plan with its sessions, skipped ones included, and the runner's custom workouts dated in its weeks
+ * that are not skipped (a skipped custom workout is deleted, as far as the runner is concerned). Plan
+ * sessions come before custom ones on the same day.
+ */
 async function loadPlan(executor: Db | DbTransaction, row: PlanRow): Promise<Plan> {
+  const [settings] = await executor
+    .select({ units: userSettings.units })
+    .from(userSettings)
+    .where(eq(userSettings.userId, row.userId));
+  if (!settings) throw new Error("The plan's user has no settings row");
   const sessions = await executor
     .select()
     .from(planSession)
-    .where(eq(planSession.planId, row.id))
-    .orderBy(asc(planSession.date), asc(planSession.id));
+    .where(
+      or(
+        eq(planSession.planId, row.id),
+        and(
+          eq(planSession.userId, row.userId),
+          isNull(planSession.planId),
+          ne(planSession.status, "skipped"),
+          gte(planSession.date, row.startDate),
+          lte(planSession.date, addDays(row.startDate, 7 * weekCount(row) - 1)),
+        ),
+      ),
+    )
+    .orderBy(asc(planSession.date), sql`${planSession.planId} is null`, asc(planSession.id));
   return {
     id: row.id,
     goalId: row.goalId,
@@ -326,7 +344,7 @@ async function loadPlan(executor: Db | DbTransaction, row: PlanRow): Promise<Pla
     vdotSource: row.vdotSource,
     paces: row.paces,
     warnings: row.warnings,
-    weeks: toWeeks(row, sessions),
+    weeks: toWeeks(row, sessions, settings.units),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -345,8 +363,9 @@ export async function getPlan(userId: string): Promise<PlanResponse> {
 /**
  * PUT /api/goal: generates a plan from the goal starting on the first Monday from today in the runner's
  * time zone. On a conflict nothing is written. Otherwise the goal is saved and the plan becomes the
- * goal's next version, the previous one superseded with its sessions kept. `now` is the request's
- * instant; tests pass their own.
+ * goal's next version, the previous one superseded with its sessions kept, and a workout push is queued:
+ * it takes the old plan's workouts off Garmin from today on and sends the new plan's. `now` is the
+ * request's instant; tests pass their own.
  */
 export async function saveGoal(
   userId: string,
@@ -366,7 +385,7 @@ export async function saveGoal(
   // generatePlan answers no_recent_time before anything else without a source.
   const vdotSource = inputs.vdotSource!;
 
-  return db.transaction(async (tx) => {
+  const saved = await db.transaction(async (tx) => {
     // The upsert comes first: it locks the user's goal row, so a second save for the user waits here
     // and then supersedes this plan instead of racing it for the version and the active slot.
     const [goalRow] = await tx
@@ -419,4 +438,6 @@ export async function saveGoal(
     );
     return { ok: true as const, goal: toGoal(goalRow), plan: await loadPlan(tx, planRow) };
   });
+  await queueWorkoutPush(userId);
+  return saved;
 }

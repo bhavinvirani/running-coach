@@ -98,7 +98,15 @@ function generatedWeeks(weeks: Plan["weeks"]) {
   return weeks.map((week) => ({
     ...week,
     sessions: week.sessions.map(
-      ({ id: _id, status: _status, activityId: _activityId, ...session }) => session,
+      ({
+        id: _id,
+        status: _status,
+        activityId: _activityId,
+        source: _source,
+        title: _title,
+        onGarmin: _onGarmin,
+        ...session
+      }) => session,
     ),
   }));
 }

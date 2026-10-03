@@ -3,6 +3,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stopJobs } from "../../src/jobs";
 import { getBoss, startBoss } from "../../src/jobs/boss";
+import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import * as syncQueue from "../../src/jobs/sync-garmin-queue";
 import { config } from "../../src/lib/config";
 import { localDateOf } from "../../src/lib/local-date";
@@ -20,6 +21,7 @@ const SECRET = config.CRON_SECRET ?? "";
 beforeAll(async () => {
   const boss = await startBoss();
   await boss.createQueue(syncQueue.name, syncQueue.queue);
+  await boss.createQueue(pushQueue.name, pushQueue.queue);
 });
 
 afterAll(async () => {
@@ -44,6 +46,11 @@ async function runner(
 /** Every sync job of the user, whatever its state. */
 async function syncJobs(userId: string) {
   return getBoss().findJobs<object>(syncQueue.name, { key: userId });
+}
+
+/** Every workout push of the user, whatever its state. */
+async function pushJobs(userId: string) {
+  return getBoss().findJobs<object>(pushQueue.name, { key: userId });
 }
 
 /** The UTC calendar date of an instant, which keys the cron's jobs. */
@@ -170,6 +177,49 @@ describe("POST /api/cron/sync", () => {
 });
 
 describe("queueDailySyncs", () => {
+  it("queues one workout push per user with a working login beside the sync, once however often the cron fires (double fire)", async () => {
+    const userId = await runner("ok");
+    const expired = await runner("expired");
+    const notConnected = await runner("none");
+    const now = new Date("2026-10-02T03:30:00Z");
+
+    await queueDailySyncs({ now });
+    await queueDailySyncs({ now });
+    await queueDailySyncs({ now: new Date("2026-10-02T04:05:00Z") });
+
+    expect((await pushJobs(userId)).map((job) => ({ id: job.id, data: job.data }))).toEqual([
+      { id: pushQueue.cronJobId({ userId }, "2026-10-02"), data: { userId } },
+    ]);
+    expect(await pushJobs(expired)).toEqual([]);
+    expect(await pushJobs(notConnected)).toEqual([]);
+  });
+
+  it("queues no second push when an edit's push already waits for the user", async () => {
+    const userId = await runner("ok");
+    const waiting = await pushQueue.enqueuePushWorkouts({ userId });
+
+    await queueDailySyncs({ now: new Date("2026-10-02T03:30:00Z") });
+
+    expect((await pushJobs(userId)).map((job) => job.id)).toEqual([waiting]);
+  });
+
+  it("queues the next day's push once the previous day's has run", async () => {
+    const userId = await runner("ok");
+    await queueDailySyncs({ now: new Date("2026-10-02T03:30:00Z") });
+    await getBoss().complete(pushQueue.name, pushQueue.cronJobId({ userId }, "2026-10-02"), null, {
+      includeQueued: true,
+    });
+
+    await queueDailySyncs({ now: new Date("2026-10-03T03:30:00Z") });
+
+    expect((await pushJobs(userId)).map((job) => job.id).toSorted()).toEqual(
+      [
+        pushQueue.cronJobId({ userId }, "2026-10-02"),
+        pushQueue.cronJobId({ userId }, "2026-10-03"),
+      ].toSorted(),
+    );
+  });
+
   it("keys every user's sync on the fire's UTC date, whatever their local date (time zones)", async () => {
     // The daily fire, 03:30 UTC on 2026-10-02: 17:30 that day at UTC+14, still 2026-10-01 at UTC-10 (17:30)
     // and in New York's summer time (23:30).

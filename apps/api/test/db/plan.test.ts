@@ -180,7 +180,8 @@ describe("goal, plan and plan_session", () => {
       "plan_session_activity_id_idx",
       "plan_session_pkey",
       "plan_session_plan_id_date_idx",
-      "plan_session_user_id_idx",
+      // 0012 replaced plan_session_user_id_idx with (user_id, date) (test/db/workout-push.test.ts).
+      "plan_session_user_id_date_idx",
     ]);
   });
 
@@ -294,7 +295,7 @@ describe("goal, plan and plan_session", () => {
       db.insert(planSession).values(sessionValues(userId, planId, values));
 
     expect(await postgresErrorCode(session({ type: "fartlek" }))).toBe("23514");
-    expect(await postgresErrorCode(session({ status: "skipped" }))).toBe("23514");
+    expect(await postgresErrorCode(session({ status: "cancelled" }))).toBe("23514");
     expect(await postgresErrorCode(session({ phase: "recovery" }))).toBe("23514");
     expect(
       await postgresErrorCode(

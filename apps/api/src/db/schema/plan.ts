@@ -75,29 +75,39 @@ export const plan = pgTable(
   ],
 );
 
+// A session of a plan version, or a custom workout the runner built (no plan_id and no phase): a custom
+// one belongs to the runner, not to a plan version, so a new plan keeps it. The garmin_* columns are what
+// Garmin holds for the session (services/workout-push.ts): ids stored as text, the date its workout is
+// scheduled on, and the hash of the workout uploaded, so a push that finds them equal sends nothing.
+
 export const planSession = pgTable(
   "plan_session",
   {
     id: id(),
-    planId: uuid("plan_id")
-      .notNull()
-      .references(() => plan.id, { onDelete: "cascade" }),
+    // Null for a custom workout.
+    planId: uuid("plan_id").references(() => plan.id, { onDelete: "cascade" }),
     userId: uuid("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     // Local date in the runner's time zone.
     date: date("date", { mode: "string" }).notNull(),
     type: text("type").$type<SessionType>().notNull(),
-    // Its week's phase; the plan's weeks are rebuilt from it.
-    phase: text("phase").$type<PlanPhase>().notNull(),
+    // Its week's phase; the plan's weeks are rebuilt from it. Null for a custom workout.
+    phase: text("phase").$type<PlanPhase>(),
+    // The runner's name for a custom workout; null names it by its type.
+    title: text("title"),
     target: jsonb("target").$type<SessionTarget>().notNull(),
     steps: jsonb("steps").$type<SessionSteps>().notNull(),
     status: text("status").$type<SessionStatus>().notNull().default("planned"),
     // The run that completed it (slice 9). A deleted run leaves the session in place, unlinked.
     activityId: uuid("activity_id").references(() => activity.id, { onDelete: "set null" }),
-    // Ids of what slice 7 pushed to Garmin, so a second push updates instead of duplicating.
+    // Ids of what the push made on Garmin, so a second push updates instead of duplicating.
     garminWorkoutId: text("garmin_workout_id"),
     garminScheduleId: text("garmin_schedule_id"),
+    // The local date Garmin has the workout scheduled on, null while it is not scheduled.
+    garminDate: date("garmin_date", { mode: "string" }),
+    // sha256 of the workout uploaded (services/workout-push-plan.ts); another hash means new content.
+    garminHash: text("garmin_hash"),
     ...timestamps(),
   },
   (table) => [
@@ -107,9 +117,12 @@ export const planSession = pgTable(
       "plan_session_status_check",
       sql`${table.status} in (${inList(sessionStatusSchema.options)})`,
     ),
+    check("plan_session_custom_check", sql`(${table.planId} is null) = (${table.phase} is null)`),
     // A plan's sessions in date order; leads with plan_id, so it is also the plan_id index.
     index("plan_session_plan_id_date_idx").on(table.planId, table.date),
-    index("plan_session_user_id_idx").on(table.userId),
+    // The runner's sessions by date (calendar, push window, custom workouts); leads with user_id, so it is
+    // also the user_id index.
+    index("plan_session_user_id_date_idx").on(table.userId, table.date),
     // Deleting a run nulls its sessions' link; without it that is a scan of every session.
     index("plan_session_activity_id_idx").on(table.activityId),
   ],
