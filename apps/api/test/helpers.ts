@@ -36,8 +36,14 @@ export function browserAgent(app: Express) {
   return request.agent(app).set("origin", config.APP_URL).set("x-forwarded-for", nextTestIp());
 }
 
-/** Seeds the owner and signs in through Better Auth; the agent then carries the session cookie. */
-export async function signedInAgent(app: Express, owner = TEST_OWNER) {
+/**
+ * Seeds the owner, or another user given, and signs in through Better Auth; the agent then carries the
+ * session cookie.
+ */
+export async function signedInAgent(
+  app: Express,
+  owner: { email: string; password: string; name: string } = TEST_OWNER,
+) {
   await seedOwner(owner);
   const agent = browserAgent(app);
   const response = await agent

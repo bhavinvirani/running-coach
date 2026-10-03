@@ -27,9 +27,9 @@ export function RunScreen() {
  */
 function RunView({ id }: { id: string }) {
   const screen = useRunScreen(id);
-  const { data, status, error, refetch, units } = screen;
+  const { data, status, error, refetch, units, timeZone } = screen;
 
-  if (status === "pending" || units === undefined) {
+  if (status === "pending" || units === undefined || timeZone === undefined) {
     return <RunSkeleton />;
   }
 
@@ -56,7 +56,7 @@ function RunView({ id }: { id: string }) {
         <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
       ) : null}
       <RunStats activity={activity} units={units} bests={currentBests(bestEfforts)} />
-      <CoachCard {...screen.coach} />
+      <CoachCard {...screen.coach} timeZone={timeZone} />
       <BestEfforts efforts={bestEfforts} units={units} />
       <RunDetail
         state={screen.detail}

@@ -69,6 +69,15 @@ describe("buildRunInsightFallback", () => {
     expect(card.nextStep).not.toContain("plan");
   });
 
+  it("tells the owner to make a new plan token and replace it on the coach service when Claude rejected it (token expiry)", () => {
+    const card = buildRunInsightFallback(run, km, "plan_auth_failed", null);
+
+    expect(card.whatItMeans).toContain("claude setup-token");
+    expect(card.whatItMeans).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(card.whatItMeans).toMatch(/Try again\.$/);
+    expect(runInsightSchema.parse(card).headline).toBe("8.0 km in 45:00 at 5:38 /km.");
+  });
+
   it("keeps the follow-the-plan next step when the plan has nothing after this run", () => {
     const card = buildRunInsightFallback(run, km, "max_tokens", { planned: [], next: null });
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseConfig } from "../../src/lib/config";
+import {
+  COACH_CALL_BUDGET_MS,
+  coachServiceOf,
+  coachServiceWarning,
+  parseConfig,
+} from "../../src/lib/config";
 
 const valid = {
   NODE_ENV: "production",
@@ -31,9 +36,14 @@ describe("parseConfig", () => {
       COACH_MODEL: "claude-opus-5-5",
       COACH_FALLBACK_MODEL: "claude-sonnet-5-5",
       CLAUDE_TIMEOUT_MS: 60_000,
+      COACH_SERVICE_WAKE_MS: 120_000,
+      COACH_SERVICE_WAKE_POLL_MS: 5_000,
+      COACH_SERVICE_TIMEOUT_MS: 150_000,
     });
     expect(result.config.GARMIN_SERVICE_SECRET).toMatch(/^[0-9a-f]{64}$/);
     expect(result.config.CLAUDE_BASE_URL).toBeUndefined();
+    expect(coachServiceOf(result.config)).toBeNull();
+    expect(coachServiceWarning(result.config)).toBeNull();
   });
 
   it("names every invalid variable without echoing its value", () => {
@@ -110,5 +120,169 @@ describe("parseConfig", () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("the coach service", () => {
+  const COACH_SECRET = "k".repeat(48);
+
+  it("turns the Claude plan on when both COACH_SERVICE_URL and COACH_SERVICE_SECRET are set, the URL as its origin", () => {
+    const result = parseConfig({
+      ...valid,
+      COACH_SERVICE_URL: "https://coach.example.com/v1/",
+      COACH_SERVICE_SECRET: COACH_SECRET,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(coachServiceOf(result.config)).toEqual({
+      url: "https://coach.example.com",
+      secret: COACH_SECRET,
+    });
+    expect(coachServiceWarning(result.config)).toBeNull();
+  });
+
+  it.each([
+    [
+      "COACH_SERVICE_URL",
+      { COACH_SERVICE_URL: "https://coach.example.com" },
+      "COACH_SERVICE_SECRET",
+    ],
+    ["COACH_SERVICE_SECRET", { COACH_SERVICE_SECRET: COACH_SECRET }, "COACH_SERVICE_URL"],
+  ])(
+    "keeps the plan off and boots, with a warning naming the other variable, when only %s is set",
+    (_set, env, missing) => {
+      const result = parseConfig({ ...valid, ...env });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(coachServiceOf(result.config)).toBeNull();
+      expect(coachServiceWarning(result.config)).toMatch(new RegExp(`^${missing} is not set`));
+    },
+  );
+
+  it("refuses a published dev, test or e2e coach service secret in production, without echoing it", () => {
+    const published = "dev-only-coach-service-secret-not-for-production";
+    const result = parseConfig({
+      ...valid,
+      COACH_SERVICE_URL: "https://coach.example.com",
+      COACH_SERVICE_SECRET: published,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.problems.map((problem) => problem.variable)).toEqual(["COACH_SERVICE_SECRET"]);
+    expect(JSON.stringify(result.problems)).not.toContain(published);
+  });
+
+  it("accepts the published coach service secret outside production", () => {
+    const result = parseConfig({
+      ...valid,
+      NODE_ENV: "development",
+      COACH_SERVICE_SECRET: "dev-only-coach-service-secret-not-for-production",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses a coach service secret under 32 characters and a URL that is not http or https (a bare host:port)", () => {
+    const result = parseConfig({
+      ...valid,
+      COACH_SERVICE_URL: "coach-service:10000",
+      COACH_SERVICE_SECRET: "too-short-secret",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.problems.map((problem) => problem.variable).sort()).toEqual([
+      "COACH_SERVICE_SECRET",
+      "COACH_SERVICE_URL",
+    ]);
+    expect(JSON.stringify(result.problems)).not.toContain("too-short-secret");
+  });
+
+  it("refuses a plain http COACH_SERVICE_URL off this machine in production, which would send the secret and the prompt in cleartext", () => {
+    const result = parseConfig({
+      ...valid,
+      COACH_SERVICE_URL: "http://running-coach-coach.onrender.com",
+      COACH_SERVICE_SECRET: COACH_SECRET,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.problems.map((problem) => problem.variable)).toEqual(["COACH_SERVICE_URL"]);
+    expect(result.problems[0]?.message).toContain("must be https in production");
+    expect(JSON.stringify(result.problems)).not.toContain(COACH_SECRET);
+  });
+
+  it.each(["http://localhost:8787", "http://127.0.0.1:8787", "https://coach.example.com"])(
+    "accepts %s as COACH_SERVICE_URL in production (https, or http on this machine)",
+    (url) => {
+      const result = parseConfig({
+        ...valid,
+        COACH_SERVICE_URL: url,
+        COACH_SERVICE_SECRET: COACH_SECRET,
+      });
+
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  it("accepts a plain http COACH_SERVICE_URL off this machine outside production", () => {
+    const result = parseConfig({
+      ...valid,
+      NODE_ENV: "development",
+      COACH_SERVICE_URL: "http://coach.internal:8787",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses wake and call budgets that add up past the analyze-run job's expiry margin, in every environment, so the job never runs again mid-call", () => {
+    for (const NODE_ENV of ["production", "development", "test"]) {
+      const result = parseConfig({
+        ...valid,
+        NODE_ENV,
+        COACH_SERVICE_WAKE_MS: "120000",
+        COACH_SERVICE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS - 120_000 + 1),
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.problems.map((problem) => problem.variable)).toEqual([
+        "COACH_SERVICE_TIMEOUT_MS",
+      ]);
+      expect(result.problems[0]?.message).toContain("COACH_SERVICE_WAKE_MS");
+    }
+  });
+
+  it("accepts wake and call budgets that add up to exactly COACH_CALL_BUDGET_MS", () => {
+    const result = parseConfig({
+      ...valid,
+      COACH_SERVICE_WAKE_MS: "120000",
+      COACH_SERVICE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS - 120_000),
+    });
+
+    expect(COACH_CALL_BUDGET_MS).toBe(540_000);
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses a Claude timeout whose call and retry on the fallback model would outlast the analyze-run job", () => {
+    const over = parseConfig({ ...valid, CLAUDE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS / 2 + 1) });
+    const at = parseConfig({ ...valid, CLAUDE_TIMEOUT_MS: String(COACH_CALL_BUDGET_MS / 2) });
+
+    expect(over.ok).toBe(false);
+    if (over.ok) return;
+    expect(over.problems.map((problem) => problem.variable)).toEqual(["CLAUDE_TIMEOUT_MS"]);
+    expect(at.ok).toBe(true);
+  });
+
+  it("treats empty coach service values as unset", () => {
+    const result = parseConfig({ ...valid, COACH_SERVICE_URL: "", COACH_SERVICE_SECRET: "" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(coachServiceOf(result.config)).toBeNull();
+    expect(coachServiceWarning(result.config)).toBeNull();
   });
 });

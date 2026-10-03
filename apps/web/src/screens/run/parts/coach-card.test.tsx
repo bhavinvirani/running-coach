@@ -1,4 +1,4 @@
-import type { CoachFeedback, InsightResponse } from "@running-coach/shared";
+import type { CoachCredential, CoachFeedback, InsightResponse } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -27,10 +27,13 @@ type Answer = InsightResponse | (() => Response | Promise<Response>);
 
 type FakeCoachApi = {
   /**
-   * Whether GET /api/me says a Claude key is set, in order; the last one repeats. Set by default: a card
-   * that can be asked again comes with a key.
+   * What GET /api/me says the coach uses, in order; the last one repeats. key: a saved key; plan: the
+   * owner's Claude plan, with no key saved; none: neither. A key by default: a card that can be asked again
+   * comes with a credential.
    */
-  keys?: boolean[];
+  credentials?: CoachCredential[];
+  /** The runner's time zone in settings; the fixture's by default. */
+  timeZone?: string;
   /** What GET .../insight answers, in order; the last one repeats. */
   reads?: Answer[];
   /** What POST .../insight (Ask the coach, Try again) answers. */
@@ -45,7 +48,8 @@ function answer(value: Answer): Response | Promise<Response> {
 
 /** /api/me, the run with its detail already stored, and the coach's endpoints, in memory. */
 function fakeCoachApi({
-  keys = [true],
+  credentials = ["key"],
+  timeZone = meFixture().settings.timezone,
   reads = [{ state: "none" }],
   ask = { state: "pending" },
   feedback = (sent) => json(insightReadyFixture(insightCardFixture({ feedback: sent }))),
@@ -54,9 +58,18 @@ function fakeCoachApi({
   let meRead = 0;
   return stubFetch(({ method, path, body }: FakeRequest) => {
     if (path === "/api/me") {
-      const hasClaudeKey = keys[Math.min(meRead, keys.length - 1)] as boolean;
+      const coachCredential = credentials[
+        Math.min(meRead, credentials.length - 1)
+      ] as CoachCredential;
       meRead += 1;
-      return json(meFixture({ settings: { ...meFixture().settings, hasClaudeKey } }));
+      const settings = {
+        ...meFixture().settings,
+        timezone: timeZone,
+        hasClaudeKey: coachCredential === "key",
+        coachCredential,
+        claudePlanAvailable: coachCredential === "plan",
+      };
+      return json(meFixture({ settings }));
     }
     if (method === "GET" && path === insightPath) {
       const next = reads[Math.min(read, reads.length - 1)] as Answer;
@@ -134,7 +147,7 @@ describe("CoachCard", () => {
   });
 
   it("asks for the key with one sentence and one action when there is none (no key hides cards behind one action)", async () => {
-    const calls = fakeCoachApi({ keys: [false], reads: [{ state: "no_key" }] });
+    const calls = fakeCoachApi({ credentials: ["none"], reads: [{ state: "no_key" }] });
     const { router } = renderRun();
 
     expect(
@@ -191,14 +204,102 @@ describe("CoachCard", () => {
     await vi.waitFor(() => expect(polls.delays()).toEqual([]));
   });
 
-  it('says "Coach unavailable, will retry" while retrying and reads again every minute', async () => {
+  it('says "Coach unavailable, will retry" with no button while retrying without resumesAt, and reads again every minute', async () => {
     fakeCoachApi({ reads: [{ state: "retrying" }] });
     renderRun();
 
     const status = await within(await findCoach()).findByRole("status");
     expect(status).toHaveTextContent(/^Coach unavailable, will retry\.$/);
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(coach()).queryByText(/usage limit/)).not.toBeInTheDocument();
     expect(polls.delays()).toEqual([60_000]);
+  });
+
+  it("says the Claude plan's usage limit is reached and when the coach tries again, in the runner's time zone, while retrying with resumesAt (plan usage limit)", async () => {
+    // 08:30 UTC is 14:00 in Kolkata: the time shown is the runner's, not UTC's or the device's.
+    fakeCoachApi({
+      timeZone: "Asia/Kolkata",
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T08:30:00.000Z" }],
+    });
+    renderRun();
+
+    const status = await within(await findCoach()).findByRole("status");
+    expect(status).toHaveTextContent(
+      /^Your Claude plan's usage limit is reached\. The coach tries again Sun 4 Oct, 14:00\.$/,
+    );
+    expect(status).toHaveClass("text-body", "text-ink-2");
+    expect(within(coach()).getAllByRole("button")).toEqual([
+      within(coach()).getByRole("button", { name: "Try now" }),
+    ]);
+    expect(within(coach()).queryByText(/Coach unavailable/)).not.toBeInTheDocument();
+    expect(polls.delays()).toEqual([60_000]);
+  });
+
+  it("offers only Add Claude key while the job waits for the plan's reset but the plan was withdrawn and no key is saved (plan usage limit, no credential)", async () => {
+    const calls = fakeCoachApi({
+      credentials: ["none"],
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+    });
+    renderRun();
+
+    const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
+    expect(link).toHaveAttribute("href", "/settings");
+    expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(coach()).queryByText(/usage limit/)).not.toBeInTheDocument();
+    expect(asks(calls)).toEqual([]);
+  });
+
+  it("asks the coach at once on Try now while the plan's usage limit holds the job, and shows the coach at work (plan usage limit Try now)", async () => {
+    const calls = fakeCoachApi({
+      credentials: ["plan"],
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+      ask: { state: "pending" },
+    });
+    renderRun();
+
+    await userEvent.click(
+      await within(await findCoach()).findByRole("button", { name: "Try now" }),
+    );
+
+    expect(await within(coach()).findByRole("status")).toHaveTextContent(
+      "The coach is reviewing this run.",
+    );
+    expect(asks(calls)).toHaveLength(1);
+    await vi.waitFor(() => expect(polls.delays()).toEqual([3_000]));
+  });
+
+  it("disables Try now while it asks (plan usage limit Try now pending)", async () => {
+    fakeCoachApi({
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+      ask: () => never(),
+    });
+    renderRun();
+    const tryNow = await within(await findCoach()).findByRole("button", { name: "Try now" });
+
+    await userEvent.click(tryNow);
+
+    await vi.waitFor(() => expect(tryNow).toBeDisabled());
+    expect(tryNow).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("says why Try now failed and keeps the button (plan usage limit Try now, our rate limit)", async () => {
+    fakeCoachApi({
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+      ask: () => problem(429, ErrorCode.rateLimited),
+    });
+    renderRun();
+
+    await userEvent.click(
+      await within(await findCoach()).findByRole("button", { name: "Try now" }),
+    );
+
+    const alert = await within(coach()).findByRole("alert");
+    expect(alert).toHaveTextContent(errorMessages.rate_limited);
+    expect(alert).toHaveClass("text-body", "text-ink");
+    expect(within(coach()).getByRole("button", { name: "Try now" })).toBeEnabled();
+    expect(within(coach()).getByRole("status")).toHaveTextContent(
+      "The coach tries again Sun 4 Oct, 14:00.",
+    );
   });
 
   it("shows the model's card: the headline, what happened, what it means and next, with thumbs", async () => {
@@ -396,9 +497,74 @@ describe("CoachCard", () => {
     expect(asks(calls)).toHaveLength(1);
   });
 
+  it.each(["timeout", "unavailable", "invalid_output"] as const)(
+    "offers Try again on a %s fallback card on the Claude plan without a saved key (coachCredential plan and no key)",
+    async (reason) => {
+      const calls = fakeCoachApi({
+        credentials: ["plan"],
+        reads: [insightReadyFixture(fallbackCardFixture(reason))],
+        ask: { state: "pending" },
+      });
+      renderRun();
+
+      await userEvent.click(
+        await within(await findCoach()).findByRole("button", { name: "Try again" }),
+      );
+
+      expect(await within(coach()).findByRole("status")).toHaveTextContent(
+        "The coach is reviewing this run.",
+      );
+      expect(within(coach()).queryByRole("link")).not.toBeInTheDocument();
+      expect(asks(calls)).toHaveLength(1);
+    },
+  );
+
+  it("offers Ask the coach for a run without a card on the Claude plan without a saved key (coachCredential plan and no key)", async () => {
+    const calls = fakeCoachApi({
+      credentials: ["plan"],
+      reads: [{ state: "none" }],
+      ask: { state: "pending" },
+    });
+    renderRun();
+
+    await userEvent.click(
+      await within(await findCoach()).findByRole("button", { name: "Ask the coach" }),
+    );
+
+    expect(await within(coach()).findByRole("status")).toHaveTextContent(
+      "The coach is reviewing this run.",
+    );
+    expect(asks(calls)).toHaveLength(1);
+  });
+
+  it.each(["plan", "key"] as const)(
+    "offers only Try again on a card for a rejected plan token, without Replace key (plan_auth_failed, coachCredential %s)",
+    async (credential) => {
+      const fallback = fallbackCardFixture("plan_auth_failed");
+      const calls = fakeCoachApi({
+        credentials: [credential],
+        reads: [insightReadyFixture(fallback)],
+        ask: { state: "pending" },
+      });
+      renderRun();
+
+      const tryAgain = await within(await findCoach()).findByRole("button", { name: "Try again" });
+      expect(within(coach()).getByText(fallback.content.headline)).toBeInTheDocument();
+      expect(within(coach()).queryByRole("link")).not.toBeInTheDocument();
+      expect(within(coach()).getAllByRole("button")).toEqual([tryAgain]);
+
+      await userEvent.click(tryAgain);
+
+      expect(await within(coach()).findByRole("status")).toHaveTextContent(
+        "The coach is reviewing this run.",
+      );
+      expect(asks(calls)).toHaveLength(1);
+    },
+  );
+
   it("treats a card stored for a missing key like no key: Add Claude key", async () => {
     fakeCoachApi({
-      keys: [false],
+      credentials: ["none"],
       reads: [insightReadyFixture(fallbackCardFixture("missing_key"))],
     });
     renderRun();
@@ -408,11 +574,11 @@ describe("CoachCard", () => {
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it.each(["timeout", "unavailable", "refusal", "key_invalid"] as const)(
-    "offers only Add Claude key on a stored %s fallback card when there is no key (no key hides cards behind one action)",
+  it.each(["timeout", "unavailable", "refusal", "key_invalid", "plan_auth_failed"] as const)(
+    "offers only Add Claude key on a stored %s fallback card when there is no key (no credential, coachCredential none, still shows only Add Claude key)",
     async (reason) => {
       const fallback = fallbackCardFixture(reason);
-      const calls = fakeCoachApi({ keys: [false], reads: [insightReadyFixture(fallback)] });
+      const calls = fakeCoachApi({ credentials: ["none"], reads: [insightReadyFixture(fallback)] });
       const { router } = renderRun();
 
       const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
@@ -448,7 +614,7 @@ describe("CoachCard", () => {
 
   it("switches to the one Add Claude key action when Ask the coach finds the key removed on another device (409 claude_key_missing)", async () => {
     const calls = fakeCoachApi({
-      keys: [true, false],
+      credentials: ["key", "none"],
       reads: [{ state: "none" }, { state: "no_key" }],
       ask: () => problem(409, ErrorCode.claudeKeyMissing),
     });
@@ -468,7 +634,7 @@ describe("CoachCard", () => {
   it("ends on Add Claude key when Try again on a fallback card finds the key removed on another device (409 claude_key_missing)", async () => {
     const fallback = fallbackCardFixture("timeout");
     const calls = fakeCoachApi({
-      keys: [true, false],
+      credentials: ["key", "none"],
       reads: [insightReadyFixture(fallback)],
       ask: () => problem(409, ErrorCode.claudeKeyMissing),
     });

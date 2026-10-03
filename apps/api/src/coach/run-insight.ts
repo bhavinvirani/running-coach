@@ -1,4 +1,4 @@
-import { callCoach, type CoachUsage, INSIGHT_MAX_TOKENS } from "./client";
+import { type CoachCallCredential, callCoach, type CoachUsage, INSIGHT_MAX_TOKENS } from "./client";
 import {
   buildRunInsightFallback,
   type RunInsightFallbackReason,
@@ -18,8 +18,8 @@ export const RUN_INSIGHT_PROMPT = "run-insight";
 export const RUN_INSIGHT_VERSION = "v1";
 
 export interface RunInsightInput {
-  /** The user's decrypted Claude key; null means no call and the fallback card. */
-  apiKey: string | null;
+  /** The user's decrypted Claude key or the owner's Claude plan; null means no call and the fallback card. */
+  credential: CoachCallCredential | null;
   activity: InsightActivity;
   settings: InsightSettings;
   /** The sessions planned that day and next; null when the user has no active plan. */
@@ -27,6 +27,7 @@ export interface RunInsightInput {
 }
 
 export interface RunInsightResult {
+  limited: false;
   content: RunInsight;
   fallback: boolean;
   fallbackReason: RunInsightFallbackReason | null;
@@ -40,18 +41,31 @@ export interface RunInsightResult {
   requestId: string | null;
 }
 
+/**
+ * The plan's usage limit: no card, because the coach can still write one once the limit resets in
+ * retryAfterSeconds, so the job waits for it instead.
+ */
+export interface RunInsightLimited {
+  limited: true;
+  retryAfterSeconds: number;
+  usage: CoachUsage | null;
+  promptVersion: string;
+  requestId: string | null;
+}
+
 export async function runInsight({
-  apiKey,
+  credential,
   activity,
   settings,
   plan,
-}: RunInsightInput): Promise<RunInsightResult> {
+}: RunInsightInput): Promise<RunInsightResult | RunInsightLimited> {
   const promptVersion = `${RUN_INSIGHT_PROMPT}/${RUN_INSIGHT_VERSION}`;
   const fallback = (
     reason: RunInsightFallbackReason,
     usage: CoachUsage | null,
     requestId: string | null,
   ): RunInsightResult => ({
+    limited: false,
     content: buildRunInsightFallback(activity, settings, reason, plan),
     fallback: true,
     fallbackReason: reason,
@@ -61,18 +75,30 @@ export async function runInsight({
     requestId,
   });
 
-  if (!apiKey) return fallback("missing_key", null, null);
+  if (!credential) return fallback("missing_key", null, null);
 
   const result = await callCoach({
-    apiKey,
+    credential,
     prompt: RUN_INSIGHT_PROMPT,
     version: RUN_INSIGHT_VERSION,
     input: buildRunInsightInput(activity, settings, plan),
     schema: runInsightSchema,
     maxTokens: INSIGHT_MAX_TOKENS,
   });
-  if (!result.ok) return fallback(result.failure, result.usage, result.requestId);
+  if (!result.ok) {
+    if (result.failure === "plan_limited") {
+      return {
+        limited: true,
+        retryAfterSeconds: result.retryAfterSeconds,
+        usage: result.usage,
+        promptVersion,
+        requestId: result.requestId,
+      };
+    }
+    return fallback(result.failure, result.usage, result.requestId);
+  }
   return {
+    limited: false,
     content: result.output,
     fallback: false,
     fallbackReason: null,

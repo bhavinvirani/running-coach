@@ -8,6 +8,7 @@ import {
   formatCountValue,
   formatDate,
   formatDateTime,
+  formatDayTime,
   formatDistance,
   formatDistanceValue,
   formatDuration,
@@ -226,6 +227,28 @@ describe("formatDateTime", () => {
   it("shows the missing mark for null and invalid instants", () => {
     expect(formatDateTime(null, "UTC")).toBe(MISSING);
     expect(formatDateTime("not a date", "UTC")).toBe(MISSING);
+  });
+});
+
+describe("formatDayTime", () => {
+  it("shows a UTC instant of the coming days in the given time zone, without the year", () => {
+    expect(formatDayTime("2026-10-04T13:00:00Z", "UTC")).toBe("Sun 4 Oct, 13:00");
+    expect(formatDayTime("2026-10-04T13:00:00Z", "Europe/London")).toBe("Sun 4 Oct, 14:00");
+    expect(formatDayTime("2026-10-04T08:30:00Z", "Asia/Kolkata")).toBe("Sun 4 Oct, 14:00");
+  });
+
+  it("crosses the date line when the zone does", () => {
+    expect(formatDayTime("2026-10-04T23:30:00Z", "Pacific/Auckland")).toBe("Mon 5 Oct, 12:30");
+  });
+
+  it("follows daylight saving time (DST)", () => {
+    expect(formatDayTime("2026-10-24T12:00:00Z", "Europe/London")).toBe("Sat 24 Oct, 13:00");
+    expect(formatDayTime("2026-10-25T12:00:00Z", "Europe/London")).toBe("Sun 25 Oct, 12:00");
+  });
+
+  it("shows the missing mark for null and invalid instants", () => {
+    expect(formatDayTime(null, "UTC")).toBe(MISSING);
+    expect(formatDayTime("tomorrow", "UTC")).toBe(MISSING);
   });
 });
 

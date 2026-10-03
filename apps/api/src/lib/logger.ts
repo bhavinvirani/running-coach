@@ -15,6 +15,7 @@ const SENSITIVE_KEYS = [
   "set-cookie",
   "email",
   "x-garmin-secret",
+  "x-coach-secret",
 ];
 const redactPaths = SENSITIVE_KEYS.flatMap((key) => {
   const segment = /^[A-Za-z_$][\w$]*$/.test(key) ? key : `["${key}"]`;

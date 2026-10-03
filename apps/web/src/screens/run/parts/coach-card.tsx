@@ -12,15 +12,21 @@ import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
+import { formatDayTime } from "@/lib/format";
 import { Note, RunSection } from "./run-section";
 
 const TITLE = "Coach";
 
 type CoachCardProps = {
   state: ScreenState<InsightResponse>;
-  /** From /api/me: without a key a fallback card's one action is Add Claude key. */
-  hasKey: boolean;
-  /** Ask the coach, or Try again after a fallback card. */
+  /**
+   * From /api/me: whether the coach has a credential, a saved key or the owner's Claude plan. Without one a
+   * fallback card's one action is Add Claude key.
+   */
+  hasCredential: boolean;
+  /** The runner's time zone from settings, for when the coach tries again after the plan's usage limit. */
+  timeZone: string;
+  /** Ask the coach, Try again after a fallback card, or Try now while the plan's usage limit holds the job. */
   ask: () => void;
   asking: boolean;
   askError: Error | null;
@@ -31,8 +37,9 @@ type CoachCardProps = {
 /**
  * The coach's review of the run, right under the stats: what happened, what it means, what to do next.
  * Loads beside the run and has its own loading and error states, so a slow or failed coach never hides
- * the run. Without a Claude key a run with no card is one sentence and the way to add one, nothing else; a
- * stored card keeps its text, and a fallback card offers only that same way to add one.
+ * the run. Without a credential (no key, and not the owner's Claude plan) a run with no card is one sentence
+ * and the way to add a key, nothing else; a stored card keeps its text, and a fallback card offers only that
+ * same way to add one.
  */
 export function CoachCard({ state, ...actions }: CoachCardProps) {
   if (state.status === "pending") {
@@ -72,7 +79,8 @@ export function CoachCard({ state, ...actions }: CoachCardProps) {
 
 function CoachBody({
   response,
-  hasKey,
+  hasCredential,
+  timeZone,
   ask,
   asking,
   askError,
@@ -100,10 +108,22 @@ function CoachBody({
         </div>
       );
     case "retrying":
-      return (
+      return response.resumesAt === undefined ? (
         <p role="status" className="text-body text-ink-2">
           Coach unavailable, will retry.
         </p>
+      ) : !hasCredential ? (
+        // The plan was withdrawn on the server while the job waited: at the reset it finds no credential,
+        // and Try now could only answer 409.
+        <AddKeyLink />
+      ) : (
+        <PlanLimit
+          resumesAt={response.resumesAt}
+          timeZone={timeZone}
+          ask={ask}
+          asking={asking}
+          askError={askError}
+        />
       );
     case "ready":
       return (
@@ -117,7 +137,7 @@ function CoachBody({
           ) : (
             <FallbackAction
               reason={response.insight.fallbackReason}
-              hasKey={hasKey}
+              hasCredential={hasCredential}
               ask={ask}
               asking={asking}
               askError={askError}
@@ -157,6 +177,44 @@ function AskAlert({ error }: { error: Error | null }) {
     <p role="alert" className="text-body text-ink">
       {errorMessage(error)}
     </p>
+  );
+}
+
+/**
+ * The coach's job waits for the owner's Claude plan usage limit to reset: when it runs again, in the runner's
+ * zone, and Try now, which asks the API to run it at once (the limit may already have reset early). Asking
+ * answers the new state: pending, or this again with a later reset.
+ */
+function PlanLimit({
+  resumesAt,
+  timeZone,
+  ask,
+  asking,
+  askError,
+}: {
+  resumesAt: string;
+  timeZone: string;
+  ask: () => void;
+  asking: boolean;
+  askError: Error | null;
+}) {
+  return (
+    <>
+      <p role="status" className="text-body text-ink-2">
+        Your Claude plan&apos;s usage limit is reached. The coach tries again{" "}
+        {formatDayTime(resumesAt, timeZone)}.
+      </p>
+      <AskAlert error={askError} />
+      <Button
+        variant="secondary"
+        className="self-start"
+        disabled={asking}
+        aria-busy={asking}
+        onClick={ask}
+      >
+        Try now
+      </Button>
+    </>
   );
 }
 
@@ -208,25 +266,26 @@ function Part({ label, text }: { label: string; text: string }) {
 }
 
 /**
- * A fallback card already says why the coach could not write one; this is what to do about it. With no key
- * set, whatever the reason, the one action is Add Claude key: Try again could only answer 409. A rejected
- * key is replaced in Settings, and Try again stays beside it for when it already was (the card is from
- * before) or Claude turned the key down only for a moment; any other reason may pass on another try.
+ * A fallback card already says why the coach could not write one; this is what to do about it. With no
+ * credential, whatever the reason, the one action is Add Claude key: Try again could only answer 409. A
+ * rejected key is replaced in Settings, and Try again stays beside it for when it already was (the card is
+ * from before) or Claude turned the key down only for a moment. A rejected plan token is fixed on the server
+ * (a new token from claude setup-token), so the runner can only try again; so may any other reason.
  */
 function FallbackAction({
   reason,
-  hasKey,
+  hasCredential,
   ask,
   asking,
   askError,
 }: {
   reason: CoachFallbackReason;
-  hasKey: boolean;
+  hasCredential: boolean;
   ask: () => void;
   asking: boolean;
   askError: Error | null;
 }) {
-  if (reason === "missing_key" || !hasKey) return <AddKeyLink />;
+  if (reason === "missing_key" || !hasCredential) return <AddKeyLink />;
   const tryAgain = (
     <Button
       variant="secondary"

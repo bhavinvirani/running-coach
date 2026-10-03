@@ -1,5 +1,6 @@
 # Turns on auto-merge for Dependabot patch and minor PRs; branch protection holds the merge until CI
-# is green. garminconnect never auto-merges: Garmin breaks the unofficial client without notice.
+# is green. garminconnect never auto-merges: Garmin breaks the unofficial client without notice. Nor does
+# the Claude Agent SDK: it bundles Claude Code, whose plan-token auth a human re-checks on each bump.
 name: Dependabot auto-merge
 
 on: pull_request
@@ -21,7 +22,8 @@ jobs:
       - if: >-
           (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor') &&
-          !contains(steps.metadata.outputs.dependency-names, 'garminconnect')
+          !contains(steps.metadata.outputs.dependency-names, 'garminconnect') &&
+          !contains(steps.metadata.outputs.dependency-names, '@anthropic-ai/claude-agent-sdk')
         # A GITHUB_TOKEN merge starts no CI run on main, so Render deploys it with the next merge.
         run: gh pr merge --auto --squash "$PR_URL"
         env:

@@ -143,7 +143,13 @@ describe("useAskCoach", () => {
 
   it("reads /api/me again on 409 claude_key_missing, so Settings stops showing the removed key as Saved", async () => {
     const withKey = (hasClaudeKey: boolean) =>
-      meFixture({ settings: { ...meFixture().settings, hasClaudeKey } });
+      meFixture({
+        settings: {
+          ...meFixture().settings,
+          hasClaudeKey,
+          coachCredential: hasClaudeKey ? "key" : "none",
+        },
+      });
     const calls = stubFetch(({ method, path }) => {
       if (path === "/api/me") return json(withKey(false));
       return method === "POST" ? problem(409, ErrorCode.claudeKeyMissing) : json({ state: "none" });

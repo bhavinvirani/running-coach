@@ -158,6 +158,16 @@ export function formatDateTime(isoUtc: string | null | undefined, timeZone: stri
   return `${zoned.weekday} ${zoned.day} ${zoned.month} ${zoned.year}, ${zoned.time}`;
 }
 
+/**
+ * A UTC instant of the coming days in the user's time zone, without the year: "Sun 4 Oct, 14:00", like a
+ * run's start (formatLocalDateTime). Only for instants a few days ahead, where the year cannot be mistaken.
+ */
+export function formatDayTime(isoUtc: string | null | undefined, timeZone: string): string {
+  const zoned = zonedParts(isoUtc, timeZone);
+  if (!zoned) return MISSING;
+  return `${zoned.weekday} ${zoned.day} ${zoned.month}, ${zoned.time}`;
+}
+
 /** The date of a UTC instant in the user's time zone: "2 Oct 2026". */
 export function formatDate(isoUtc: string | null | undefined, timeZone: string): string {
   const zoned = zonedParts(isoUtc, timeZone);

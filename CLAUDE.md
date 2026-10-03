@@ -1,8 +1,8 @@
 # Running Coach
 
-Mobile-first PWA that replaces a Runna subscription: it syncs Garmin runs, builds a training plan for any goal (5K to marathon, with or without a race date), pushes structured workouts to the watch, reviews each run with Claude as the coach, and adapts the plan. One user today (the owner); data is per-user from day one. Each user brings their own Garmin account and Claude API key. Hosting is $0 (one Render free web service, Neon Postgres). SPEC.md is the one-page spec with every decision; keep it one page.
+Mobile-first PWA that replaces a Runna subscription: it syncs Garmin runs, builds a training plan for any goal (5K to marathon, with or without a race date), pushes structured workouts to the watch, reviews each run with Claude as the coach, and adapts the plan. One user today (the owner); data is per-user from day one. Each user brings their own Garmin account and Claude API key; the owner can run the coach on their Claude plan instead. Hosting is $0 (two Render free web services: the app, and the coach service for the plan; Neon Postgres). SPEC.md is the one-page spec with every decision; keep it one page.
 
-Status: the bootstrap is done (#21): every skill points at a tested reference implementation. Each session is now one slice started with `/slice N`, next `/slice 7`; the slice ends with the PR steps written in `/ship`, which the owner can also run alone.
+Status: the bootstrap is done (#21): every skill points at a tested reference implementation. Each session is now one slice started with `/slice N`, next `/slice 9`; the slice ends with the PR steps written in `/ship`, which the owner can also run alone.
 
 ## Repo map
 
@@ -13,6 +13,7 @@ Status: the bootstrap is done (#21): every skill points at a tested reference im
 | `apps/api`           | Express + TypeScript: routes → services → Drizzle on Postgres; the pg-boss worker runs in the same process, the Garmin service as its child process | `api.md`            |
 | `apps/api/src/db`    | Drizzle schema and committed SQL migrations                                                                                                         | `migrations.md`     |
 | `apps/api/src/coach` | Claude client, versioned prompt files, output schemas, fallbacks                                                                                    | `coach-prompts.md`  |
+| `apps/coach`         | Coach service: runs a prompt the API sends on the owner's Claude plan through the Claude Agent SDK; shared-secret header; second Render service     | `coach-service.md`  |
 | `services/garmin`    | FastAPI over `garminconnect`, stateless, shared-secret header, bound to 127.0.0.1                                                                   | `garmin-service.md` |
 | `packages/engine`    | Training rules: pure TypeScript, no I/O, test-first                                                                                                 | `engine.md`         |
 | `packages/shared`    | zod contracts, error codes, units: the only source of types                                                                                         | `contracts.md`      |
@@ -32,6 +33,7 @@ Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md
 | `pnpm db:generate` / `pnpm db:migrate`              | SQL from the Drizzle schema; apply locally                                                                                                                                                        |
 | `pnpm py:check`                                     | ruff, mypy, pytest for `services/garmin` through uv                                                                                                                                               |
 | `pnpm garmin:connect <app-url>`                     | laptop CLI: signs in to the app, logs in to Garmin with 2FA in the terminal, uploads the token bundle, which the API proves with one call and stores encrypted                                    |
+| `pnpm coach:dev`                                    | the coach service on 127.0.0.1:8777 for the owner's Claude plan, on this laptop's Claude Code login (needs `COACH_SERVICE_SECRET`)                                                                |
 
 ## Consistency standards
 

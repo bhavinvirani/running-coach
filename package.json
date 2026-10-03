@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "docker compose up -d --wait postgres && (cd services/garmin && uv sync --frozen --quiet) && pnpm --parallel --filter @running-coach/api --filter @running-coach/web dev",
+    "coach:dev": "pnpm --filter @running-coach/coach dev",
     "check": "pnpm typecheck && pnpm lint && pnpm contract:check && pnpm test && pnpm --filter @running-coach/engine test",
     "typecheck": "pnpm -r --parallel typecheck",
     "lint": "eslint . --max-warnings 0",
@@ -48,6 +49,18 @@
       "ignoreGhsas": [
         "GHSA-vfj7-8cjw-p6xm"
       ]
+    },
+    "packageExtensions": {
+      "@anthropic-ai/claude-agent-sdk": {
+        "peerDependenciesMeta": {
+          "@anthropic-ai/sdk": {
+            "optional": true
+          },
+          "@modelcontextprotocol/sdk": {
+            "optional": true
+          }
+        }
+      }
     }
   }
 }

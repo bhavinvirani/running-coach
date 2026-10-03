@@ -20,6 +20,13 @@
         "standard",
         "detailed"
       ]
+    },
+    "coachCredential": {
+      "type": "string",
+      "enum": [
+        "key",
+        "plan"
+      ]
     }
   },
   "additionalProperties": false

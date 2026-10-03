@@ -6,13 +6,14 @@ import { postgresErrorCode } from "../helpers";
 import { createUser } from "../seed";
 
 // 0001_create_user_settings: one row of display and coach settings per user, inserted with the column
-// defaults when the user is created (auth.ts). The runner is in migrate.test.ts.
+// defaults when the user is created (auth.ts). 0015_add_coach_credential: what runs the coach, key or
+// plan, key by default. The runner is in migrate.test.ts.
 
 const settingsOf = (userId: string) =>
   db.select().from(userSettings).where(eq(userSettings.userId, userId));
 
 describe("user_settings", () => {
-  it("gives a new user one row with the defaults: km, UTC, standard, no HR zones, no Claude key", async () => {
+  it("gives a new user one row with the defaults: km, UTC, standard, no HR zones, no Claude key, the key as coach credential", async () => {
     const userId = await createUser();
 
     const rows = await settingsOf(userId);
@@ -25,6 +26,7 @@ describe("user_settings", () => {
         coachDetail: "standard",
         hrZones: null,
         claudeKeyEnc: null,
+        coachCredential: "key",
       }),
     ]);
     expect(rows[0]?.createdAt).toBeInstanceOf(Date);
@@ -51,6 +53,20 @@ describe("user_settings", () => {
 
     expect(await postgresErrorCode(badUnits)).toBe("23514");
     expect(await postgresErrorCode(badDetail)).toBe("23514");
+  });
+
+  it("stores the plan as coach credential and rejects a credential outside the shared choice list", async () => {
+    const userId = await createUser();
+    const ofUser = eq(userSettings.userId, userId);
+
+    await db.update(userSettings).set({ coachCredential: "plan" }).where(ofUser);
+    const badChoice = db
+      .update(userSettings)
+      .set({ coachCredential: "none" as never })
+      .where(ofUser);
+
+    expect((await settingsOf(userId))[0]?.coachCredential).toBe("plan");
+    expect(await postgresErrorCode(badChoice)).toBe("23514");
   });
 
   it("is deleted with its user", async () => {

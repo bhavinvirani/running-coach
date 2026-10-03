@@ -4,7 +4,7 @@ import { closePools, pool } from "./db/client";
 import { runMigrations } from "./db/migrate";
 import { GarminServiceProcess } from "./garmin/process";
 import { startJobs, stopJobs } from "./jobs";
-import { config, inheritedEnv } from "./lib/config";
+import { coachServiceWarning, config, inheritedEnv } from "./lib/config";
 import { onShutdown, registerReadinessCheck, runShutdownHooks } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
 import { paths } from "./lib/paths";
@@ -76,6 +76,10 @@ async function shutdown(signal: string): Promise<void> {
 
 async function main(): Promise<void> {
   onShutdown("database", closePools);
+  // Half a coach service leaves the Claude plan off instead of failing boot: Render fills the secret
+  // itself, and the URL is pasted by hand after the first deploy.
+  const coachWarning = coachServiceWarning(config);
+  if (coachWarning) log.warn(coachWarning);
 
   await runMigrations(pool);
   log.info("migrations applied");

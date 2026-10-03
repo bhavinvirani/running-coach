@@ -8,6 +8,7 @@ import { createLongRun, createUser } from "../seed";
 // 0004_create_coach_message: what the coach wrote, tied to its user and (for insights) its run.
 // 0013_add_coach_fallback_reason: why a card is the fallback, and at most one insight per run.
 // 0014_add_request_rejected_fallback_reason: the CHECK takes Claude turning the request down for good.
+// 0015_add_coach_credential: and Claude rejecting the plan token on the coach service.
 
 const content = {
   headline: "18.0 km in 1:42:00 at 5:40 /km.",
@@ -117,6 +118,25 @@ describe("coach_message", () => {
       .returning();
 
     expect(row).toMatchObject({ model: null, fallbackReason: "request_rejected" });
+  });
+
+  it("stores a plan_auth_failed card (Claude rejected the plan token on the coach service)", async () => {
+    const userId = await createUser();
+    const run = await createLongRun(userId);
+
+    const [row] = await db
+      .insert(coachMessage)
+      .values({
+        userId,
+        kind: "insight",
+        activityId: run.id,
+        promptVersion: "run-insight/v1",
+        content,
+        fallbackReason: "plan_auth_failed",
+      })
+      .returning();
+
+    expect(row).toMatchObject({ model: null, fallbackReason: "plan_auth_failed" });
   });
 
   it("reads a card written before 0013 as the model's, with no fallback reason", async () => {

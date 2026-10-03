@@ -21,7 +21,12 @@ const postgresUrl = z
 // Markers in the published dev, test and e2e secrets (.env.example, vitest.config.ts, playwright.config.ts).
 // MASTER_KEY is base64, so it is checked decoded too ("dev-only-master-key-...").
 const PUBLISHED_SECRET_MARKERS = ["dev-only", "test-only", "e2e-only"];
-const SECRETS = ["MASTER_KEY", "BETTER_AUTH_SECRET", "CRON_SECRET"] as const;
+const SECRETS = [
+  "MASTER_KEY",
+  "BETTER_AUTH_SECRET",
+  "CRON_SECRET",
+  "COACH_SERVICE_SECRET",
+] as const;
 
 function isPublishedSecret(value: string): boolean {
   const decoded = Buffer.from(value, "base64").toString("latin1");
@@ -67,10 +72,73 @@ const configObject = z.object({
   // Tests point the coach at a local fake; production leaves it unset.
   CLAUDE_BASE_URL: optional(z.url()),
   CLAUDE_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(60_000),
+  // The coach service (apps/coach), which runs the owner's coach on their Claude plan. The plan is
+  // offered only when both are set (coachServiceOf); one without the other leaves it off with a warning
+  // at boot instead of failing it, because Render fills the secret itself and the URL is pasted by hand.
+  // http(s) only: a bare "host:port" parses as a URL whose scheme is the host.
+  COACH_SERVICE_URL: optional(
+    z.url({ protocol: /^https?$/ }).transform((value) => new URL(value).origin),
+  ),
+  COACH_SERVICE_SECRET: optional(z.string().min(32)),
+  // Render's free service sleeps after 15 min idle and takes about 60 s to wake: /health is polled this
+  // long before a call gives up as unavailable.
+  COACH_SERVICE_WAKE_MS: z.coerce.number().int().min(100).max(600_000).default(120_000),
+  // Between /health polls while the service wakes; tests shorten it.
+  COACH_SERVICE_WAKE_POLL_MS: z.coerce.number().int().min(10).max(60_000).default(5_000),
+  // One POST /v1/run: Claude Code's start-up (about 11 s at 0.1 CPU), the call, its own capped retries
+  // and its switch to the fallback model.
+  COACH_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(150_000),
 });
 
+/**
+ * The longest one coach call may take: on the plan, COACH_SERVICE_WAKE_MS plus COACH_SERVICE_TIMEOUT_MS;
+ * on a key, CLAUDE_TIMEOUT_MS twice (the call and its one retry on the fallback model). The analyze-run
+ * job's expireInSeconds (src/jobs/analyze-run-queue.ts) is this plus a minute: pg-boss runs a job it
+ * expired mid-call again, which spends the plan's usage or the key's credit a second time.
+ */
+export const COACH_CALL_BUDGET_MS = 540_000;
+
+// Plain http reaches the coach service only on this machine: anywhere else the shared secret and the
+// prompt would cross the network in cleartext, and Render answers http with a redirect that turns the
+// POST into a GET.
+const LOCAL_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"]);
+
+// zod runs the refinement below even when a field failed its own check, with that field's raw value:
+// these skip such a value, which its own check already reports.
+function isRemotePlainHttp(origin: string): boolean {
+  if (!URL.canParse(origin)) return false;
+  const url = new URL(origin);
+  return url.protocol === "http:" && !LOCAL_HOSTS.has(url.hostname);
+}
+
+function exceeds(budgetMs: number, ...parts: number[]): boolean {
+  return parts.every(Number.isFinite) && parts.reduce((sum, part) => sum + part, 0) > budgetMs;
+}
+
 const configSchema = configObject.superRefine((value, ctx) => {
+  if (exceeds(COACH_CALL_BUDGET_MS, value.COACH_SERVICE_WAKE_MS, value.COACH_SERVICE_TIMEOUT_MS)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["COACH_SERVICE_TIMEOUT_MS"],
+      message: `plus COACH_SERVICE_WAKE_MS must be at most ${COACH_CALL_BUDGET_MS} ms, so a coach call ends before its job expires and runs again`,
+    });
+  }
+  if (exceeds(COACH_CALL_BUDGET_MS, 2 * value.CLAUDE_TIMEOUT_MS)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["CLAUDE_TIMEOUT_MS"],
+      message: `must be at most ${COACH_CALL_BUDGET_MS / 2} ms, so a coach call and its retry end before their job expires and runs again`,
+    });
+  }
   if (value.NODE_ENV !== "production") return;
+  if (value.COACH_SERVICE_URL !== undefined && isRemotePlainHttp(value.COACH_SERVICE_URL)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["COACH_SERVICE_URL"],
+      message:
+        "must be https in production (http only for localhost or 127.0.0.1): over http the secret and the prompt travel in cleartext",
+    });
+  }
   // Without it the cron endpoint refuses every call and no daily sync ever runs, silently.
   if (value.CRON_SECRET === undefined) {
     ctx.addIssue({ code: "custom", path: ["CRON_SECRET"], message: "is required in production" });
@@ -101,6 +169,31 @@ export function inheritedEnv(): Record<string, string> {
 }
 
 export type Config = z.infer<typeof configSchema>;
+
+export interface CoachService {
+  /** Origin of the coach service. */
+  url: string;
+  /** Sent as x-coach-secret; never logged. */
+  secret: string;
+}
+
+/** The coach service when both its URL and its secret are set, else null: the Claude plan is off. */
+export function coachServiceOf(
+  value: Pick<Config, "COACH_SERVICE_URL" | "COACH_SERVICE_SECRET">,
+): CoachService | null {
+  const { COACH_SERVICE_URL: url, COACH_SERVICE_SECRET: secret } = value;
+  return url === undefined || secret === undefined ? null : { url, secret };
+}
+
+/** The boot warning for a coach service with only one of its two variables set; null when there is none. */
+export function coachServiceWarning(
+  value: Pick<Config, "COACH_SERVICE_URL" | "COACH_SERVICE_SECRET">,
+): string | null {
+  const urlSet = value.COACH_SERVICE_URL !== undefined;
+  if (urlSet === (value.COACH_SERVICE_SECRET !== undefined)) return null;
+  const missing = urlSet ? "COACH_SERVICE_SECRET" : "COACH_SERVICE_URL";
+  return `${missing} is not set, so the Claude plan is off; set both COACH_SERVICE_URL and COACH_SERVICE_SECRET to offer it`;
+}
 
 export type ConfigResult =
   { ok: true; config: Config } | { ok: false; problems: { variable: string; message: string }[] };

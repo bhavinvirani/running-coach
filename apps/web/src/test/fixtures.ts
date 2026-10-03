@@ -55,6 +55,8 @@ export function meFixture(overrides: Partial<MeResponse> = {}): MeResponse {
       timezone: "Europe/London",
       coachDetail: "standard",
       hasClaudeKey: false,
+      coachCredential: "none",
+      claudePlanAvailable: false,
     },
     garmin: { status: "ok", lastSyncAt: "2026-09-27T06:12:00Z" },
     ...overrides,

@@ -25,6 +25,7 @@ export type RunInsight = z.infer<typeof runInsightSchema>;
  * Why a card was built without the model. missing_key is never stored, because no key queues no job, but
  * its card exists for callers without a key. timeout and unavailable are worth another try later;
  * request_rejected is Claude turning the request down for good (no credit left, no access to the model).
+ * plan_auth_failed: Claude rejected the owner's plan token on the coach service (expired or revoked).
  */
 export const coachFallbackReasonSchema = z.enum([
   "missing_key",
@@ -35,6 +36,7 @@ export const coachFallbackReasonSchema = z.enum([
   "timeout",
   "unavailable",
   "request_rejected",
+  "plan_auth_failed",
 ]);
 export type CoachFallbackReason = z.infer<typeof coachFallbackReasonSchema>;
 
@@ -75,13 +77,14 @@ export type RunInsightCard = z.infer<typeof runInsightCardSchema>;
 /**
  * GET /api/activities/:id/insight, and POST (ask the coach) for a run with no card or a fallback card.
  * ready: a stored card, the model's or a fallback. pending: the coach is writing one. retrying: Claude
- * failed and the job will try again later. none: a key is set but this run has no card (an imported or
+ * failed and the job will try again later; resumesAt when the job waits for the Claude plan's usage limit
+ * to reset (POST pulls it forward). none: a key is set but this run has no card (an imported or
  * older run). no_key: no card and no Claude key.
  */
 export const insightResponseSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("ready"), insight: runInsightCardSchema }).strict(),
   z.object({ state: z.literal("pending") }).strict(),
-  z.object({ state: z.literal("retrying") }).strict(),
+  z.object({ state: z.literal("retrying"), resumesAt: z.iso.datetime().optional() }).strict(),
   z.object({ state: z.literal("none") }).strict(),
   z.object({ state: z.literal("no_key") }).strict(),
 ]);

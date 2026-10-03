@@ -62,6 +62,11 @@ describe("insightResponseSchema", () => {
     }
   });
 
+  it("accepts a retrying state waiting for the plan's reset", () => {
+    const held = { state: "retrying", resumesAt: "2026-10-04T14:00:00.000Z" };
+    expect(insightResponseSchema.safeParse(held).success).toBe(true);
+  });
+
   it("rejects a ready state without its card", () => {
     expect(insightResponseSchema.safeParse({ state: "ready" }).success).toBe(false);
   });

@@ -58,22 +58,30 @@ export function useGarminConnectionSeen(seen: GarminStatus | undefined) {
   }, [seen, cached, queryClient]);
 }
 
+/**
+ * PATCH /api/me/settings. A new coach credential (Claude plan or API key) changes what the coach can use, so
+ * it is stored like a key change; units and coach detail touch no coach state. 409 claude_plan_unavailable
+ * when the plan is chosen but not offered to this account.
+ */
 export function useUpdateSettings() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (changes: UpdateSettingsRequest) =>
       apiFetch("/api/me/settings", { method: "PATCH", body: changes, schema: meResponseSchema }),
     // PATCH answers with the whole MeResponse, so the cache takes it as is: no second GET.
-    onSuccess: (me) => queryClient.setQueryData(detailKey("me"), me),
+    onSuccess: (me, changes) => {
+      if (changes.coachCredential === undefined) queryClient.setQueryData(detailKey("me"), me);
+      else storeCredentialChange(queryClient, me);
+    },
   });
 }
 
 /**
- * Saving or removing the Claude key answers with the whole MeResponse. Stored as is, its hasClaudeKey picks a
- * fallback card's action (Try again or Add Claude key). A run without a card answers no_key or none by the
- * key, so the cached coach states are read again.
+ * Choosing a credential, or saving or removing the Claude key, answers with the whole MeResponse. Stored as
+ * is, its coachCredential picks a fallback card's action (Try again or Add Claude key). A run without a card
+ * answers no_key or none by the credential, so the cached coach states are read again.
  */
-function storeKeyChange(queryClient: QueryClient, me: MeResponse): void {
+function storeCredentialChange(queryClient: QueryClient, me: MeResponse): void {
   queryClient.setQueryData(detailKey("me"), me);
   void queryClient.invalidateQueries({ queryKey: resourceKey("insights") });
 }
@@ -90,7 +98,7 @@ export function useSaveClaudeKey() {
       const body: ClaudeKeyRequest = { key: key.trim() };
       return apiFetch("/api/me/claude-key", { method: "PUT", body, schema: meResponseSchema });
     },
-    onSuccess: (me) => storeKeyChange(queryClient, me),
+    onSuccess: (me) => storeCredentialChange(queryClient, me),
   });
 }
 
@@ -100,6 +108,6 @@ export function useRemoveClaudeKey() {
   return useMutation({
     mutationFn: () =>
       apiFetch("/api/me/claude-key", { method: "DELETE", schema: meResponseSchema }),
-    onSuccess: (me) => storeKeyChange(queryClient, me),
+    onSuccess: (me) => storeCredentialChange(queryClient, me),
   });
 }

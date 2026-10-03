@@ -1,0 +1,6 @@
+ALTER TABLE "garmin_connection" DROP CONSTRAINT "garmin_connection_workouts_push_error_check";--> statement-breakpoint
+ALTER TABLE "coach_message" DROP CONSTRAINT "coach_message_fallback_reason_check";--> statement-breakpoint
+ALTER TABLE "user_settings" ADD COLUMN "coach_credential" text DEFAULT 'key' NOT NULL;--> statement-breakpoint
+ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_coach_credential_check" CHECK ("user_settings"."coach_credential" in ('key', 'plan'));--> statement-breakpoint
+ALTER TABLE "garmin_connection" ADD CONSTRAINT "garmin_connection_workouts_push_error_check" CHECK ("garmin_connection"."workouts_push_error" in ('validation', 'unauthorized', 'not_found', 'rate_limited', 'internal', 'garmin_not_connected', 'garmin_auth_expired', 'garmin_rate_limited', 'garmin_unavailable', 'garmin_mfa_required', 'claude_key_missing', 'claude_key_invalid', 'claude_unavailable', 'claude_plan_unavailable', 'claude_plan_limited', 'plan_missing', 'session_locked'));--> statement-breakpoint
+ALTER TABLE "coach_message" ADD CONSTRAINT "coach_message_fallback_reason_check" CHECK ("coach_message"."fallback_reason" in ('missing_key', 'key_invalid', 'refusal', 'max_tokens', 'invalid_output', 'timeout', 'unavailable', 'request_rejected', 'plan_auth_failed'));

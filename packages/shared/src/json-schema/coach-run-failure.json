@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "refusal",
+    "max_tokens",
+    "invalid_output",
+    "timeout",
+    "unavailable",
+    "request_rejected",
+    "plan_auth_failed",
+    "plan_limited"
+  ]
+}
