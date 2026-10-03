@@ -261,10 +261,19 @@ export function formatWeekRange(
 
 const COUNT = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
 
+/**
+ * A count on its own, for a figure that draws its noun apart or a number inside a phrase: 4 → "4",
+ * 1240 → "1,240".
+ */
+export function formatCountValue(count: number): string {
+  if (!isFiniteNumber(count) || count < 0) return MISSING;
+  return COUNT.format(count);
+}
+
 /** A count with its noun: 1, "run", "runs" → "1 run"; 1240 → "1,240 runs". */
 export function formatCount(count: number, singular: string, plural: string): string {
-  if (!isFiniteNumber(count) || count < 0) return MISSING;
-  return `${COUNT.format(count)} ${count === 1 ? singular : plural}`;
+  const value = formatCountValue(count);
+  return value === MISSING ? MISSING : `${value} ${count === 1 ? singular : plural}`;
 }
 
 /** "m" with km, "ft" with mi: elevation follows the distance unit, like elevationInUnits in shared. */

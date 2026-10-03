@@ -1,5 +1,6 @@
 import {
   goalInputSchema,
+  recentTimeSchema,
   type DistanceKey,
   type Goal,
   type GoalInput,
@@ -7,6 +8,7 @@ import {
   type RaceDistanceKey,
   type Weekday,
 } from "@running-coach/shared";
+import { addDays } from "@/lib/dates";
 import { durationParts, durationSeconds, type DurationParts } from "@/lib/duration-parts";
 import { errorMessages } from "@/lib/errors";
 import { goalCopy } from "./goal-copy";
@@ -58,23 +60,41 @@ export function goalForm(goal: Goal | null): GoalForm {
   };
 }
 
-export type GoalFormResult = { ok: true; goal: GoalInput } | { ok: false; message: string };
+/**
+ * Days from today to the last race date the picker offers. A plan runs at most 52 weeks from its first
+ * Monday, which is up to 6 days off; a date typed past the engine's exact limit gets race_too_far.
+ */
+export const RACE_DATE_MAX_DAYS = 52 * 7 + 6;
+
+/** The race date picker's max, "2027-10-07" on 2 Oct 2026. */
+export function latestRaceDate(today: string): string {
+  return addDays(today, RACE_DATE_MAX_DAYS);
+}
+
+/**
+ * Where a sentence about the form shows: under the recent time's pickers, for a time no run could take,
+ * or above Save goal for anything else.
+ */
+export type GoalFormField = "recentTime" | "goal";
+
+export type GoalFormResult =
+  { ok: true; goal: GoalInput } | { ok: false; field: GoalFormField; message: string };
 
 /**
  * The body of PUT /api/goal, or the sentence that says what to fix first. Every empty optional field is
  * null, and a fitness goal never carries the race date or target time the form keeps for a switch back.
- * A target of 0:00:00 with No target unticked asks for a time; a recent time of 0:00:00 is no time.
+ * A target of 0:00:00 with No target unticked asks for a time; a recent time of 0:00:00 is no time, and
+ * one at a pace no run could hold is refused here with the contract's own sentence instead of by the API.
  */
 export function goalInput(form: GoalForm): GoalFormResult {
   const race = form.kind === "race";
   const targetTimeS = race && !form.noTargetTime ? durationSeconds(form.targetTime) : null;
   if (targetTimeS === 0) {
-    return { ok: false, message: goalCopy.pickTargetTime };
+    return { ok: false, field: "goal", message: goalCopy.pickTargetTime };
   }
 
-  const recentSeconds = form.showRecentTime ? durationSeconds(form.recentTime) : 0;
-  const recentTimeS = recentSeconds > 0 ? recentSeconds : null;
-
+  // The recent time is checked on its own: a refused one would stop zod before the goal's own checks,
+  // and the form asks about the fields from the top down.
   const parsed = goalInputSchema.safeParse({
     kind: form.kind,
     distanceKey: form.distanceKey,
@@ -82,13 +102,28 @@ export function goalInput(form: GoalForm): GoalFormResult {
     targetTimeS,
     daysPerWeek: form.daysPerWeek,
     longRunDay: form.longRunDay,
-    recentTime:
-      recentTimeS === null ? null : { distanceKey: form.recentDistanceKey, timeS: recentTimeS },
+    recentTime: null,
   });
-  if (parsed.success) return { ok: true, goal: parsed.data };
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    const message =
+      field === "distanceKey"
+        ? goalCopy.pickDistance
+        : field === "raceDate"
+          ? goalCopy.pickRaceDate
+          : errorMessages.validation;
+    return { ok: false, field: "goal", message };
+  }
 
-  const field = parsed.error.issues[0]?.path[0];
-  if (field === "distanceKey") return { ok: false, message: goalCopy.pickDistance };
-  if (field === "raceDate") return { ok: false, message: goalCopy.pickRaceDate };
-  return { ok: false, message: errorMessages.validation };
+  const recentSeconds = form.showRecentTime ? durationSeconds(form.recentTime) : 0;
+  if (recentSeconds === 0) return { ok: true, goal: parsed.data };
+  const checked = recentTimeSchema.safeParse({
+    distanceKey: form.recentDistanceKey,
+    timeS: recentSeconds,
+  });
+  if (!checked.success) {
+    const message = checked.error.issues[0]?.message ?? errorMessages.validation;
+    return { ok: false, field: "recentTime", message };
+  }
+  return { ok: true, goal: { ...parsed.data, recentTime: checked.data } };
 }

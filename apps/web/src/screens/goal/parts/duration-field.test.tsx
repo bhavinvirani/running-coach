@@ -106,6 +106,25 @@ describe("DurationField", () => {
     }
   });
 
+  it("says what is wrong with the time under the pickers, as an alert in ink", () => {
+    render(
+      <DurationField
+        label="Time"
+        value={{ hours: 0, minutes: 5, seconds: 0 }}
+        onChange={() => {}}
+        description="Pace 1:00 /km"
+        error="That time is faster or slower than any run; check the hours and minutes"
+      />,
+    );
+
+    const alert = within(screen.getByRole("group", { name: "Time" })).getByRole("alert");
+    expect(alert).toHaveTextContent(
+      "That time is faster or slower than any run; check the hours and minutes",
+    );
+    expect(alert).toHaveClass("text-body", "text-ink");
+    expect(screen.getByText("Pace 1:00 /km")).toBeInTheDocument();
+  });
+
   it("hides the pickers and the caption behind a checked No target, and shows them once unchecked (no target)", async () => {
     const onNone = vi.fn();
     const { rerender } = render(

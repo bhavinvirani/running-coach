@@ -19,6 +19,14 @@ describe("Input", () => {
     expect(input.className).not.toMatch(/shadow/);
   });
 
+  it("gives a placeholder no color of its own, since ink-3 is for non-text", () => {
+    render(<Input aria-label="Race date" />);
+
+    expect(screen.getByRole("textbox", { name: "Race date" }).className).not.toMatch(
+      /placeholder|ink-3/,
+    );
+  });
+
   it("takes typing and passes its type through", async () => {
     render(
       <>

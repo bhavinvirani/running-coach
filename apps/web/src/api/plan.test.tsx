@@ -52,6 +52,38 @@ describe("useSaveGoal", () => {
     expect(queryClient.getQueryData(planKey)).toEqual({ goal: goalFixture(), plan: planFixture() });
   });
 
+  it("cancels a plan reload in flight, so the plan from before the save cannot land over the new one", async () => {
+    const before = planResponseFixture();
+    const savedGoal = goalFixture({ distanceKey: "half", updatedAt: "2026-10-02T09:00:00Z" });
+    let answerReload: (response: Response) => void = () => {};
+    stubFetch(({ method }) => {
+      if (method === "PUT") {
+        return json({ ok: true, goal: savedGoal, plan: planFixture({ version: 2 }) });
+      }
+      // The reload hangs until the test answers it, after the save.
+      return new Promise<Response>((resolve) => {
+        answerReload = resolve;
+      });
+    });
+    const { queryClient, Wrapper } = wrapper();
+    queryClient.setQueryData(planKey, before);
+    const { result } = renderHook(() => ({ plan: usePlan(), save: useSaveGoal() }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(result.current.plan.isFetching).toBe(true));
+
+    await act(() => result.current.save.mutateAsync(goal));
+    await act(async () => {
+      answerReload(json(before));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(queryClient.getQueryData<PlanResponse>(planKey)).toEqual({
+      goal: savedGoal,
+      plan: planFixture({ version: 2 }),
+    });
+  });
+
   it("answers a conflict as data, not an error, and leaves the cached plan alone (conflict)", async () => {
     stubFetch(() => json({ ok: false, conflict: { code: "no_recent_time" } }));
     const { queryClient, Wrapper } = wrapper();

@@ -1,36 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { goalFixture, planFixture } from "@/test/fixtures";
-import { goalFacts, goalHeadline, goalPaceFacts, paceZoneName, warningSentence } from "./plan-copy";
+import { goalFacts, goalPaceFacts, goalWeeks, paceZoneName, warningSentence } from "./plan-copy";
 
-describe("goalHeadline", () => {
-  it("names a race by its distance and a fitness goal as Fitness", () => {
-    expect(goalHeadline(goalFixture())).toBe("10K");
-    expect(goalHeadline(goalFixture({ distanceKey: "half" }))).toBe("Half");
-    expect(goalHeadline(goalFixture({ kind: "fitness", raceDate: null, targetTimeS: null }))).toBe(
-      "Fitness",
-    );
+describe("goalWeeks", () => {
+  it("gives the weeks left as the figure and its unit, singular for one", () => {
+    expect(goalWeeks(20)).toEqual({ value: "20", unit: "weeks" });
+    expect(goalWeeks(12)).toEqual({ value: "12", unit: "weeks" });
+    expect(goalWeeks(1)).toEqual({ value: "1", unit: "week" });
+    expect(goalWeeks(0)).toEqual({ value: "0", unit: "weeks" });
   });
 });
 
 describe("goalFacts", () => {
-  it("lists a race's day, then the plan's length and the runs a week", () => {
-    expect(goalFacts(goalFixture(), 3)).toEqual([
-      "Race on 25 Oct 2026",
-      "3 weeks",
+  it("names the race in full, then its day and the runs a week", () => {
+    expect(goalFacts(goalFixture({ distanceKey: "half", raceDate: "2027-02-21" }))).toEqual([
+      "Half marathon",
+      "Race on 21 Feb 2027",
       "4 runs a week",
     ]);
-    expect(goalFacts(goalFixture(), 1)[1]).toBe("1 week");
+    expect(goalFacts(goalFixture())).toEqual(["10K", "Race on 25 Oct 2026", "4 runs a week"]);
   });
 
-  it("names a fitness goal's focus distance, or nothing for any distance", () => {
+  it("names a fitness goal and its focus distance, or no distance for any", () => {
     const fitness = goalFixture({
       kind: "fitness",
       raceDate: null,
       targetTimeS: null,
       daysPerWeek: 3,
     });
-    expect(goalFacts(fitness, 12)).toEqual(["10K focus", "12 weeks", "3 runs a week"]);
-    expect(goalFacts({ ...fitness, distanceKey: null }, 12)).toEqual(["12 weeks", "3 runs a week"]);
+    expect(goalFacts(fitness)).toEqual(["Fitness", "10K focus", "3 runs a week"]);
+    expect(goalFacts({ ...fitness, distanceKey: null })).toEqual(["Fitness", "3 runs a week"]);
   });
 });
 
@@ -90,17 +89,31 @@ describe("paceZoneName", () => {
 
 describe("warningSentence", () => {
   it("says a close race leaves a shorter plan, with both week counts (race date too close)", () => {
-    expect(warningSentence({ code: "race_date_close", weeks: 1, minimumWeeks: 12 }, "km")).toBe(
+    expect(warningSentence({ code: "race_date_close", weeks: 1, minimumWeeks: 12 }, "km", 4)).toBe(
       "The race is 1 week away, under the 12 weeks a plan for it usually takes: this plan is the taper and what fits before it.",
     );
   });
 
   it("says where a runner with no recent runs starts, in the runner's unit", () => {
-    expect(warningSentence({ code: "no_recent_runs", startVolumeM: 16093 }, "km")).toBe(
+    expect(warningSentence({ code: "no_recent_runs", startVolumeM: 16093 }, "km", 4)).toBe(
       "No runs in the last 4 weeks, so the plan starts from 16.1 km a week.",
     );
-    expect(warningSentence({ code: "no_recent_runs", startVolumeM: 16093 }, "mi")).toBe(
+    expect(warningSentence({ code: "no_recent_runs", startVolumeM: 16093 }, "mi", 4)).toBe(
       "No runs in the last 4 weeks, so the plan starts from 10.0 mi a week.",
+    );
+  });
+
+  it("says the start volume was lifted to what the runs a week need, in the runner's unit (start volume lifted)", () => {
+    const lifted = {
+      code: "start_volume_lifted",
+      recentWeeklyM: 8000,
+      startVolumeM: 13000,
+    } as const;
+    expect(warningSentence(lifted, "km", 3)).toBe(
+      "Your recent 8.0 km a week is under what 3 runs need, so the plan starts at 13.0 km.",
+    );
+    expect(warningSentence(lifted, "mi", 3)).toBe(
+      "Your recent 5.0 mi a week is under what 3 runs need, so the plan starts at 8.1 mi.",
     );
   });
 
@@ -109,6 +122,7 @@ describe("warningSentence", () => {
       warningSentence(
         { code: "long_run_short", peakLongRunM: 26000, requiredLongRunM: 32000 },
         "km",
+        4,
       ),
     ).toBe(
       "The long run peaks at 26.0 km, under the 32.0 km this race usually asks for, so that each week's increase stays safe.",
@@ -120,6 +134,7 @@ describe("warningSentence", () => {
       warningSentence(
         { code: "target_time_ambitious", targetTimeS: 6300, predictedTimeS: 6750 },
         "km",
+        4,
       ),
     ).toBe(
       "Your target of 1:45:00 is well ahead of the 1:52:30 your recent times predict, so the paces follow the prediction.",

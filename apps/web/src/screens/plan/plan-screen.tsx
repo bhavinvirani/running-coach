@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
-import { weekHolds } from "@/lib/plan-week";
+import { weekHolds, weeksLeft } from "@/lib/plan-week";
 import { GoalCard, GoalCardSkeleton } from "./parts/goal-card";
 import { PaceRow, PaceRowSkeleton } from "./parts/pace-row";
 import { WeekCard, WeekCardSkeleton } from "./parts/week-card";
@@ -66,13 +66,13 @@ export function PlanScreen() {
   return (
     <PlanLayout>
       {refetchFailed}
-      <GoalCard goal={goal} paces={plan.paces} weeks={plan.weeks.length} units={units} />
+      <GoalCard goal={goal} paces={plan.paces} weeksLeft={weeksLeft(plan, today)} units={units} />
       <PaceRow paces={plan.paces} units={units} />
       {plan.warnings.length > 0 ? (
         <ul aria-label={planCopy.notes} className="flex flex-col gap-2">
           {plan.warnings.map((warning, position) => (
             <li key={`${warning.code}-${position}`} className="text-body text-ink">
-              {warningSentence(warning, units)}
+              {warningSentence(warning, units, goal.daysPerWeek)}
             </li>
           ))}
         </ul>

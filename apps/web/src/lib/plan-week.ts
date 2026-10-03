@@ -1,5 +1,6 @@
 import {
   weekdaySchema,
+  type Plan,
   type PlanPhase,
   type PlanSession,
   type PlanWeek,
@@ -51,6 +52,17 @@ export function dayType(day: PlanDay): SessionType {
 /** True when the Monday-to-Sunday week holds the date, "2026-10-14". */
 export function weekHolds(week: PlanWeek, date: string): boolean {
   return date >= week.startDate && date <= addDays(week.startDate, 6);
+}
+
+/**
+ * The plan's weeks still to run on `today`, the week that holds it included: all of them before the plan
+ * starts, 1 in race week, 0 once the race or the plan's last Sunday is past. For a race, the weeks until it.
+ */
+export function weeksLeft(plan: Pick<Plan, "weeks" | "endDate">, today: string): number {
+  return plan.weeks.filter((week) => {
+    const lastDay = addDays(week.startDate, 6);
+    return today <= (lastDay < plan.endDate ? lastDay : plan.endDate);
+  }).length;
 }
 
 export function weekTitle(number: number): string {

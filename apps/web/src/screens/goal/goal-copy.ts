@@ -7,7 +7,13 @@ import {
   type RaceDistanceKey,
   type Units,
 } from "@running-coach/shared";
-import { formatCount, formatDistance, formatLocalDate, formatPace } from "@/lib/format";
+import {
+  formatCount,
+  formatCountValue,
+  formatDistance,
+  formatLocalDate,
+  formatPace,
+} from "@/lib/format";
 
 /** Every sentence and label on the goal form, so the wording is read and changed in one place. */
 export const goalCopy = {
@@ -65,16 +71,19 @@ const RACE_IN_SENTENCE: Readonly<Record<RaceDistanceKey, string>> = {
 export function conflictSentence(conflict: PlanConflict, units: Units): string {
   switch (conflict.code) {
     case "long_run_cap":
-      return `A ${RACE_IN_SENTENCE[conflict.distanceKey]} plan needs at least ${formatCount(conflict.minDaysPerWeek, "running day", "running days")} a week: with ${conflict.daysPerWeek}, the long run would be over the long-run cap. Add a day or pick a shorter race.`;
+      return `A ${RACE_IN_SENTENCE[conflict.distanceKey]} plan needs at least ${formatCount(conflict.minDaysPerWeek, "running day", "running days")} a week: with ${formatCountValue(conflict.daysPerWeek)}, the long run would be over the long-run cap. Add a day or pick a shorter race.`;
     case "too_many_days": {
       const runs = formatCount(conflict.daysPerWeek, "run", "runs");
+      const needed = weeklyDistance(conflict.neededWeeklyM, units);
       const pick = `Pick ${formatCount(conflict.maxDaysPerWeek, "day", "days")} or fewer.`;
-      if (conflict.baselineWeeklyM === 0) {
-        return `With no running in the last 4 weeks, ${runs} a week would build up faster than 10% a week. ${pick}`;
+      if (conflict.recentWeeklyM === 0) {
+        return `With no running in the last 4 weeks, ${runs} a week need at least ${needed}, more than a first week should hold. ${pick}`;
       }
-      const baseline = formatDistance(distanceInUnits(conflict.baselineWeeklyM, units), units);
-      return `${runs} a week would be more than 10% over the ${baseline} a week you have been running. ${pick}`;
+      const recent = weeklyDistance(conflict.recentWeeklyM, units);
+      return `${runs} a week need at least ${needed}, more than 10% over the ${recent} a week you have been running. ${pick}`;
     }
+    case "race_too_far":
+      return `The race is further out than a plan covers: pick a date up to ${formatLocalDate(conflict.latestRaceDate)}.`;
     case "race_too_soon": {
       const start = formatLocalDate(conflict.earliestStart);
       return `The plan would start on ${start}, after the race on ${formatLocalDate(conflict.raceDate)}. Pick a race date on or after ${start}.`;
@@ -82,4 +91,8 @@ export function conflictSentence(conflict: PlanConflict, units: Units): string {
     case "no_recent_time":
       return "There is no recent race or best effort to set your paces from. Enter a recent race time below.";
   }
+}
+
+function weeklyDistance(meters: number, units: Units): string {
+  return formatDistance(distanceInUnits(meters, units), units);
 }

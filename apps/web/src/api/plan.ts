@@ -32,6 +32,11 @@ export function useSaveGoal() {
   return useMutation({
     mutationFn: (goal: GoalInput) =>
       apiFetch("/api/goal", { method: "PUT", body: goal, schema: saveGoalResponseSchema }),
+    // A GET /api/plan already in flight answers with the plan from before the save; landing after
+    // onSuccess, it would put that plan back over the new one.
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: planKey });
+    },
     onSuccess: (response) => {
       if (!response.ok) return;
       queryClient.setQueryData<PlanResponse>(planKey, { goal: response.goal, plan: response.plan });

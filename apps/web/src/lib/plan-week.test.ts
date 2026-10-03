@@ -8,6 +8,7 @@ import {
   weekTitle,
   weekdayInitial,
   weekdayName,
+  weeksLeft,
 } from "./plan-week";
 
 const [first, , last] = planFixture().weeks;
@@ -54,6 +55,26 @@ describe("weekHolds", () => {
     expect(weekHolds(first!, "2026-10-05")).toBe(true);
     expect(weekHolds(first!, "2026-10-11")).toBe(true);
     expect(weekHolds(first!, "2026-10-12")).toBe(false);
+  });
+});
+
+describe("weeksLeft", () => {
+  // Three weeks, Mon 5 Oct to race day on Sun 25 Oct 2026.
+  const plan = planFixture();
+
+  it("counts every week before the plan starts and the week holding today once it runs", () => {
+    expect(weeksLeft(plan, "2026-10-02")).toBe(3);
+    expect(weeksLeft(plan, "2026-10-05")).toBe(3);
+    expect(weeksLeft(plan, "2026-10-11")).toBe(3);
+    expect(weeksLeft(plan, "2026-10-12")).toBe(2);
+    expect(weeksLeft(plan, "2026-10-25")).toBe(1);
+  });
+
+  it("reaches 0 the day after the race, even when the race is before the week's Sunday", () => {
+    expect(weeksLeft(plan, "2026-10-26")).toBe(0);
+    const saturdayRace = { ...plan, endDate: "2026-10-24" };
+    expect(weeksLeft(saturdayRace, "2026-10-24")).toBe(1);
+    expect(weeksLeft(saturdayRace, "2026-10-25")).toBe(0);
   });
 });
 

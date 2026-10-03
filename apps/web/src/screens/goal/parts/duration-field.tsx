@@ -1,7 +1,7 @@
 import { ChevronDown } from "lucide-react";
 import { useId } from "react";
 import { DURATION_PART_LABELS, type DurationParts } from "@/lib/duration-parts";
-import { formatTwoDigits } from "@/lib/format";
+import { formatCountValue, formatTwoDigits } from "@/lib/format";
 
 /** Every race the app plans finishes inside 10 hours; a stored time past that still gets its hour. */
 const HOURS_MAX = 9;
@@ -22,6 +22,8 @@ type DurationFieldProps = {
   none?: { label: string; checked: boolean; onChange: (checked: boolean) => void };
   /** The caption under the pickers: the pace the time means. */
   description?: string | null;
+  /** What is wrong with the picked time, said under the pickers until the time changes. */
+  error?: string | null;
 };
 
 /**
@@ -29,7 +31,14 @@ type DurationFieldProps = {
  * phone shows its own wheel and nothing is typed or misread. Styled like Input: surface-0 on the card,
  * line border, sm radius, at least 44 px high, no shadow; a chevron says each one opens.
  */
-export function DurationField({ label, value, onChange, none, description }: DurationFieldProps) {
+export function DurationField({
+  label,
+  value,
+  onChange,
+  none,
+  description,
+  error,
+}: DurationFieldProps) {
   const id = useId();
   const descriptionId = useId();
   const hidden = none?.checked === true;
@@ -37,7 +46,7 @@ export function DurationField({ label, value, onChange, none, description }: Dur
   const options: Readonly<Record<Part, { value: number; label: string }[]>> = {
     hours: Array.from({ length: Math.max(HOURS_MAX, value.hours) + 1 }, (_, hours) => ({
       value: hours,
-      label: String(hours),
+      label: formatCountValue(hours),
     })),
     minutes: SIXTY.map((minutes) => ({ value: minutes, label: formatTwoDigits(minutes) })),
     seconds: SIXTY.map((seconds) => ({ value: seconds, label: formatTwoDigits(seconds) })),
@@ -92,6 +101,11 @@ export function DurationField({ label, value, onChange, none, description }: Dur
         {describe ? (
           <p id={descriptionId} className="mt-2 text-caption text-ink-2">
             {describe}
+          </p>
+        ) : null}
+        {!hidden && error ? (
+          <p role="alert" className="mt-2 text-body text-ink">
+            {error}
           </p>
         ) : null}
       </fieldset>

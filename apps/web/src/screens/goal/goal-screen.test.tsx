@@ -1,8 +1,8 @@
 import type { GoalInput, MeResponse, PlanResponse, SaveGoalResponse } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { planKey } from "@/api/plan";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
@@ -108,6 +108,28 @@ describe("GoalScreen", () => {
 
     expect(await screen.findByRole("radio", { name: "10K" })).toBeChecked();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the form and its edits and offers Retry when a background reload fails", async () => {
+    let failing = false;
+    stubFetch(({ path }) => {
+      if (path === "/api/me") return json(meFixture());
+      return failing ? problem(503, ErrorCode.internal) : json(planResponseFixture());
+    });
+    const { queryClient } = renderGoal();
+    const target = await screen.findByRole("region", { name: "Target" });
+    await userEvent.click(within(target).getByRole("radio", { name: "Half" }));
+
+    failing = true;
+    await act(() => queryClient.refetchQueries({ queryKey: planKey }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(within(section("Target")).getByRole("radio", { name: "Half" })).toBeChecked();
+
+    failing = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(within(section("Target")).getByRole("radio", { name: "Half" })).toBeChecked();
   });
 
   it("starts a first goal as a race on 4 runs a week with the long run on Sunday, distance and date to pick", async () => {
@@ -261,7 +283,7 @@ describe("GoalScreen", () => {
     expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
   });
 
-  it("names the days and recent volume in mi when there are too many days for it (unit conversion)", async () => {
+  it("names the week the days need and the recent volume in mi when there are too many days for it (unit conversion)", async () => {
     fakeGoalApi({
       me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }),
       plan: planResponseFixture(),
@@ -269,7 +291,8 @@ describe("GoalScreen", () => {
         code: "too_many_days",
         daysPerWeek: 6,
         maxDaysPerWeek: 4,
-        baselineWeeklyM: 16093,
+        recentWeeklyM: 16093,
+        neededWeeklyM: 24140,
       }),
     });
     renderGoal();
@@ -278,7 +301,7 @@ describe("GoalScreen", () => {
     await userEvent.click(save());
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "6 runs a week would be more than 10% over the 10.0 mi a week you have been running. Pick 4 days or fewer.",
+      "6 runs a week need at least 15.0 mi, more than 10% over the 10.0 mi a week you have been running. Pick 4 days or fewer.",
     );
   });
 
@@ -308,6 +331,75 @@ describe("GoalScreen", () => {
     expect(router.state.location.pathname).toBe("/plan");
     const puts = calls.filter((call) => call.method === "PUT");
     expect(puts[1]?.body).toMatchObject({ recentTime: { distanceKey: "10k", timeS: 3000 } });
+  });
+
+  it("keeps the recent race open with its time when a later save answers another conflict (no recent time)", async () => {
+    const calls = fakeGoalApi({
+      plan: planResponseFixture(),
+      save: (_goal, attempt) =>
+        attempt === 1
+          ? conflict({ code: "no_recent_time" })()
+          : conflict({
+              code: "too_many_days",
+              daysPerWeek: 4,
+              maxDaysPerWeek: 3,
+              recentWeeklyM: 9000,
+              neededWeeklyM: 22000,
+            })(),
+    });
+    renderGoal();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Save goal" }));
+    await screen.findByRole("region", { name: "Recent race" });
+    await pickTime("Time", { minutes: "24", seconds: "30" });
+    await userEvent.click(save());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^4 runs a week need at least/);
+    expect(section("Recent race")).toBeInTheDocument();
+    expect(pickedTime("Time")).toEqual(["0", "24", "30"]);
+    const puts = calls.filter((call) => call.method === "PUT");
+    expect(puts).toHaveLength(2);
+    expect(puts[1]?.body).toMatchObject({ recentTime: { distanceKey: "5k", timeS: 1470 } });
+
+    // Saved again, the time is still sent: nothing the runner entered was dropped.
+    await userEvent.click(save());
+    await vi.waitFor(() => expect(calls.filter((call) => call.method === "PUT")).toHaveLength(3));
+    expect(calls.filter((call) => call.method === "PUT")[2]?.body).toMatchObject({
+      recentTime: { distanceKey: "5k", timeS: 1470 },
+    });
+  });
+
+  it("says under the time pickers that a recent time no run could take is wrong, without sending it (implausible recent time)", async () => {
+    const calls = fakeGoalApi({ plan: planResponseFixture() });
+    renderGoal();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add a recent race time" }));
+    // 5:00 for a 5K is 1:00 /km, faster than the GPS glitch pace.
+    await pickTime("Time", { minutes: "5" });
+    await userEvent.click(save());
+
+    const alert = within(timeField("Time")).getByRole("alert");
+    expect(alert).toHaveTextContent(
+      "That time is faster or slower than any run; check the hours and minutes",
+    );
+    expect(alert).toHaveClass("text-body", "text-ink");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(calls.some((call) => call.method === "PUT")).toBe(false);
+
+    await pickTime("Time", { minutes: "25" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("explains a recent time the API refuses with the error text above Save goal, not under the pickers (validation)", async () => {
+    fakeGoalApi({ plan: planResponseFixture(), save: () => problem(400, ErrorCode.validation) });
+    renderGoal();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add a recent race time" }));
+    await pickTime("Time", { minutes: "25" });
+    await userEvent.click(save());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.validation);
+    expect(within(timeField("Time")).queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("opens the recent race fields on Add a recent race time and sends null while the time is empty", async () => {
@@ -350,6 +442,56 @@ describe("GoalScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The plan would start on 5 Oct 2026, after the race on 4 Oct 2026. Pick a race date on or after 5 Oct 2026.",
     );
+  });
+
+  it("names the latest race date a plan reaches when the race is further out (race too far)", async () => {
+    fakeGoalApi({
+      plan: planResponseFixture(),
+      save: conflict({
+        code: "race_too_far",
+        raceDate: "2027-12-12",
+        latestRaceDate: "2027-10-03",
+      }),
+    });
+    renderGoal();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Save goal" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The race is further out than a plan covers: pick a date up to 3 Oct 2027.",
+    );
+  });
+
+  describe("on Fri 2 Oct 2026 in London", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("offers race dates up to 52 weeks and 6 days ahead in the picker, and sends a later typed date for the API to answer (race too far)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // 23:30 UTC on 1 Oct is 00:30 on 2 Oct in London: the runner's day, not the device's UTC one.
+      vi.setSystemTime(new Date("2026-10-01T23:30:00Z"));
+      const calls = fakeGoalApi({
+        plan: planResponseFixture(),
+        save: conflict({
+          code: "race_too_far",
+          raceDate: "2027-12-12",
+          latestRaceDate: "2027-10-03",
+        }),
+      });
+      renderGoal();
+
+      const raceDate = await screen.findByLabelText("Race date");
+      expect(raceDate).toHaveAttribute("max", "2027-10-07");
+      await userEvent.clear(raceDate);
+      await userEvent.type(raceDate, "2027-12-12");
+      await userEvent.click(save());
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(/pick a date up to 3 Oct 2027/);
+      expect(calls.find((call) => call.method === "PUT")?.body).toMatchObject({
+        raceDate: "2027-12-12",
+      });
+    });
   });
 
   it("explains a refused save with the error text and keeps the form (validation)", async () => {

@@ -12,16 +12,24 @@ import {
 } from "@running-coach/shared";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { BackLink } from "@/components/back-link";
-import { DurationField } from "@/components/duration-field";
 import { RetryAlert } from "@/components/retry-alert";
 import { SegmentedField, type SegmentOption } from "@/components/segmented-field";
 import { Button } from "@/components/ui/button";
 import { distanceLabel } from "@/lib/distance-labels";
 import { durationSeconds } from "@/lib/duration-parts";
 import { errorMessage } from "@/lib/errors";
+import { formatCountValue } from "@/lib/format";
 import { weekdayName } from "@/lib/plan-week";
 import { conflictSentence, goalCopy, timePace } from "./goal-copy";
-import { RECENT_DISTANCE_KEYS, goalForm, goalInput, type GoalForm } from "./goal-form";
+import {
+  RECENT_DISTANCE_KEYS,
+  goalForm,
+  goalInput,
+  latestRaceDate,
+  type GoalForm,
+  type GoalFormField,
+} from "./goal-form";
+import { DurationField } from "./parts/duration-field";
 import { FormSection } from "./parts/form-section";
 import { TextField } from "./parts/text-field";
 import { useGoalScreen } from "./use-goal";
@@ -44,8 +52,8 @@ const fitnessDistanceOptions: readonly SegmentOption<RaceDistanceKey | typeof AN
 const daysPerWeekOptions: readonly SegmentOption<string>[] = Array.from(
   { length: DAYS_PER_WEEK_MAX - DAYS_PER_WEEK_MIN + 1 },
   (_, offset) => {
-    const days = String(DAYS_PER_WEEK_MIN + offset);
-    return { value: days, label: days };
+    const days = DAYS_PER_WEEK_MIN + offset;
+    return { value: String(days), label: formatCountValue(days) };
   },
 );
 
@@ -67,9 +75,9 @@ const recentDistanceOptions = RECENT_DISTANCE_KEYS.map((key) => ({
  */
 export function GoalScreen() {
   const screen = useGoalScreen();
-  const { data, status, error, refetch, units } = screen;
+  const { data, status, error, refetch, units, today } = screen;
 
-  if (status === "pending" || units === undefined) {
+  if (status === "pending" || units === undefined || today === undefined) {
     return <GoalSkeleton />;
   }
 
@@ -98,6 +106,7 @@ export function GoalScreen() {
         key={data.goal?.updatedAt ?? "new"}
         goal={data.goal}
         units={units}
+        today={today}
         saving={screen.saving}
         saveError={screen.saveError}
         conflict={screen.conflict}
@@ -110,17 +119,27 @@ export function GoalScreen() {
 type GoalFormViewProps = {
   goal: Goal | null;
   units: Units;
+  /** Today in the runner's time zone, "2026-10-02": the race date picker offers dates a plan can reach. */
+  today: string;
   saving: boolean;
   saveError: Error | null;
   conflict: PlanConflict | null;
-  onSave: (goal: GoalInput) => void;
+  onSave: (goal: GoalInput, onConflict: (conflict: PlanConflict) => void) => void;
 };
 
-function GoalFormView({ goal, units, saving, saveError, conflict, onSave }: GoalFormViewProps) {
+function GoalFormView({
+  goal,
+  units,
+  today,
+  saving,
+  saveError,
+  conflict,
+  onSave,
+}: GoalFormViewProps) {
   const [form, setForm] = useState<GoalForm>(() => goalForm(goal));
-  const [formError, setFormError] = useState<string | null>(null);
-  // The plan has no time to set paces from: the fields to type one in open with the sentence.
-  const showRecentTime = form.showRecentTime || conflict?.code === "no_recent_time";
+  const [formError, setFormError] = useState<{ field: GoalFormField; message: string } | null>(
+    null,
+  );
   const race = form.kind === "race";
 
   function update(changes: Partial<GoalForm>) {
@@ -128,20 +147,31 @@ function GoalFormView({ goal, units, saving, saveError, conflict, onSave }: Goal
     setFormError(null);
   }
 
+  /**
+   * The plan has no time to set paces from: the fields to type one in open with the sentence and stay
+   * open, so the time entered is still sent once a later save answers with another conflict.
+   */
+  function openOnConflict(answer: PlanConflict) {
+    if (answer.code === "no_recent_time") {
+      setForm((current) => ({ ...current, showRecentTime: true }));
+    }
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const result = goalInput({ ...form, showRecentTime });
+    const result = goalInput(form);
     if (!result.ok) {
-      setFormError(result.message);
+      setFormError({ field: result.field, message: result.message });
       return;
     }
     setFormError(null);
-    onSave(result.goal);
+    onSave(result.goal, openOnConflict);
   }
 
+  const recentTimeError = formError?.field === "recentTime" ? formError.message : null;
   const alert =
-    formError ??
-    (saving
+    (formError?.field === "goal" ? formError.message : null) ??
+    (saving || recentTimeError !== null
       ? null
       : conflict
         ? conflictSentence(conflict, units)
@@ -183,6 +213,7 @@ function GoalFormView({ goal, units, saving, saveError, conflict, onSave }: Goal
               label={goalCopy.raceDate}
               type="date"
               name="raceDate"
+              max={latestRaceDate(today)}
               value={form.raceDate}
               onChange={(event) => update({ raceDate: event.target.value })}
             />
@@ -216,7 +247,7 @@ function GoalFormView({ goal, units, saving, saveError, conflict, onSave }: Goal
           onChange={(longRunDay) => update({ longRunDay })}
         />
       </FormSection>
-      {showRecentTime ? (
+      {form.showRecentTime ? (
         <FormSection title={goalCopy.recentRace}>
           <SegmentedField
             name="recentDistance"
@@ -231,6 +262,7 @@ function GoalFormView({ goal, units, saving, saveError, conflict, onSave }: Goal
             value={form.recentTime}
             onChange={(recentTime) => update({ recentTime })}
             description={timePace(form.recentDistanceKey, durationSeconds(form.recentTime), units)}
+            error={recentTimeError}
           />
         </FormSection>
       ) : (

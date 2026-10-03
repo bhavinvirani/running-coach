@@ -1,6 +1,6 @@
 import { DISTANCE_METERS } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
-import { DISTANCE_KEYS, distanceLabel, personalBestName } from "./distance-labels";
+import { DISTANCE_KEYS, distanceLabel, personalBestName, raceName } from "./distance-labels";
 
 describe("distance labels", () => {
   it("names the eleven distances shortest first", () => {
@@ -22,6 +22,15 @@ describe("distance labels", () => {
   it("orders the keys by their meters, so the badges read shortest first", () => {
     const meters = DISTANCE_KEYS.map((key) => DISTANCE_METERS[key]);
     expect(meters).toEqual([...meters].sort((a, b) => a - b));
+  });
+});
+
+describe("raceName", () => {
+  it("names a goal's race in full", () => {
+    expect(raceName("5k")).toBe("5K");
+    expect(raceName("10k")).toBe("10K");
+    expect(raceName("half")).toBe("Half marathon");
+    expect(raceName("marathon")).toBe("Marathon");
   });
 });
 

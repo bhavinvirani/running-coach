@@ -7,7 +7,13 @@ import {
   type Step,
   type Units,
 } from "@running-coach/shared";
-import { MISSING, formatMeters, formatStepDistance, formatStepDuration } from "./format";
+import {
+  MISSING,
+  formatCountValue,
+  formatMeters,
+  formatStepDistance,
+  formatStepDuration,
+} from "./format";
 import { formatPlanPace } from "./pace-band";
 
 /** A lone run's zone after its band: "5:45-6:20 /km easy", "4:56 /km race pace". */
@@ -48,7 +54,7 @@ function describeRepeat({ repeat, steps }: Repeat, paces: PlanPaces, units: Unit
   const work = steps.filter((step) => step.kind !== "recovery");
   const recoveries = steps.filter((step) => step.kind === "recovery");
   if (work.length === 0) {
-    return `${repeat} x ${recoveries.map((step) => describeStep(step, paces, units)).join(", ")}`;
+    return `${formatCountValue(repeat)} x ${recoveries.map((step) => describeStep(step, paces, units)).join(", ")}`;
   }
   const described = work.map((step) => describeStep(step, paces, units));
   const main = described.length === 1 ? described.join("") : `(${described.join(", ")})`;
@@ -56,7 +62,7 @@ function describeRepeat({ repeat, steps }: Repeat, paces: PlanPaces, units: Unit
     recoveries.length === 0
       ? ""
       : ` with ${recoveries.map((step) => describeStep(step, paces, units)).join(" and ")}`;
-  return `${repeat} x ${main}${recovery}`;
+  return `${formatCountValue(repeat)} x ${main}${recovery}`;
 }
 
 function describeStep(step: Step, paces: PlanPaces, units: Units): string {

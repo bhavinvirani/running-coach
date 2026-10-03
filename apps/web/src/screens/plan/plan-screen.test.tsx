@@ -120,14 +120,18 @@ describe("PlanScreen", () => {
     expect(router.state.location.pathname).toBe("/plan/goal");
   });
 
-  it("shows the goal's distance as the figure, its race day, length and runs a week, then its target beside the race pace", async () => {
+  it("shows the weeks until the race as the figure, the race by name, its day and runs a week, then its target beside the race pace", async () => {
     fakePlanApi();
     renderPlan();
 
     const goal = await screen.findByRole("region", { name: "Goal" });
-    expect(within(goal).getByText("10K")).toHaveClass("text-figure");
+    // Wed 14 Oct is in the second of the plan's three weeks: this week and race week are left.
+    const figure = within(goal).getByText("2");
+    expect(figure).toHaveClass("text-figure");
+    expect(figure).toHaveTextContent(/^2weeks$/);
+    expect(within(figure).getByText("weeks")).toHaveClass("text-caption", "text-ink-2");
     expect(within(goal).getByText("Race on 25 Oct 2026").closest("p")).toHaveTextContent(
-      /^Race on 25 Oct 2026·3 weeks·4 runs a week$/,
+      /^10K·Race on 25 Oct 2026·4 runs a week$/,
     );
     const paceLine = within(goal).getByText("Target 49:00").closest("p");
     expect(paceLine).toHaveTextContent(/^Target 49:00·Race pace 4:54-4:58 \/km, about 49:20$/);
@@ -138,7 +142,20 @@ describe("PlanScreen", () => {
     );
   });
 
-  it("names a fitness goal by its focus distance, without a race day", async () => {
+  it("names a half marathon in full beside its race day", async () => {
+    fakePlanApi({
+      plan: planResponseFixture({ goal: goalFixture({ distanceKey: "half", targetTimeS: null }) }),
+    });
+    renderPlan();
+
+    const goal = await screen.findByRole("region", { name: "Goal" });
+    expect(within(goal).getByText("Race on 25 Oct 2026").closest("p")).toHaveTextContent(
+      /^Half marathon·Race on 25 Oct 2026·4 runs a week$/,
+    );
+  });
+
+  it("shows a fitness plan's weeks as the figure and names it Fitness with its focus distance, without a race day", async () => {
+    vi.setSystemTime(new Date("2026-10-02T09:00:00Z"));
     fakePlanApi({
       plan: planResponseFixture({
         goal: goalFixture({ kind: "fitness", raceDate: null, targetTimeS: null }),
@@ -147,9 +164,10 @@ describe("PlanScreen", () => {
     renderPlan();
 
     const goal = await screen.findByRole("region", { name: "Goal" });
-    expect(within(goal).getByText("Fitness")).toHaveClass("text-figure");
-    expect(within(goal).getByText("10K focus").closest("p")).toHaveTextContent(
-      /^10K focus·3 weeks·4 runs a week$/,
+    // Before the plan starts, every one of its weeks is left.
+    expect(within(goal).getByText("3")).toHaveClass("text-figure");
+    expect(within(goal).getByText("Fitness").closest("p")).toHaveTextContent(
+      /^Fitness·10K focus·4 runs a week$/,
     );
     expect(within(goal).getByText("Race pace 4:54-4:58 /km, about 49:20")).toBeInTheDocument();
   });
@@ -177,6 +195,7 @@ describe("PlanScreen", () => {
           warnings: [
             { code: "race_date_close", weeks: 3, minimumWeeks: 8 },
             { code: "no_recent_runs", startVolumeM: 15000 },
+            { code: "start_volume_lifted", recentWeeklyM: 8000, startVolumeM: 13000 },
           ],
         }),
       }),
@@ -191,6 +210,7 @@ describe("PlanScreen", () => {
     ).toEqual([
       "The race is 3 weeks away, under the 8 weeks a plan for it usually takes: this plan is the taper and what fits before it.",
       "No runs in the last 4 weeks, so the plan starts from 15.0 km a week.",
+      "Your recent 8.0 km a week is under what 4 runs need, so the plan starts at 13.0 km.",
     ]);
   });
 

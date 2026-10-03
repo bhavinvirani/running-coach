@@ -5,6 +5,7 @@ import {
   formatCadence,
   formatCalories,
   formatCount,
+  formatCountValue,
   formatDate,
   formatDateTime,
   formatDistance,
@@ -330,6 +331,19 @@ describe("formatWeekRange", () => {
   it("shows the missing mark for null and malformed dates", () => {
     expect(formatWeekRange(null)).toBe(MISSING);
     expect(formatWeekRange("2026-02-30")).toBe(MISSING);
+  });
+});
+
+describe("formatCountValue", () => {
+  it("gives the count alone, thousands grouped", () => {
+    expect(formatCountValue(4)).toBe("4");
+    expect(formatCountValue(0)).toBe("0");
+    expect(formatCountValue(1240)).toBe("1,240");
+  });
+
+  it("shows the missing mark for negative and non-finite counts", () => {
+    expect(formatCountValue(-1)).toBe(MISSING);
+    expect(formatCountValue(Number.POSITIVE_INFINITY)).toBe(MISSING);
   });
 });
 
