@@ -5,7 +5,7 @@
 # One image for Render: the API serves the SPA, runs the worker and spawns the Garmin service on 127.0.0.1.
 # Final layout under /app mirrors the repo so the API finds its paths the same way in dev and production.
 
-FROM ghcr.io/astral-sh/uv:0.12.22 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
 
 FROM node:24.21.0-trixie-slim AS os
 # Python's ssl module reads the system trust store; node:slim ships without one.
