@@ -8,6 +8,7 @@ import {
   type Weekday,
 } from "@running-coach/shared";
 import { addDays } from "./dates";
+import { formatCountValue } from "./format";
 
 /** One day of a plan week; a day with no session is a rest day. */
 export type PlanDay = { weekday: Weekday; date: string; sessions: readonly PlanSession[] };
@@ -66,7 +67,7 @@ export function weeksLeft(plan: Pick<Plan, "weeks" | "endDate">, today: string):
 }
 
 export function weekTitle(number: number): string {
-  return `Week ${number}`;
+  return `Week ${formatCountValue(number)}`;
 }
 
 const PHASE_NAMES: Readonly<Record<PlanPhase, string>> = {

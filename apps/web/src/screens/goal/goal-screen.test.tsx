@@ -9,6 +9,7 @@ import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import { goalFixture, meFixture, planFixture, planResponseFixture } from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { GoalScreen } from "./goal-screen";
+import { goalCopy } from "./goal-copy";
 
 type SaveAnswer = (goal: GoalInput, attempt: number) => Response | Promise<Response>;
 
@@ -379,9 +380,7 @@ describe("GoalScreen", () => {
     await userEvent.click(save());
 
     const alert = within(timeField("Time")).getByRole("alert");
-    expect(alert).toHaveTextContent(
-      "That time is faster or slower than any run; check the hours and minutes",
-    );
+    expect(alert).toHaveTextContent(goalCopy.recentTimeImplausible);
     expect(alert).toHaveClass("text-body", "text-ink");
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(calls.some((call) => call.method === "PUT")).toBe(false);

@@ -1,5 +1,6 @@
 import {
   goalInputSchema,
+  MAX_PLAN_WEEKS,
   recentTimeSchema,
   type DistanceKey,
   type Goal,
@@ -64,7 +65,7 @@ export function goalForm(goal: Goal | null): GoalForm {
  * Days from today to the last race date the picker offers. A plan runs at most 52 weeks from its first
  * Monday, which is up to 6 days off; a date typed past the engine's exact limit gets race_too_far.
  */
-export const RACE_DATE_MAX_DAYS = 52 * 7 + 6;
+export const RACE_DATE_MAX_DAYS = MAX_PLAN_WEEKS * 7 + 6;
 
 /** The race date picker's max, "2027-10-07" on 2 Oct 2026. */
 export function latestRaceDate(today: string): string {
@@ -122,7 +123,8 @@ export function goalInput(form: GoalForm): GoalFormResult {
     timeS: recentSeconds,
   });
   if (!checked.success) {
-    const message = checked.error.issues[0]?.message ?? errorMessages.validation;
+    const field = checked.error.issues[0]?.path[0];
+    const message = field === "timeS" ? goalCopy.recentTimeImplausible : errorMessages.validation;
     return { ok: false, field: "recentTime", message };
   }
   return { ok: true, goal: { ...parsed.data, recentTime: checked.data } };

@@ -41,6 +41,7 @@ export const goalCopy = {
   pickDistance: "Pick a race distance.",
   pickRaceDate: "Pick a race date.",
   pickTargetTime: "Pick a target time, or tick No target.",
+  recentTimeImplausible: "That time is faster or slower than any run. Check the hours and minutes.",
 } as const;
 
 /**

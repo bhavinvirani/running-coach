@@ -274,10 +274,11 @@ test("refuses a recent time no run could take under its pickers and sends nothin
     sent.push(route.request().method());
     return route.continue();
   });
-  // The contract's own sentence for a 5K in 5:00, 1:00 /km: the form refuses it with the same words.
-  const refused = recentTimeSchema.safeParse({ distanceKey: "5k", timeS: 5 * 60 });
-  if (refused.success) throw new Error("The contract takes a 5K in 0:05:00");
-  const sentence = refused.error.issues[0]?.message ?? "";
+  // A 5K in 5:00 is 1:00 /km, under the contract's fastest pace: the form refuses it in its own words.
+  if (recentTimeSchema.safeParse({ distanceKey: "5k", timeS: 5 * 60 }).success) {
+    throw new Error("The contract takes a 5K in 0:05:00");
+  }
+  const sentence = goalCopy.recentTimeImplausible;
 
   await page.goto("/plan/goal");
   await expect(page.getByRole("heading", { name: goalCopy.title, level: 1 })).toBeVisible();

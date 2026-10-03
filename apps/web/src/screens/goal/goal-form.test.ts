@@ -3,6 +3,7 @@ import { ZERO_DURATION } from "@/lib/duration-parts";
 import { errorMessages } from "@/lib/errors";
 import { goalFixture } from "@/test/fixtures";
 import { goalForm, goalInput, latestRaceDate, type GoalForm } from "./goal-form";
+import { goalCopy } from "./goal-copy";
 
 const race: GoalForm = {
   kind: "race",
@@ -140,7 +141,7 @@ describe("goalInput", () => {
       expect(goalInput({ ...race, showRecentTime: true, recentTime })).toEqual({
         ok: false,
         field: "recentTime",
-        message: "That time is faster or slower than any run; check the hours and minutes",
+        message: goalCopy.recentTimeImplausible,
       });
     },
   );

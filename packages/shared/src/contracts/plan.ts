@@ -142,6 +142,9 @@ export const planWeekSchema = weekFieldsSchema
   .strict();
 export type PlanWeek = z.infer<typeof planWeekSchema>;
 
+/** The longest plan the engine makes: past a year the baseline is stale before the build starts. The form caps the race date with it. */
+export const MAX_PLAN_WEEKS = 52;
+
 /** Something the engine did its best with; the web app shows each one as a sentence above the weeks. */
 export const planWarningSchema = z.discriminatedUnion("code", [
   /** The race leaves fewer weeks than the distance's minimum; the plan is the taper and what fits before it. */
