@@ -623,6 +623,9 @@ function assertPlanKeepsEveryRule(
   }
 }
 
+// Each property builds hundreds of plans of up to 52 weeks; CI's runner needs more than vitest's 5 s.
+const PROPERTY_TIMEOUT_MS = 120_000;
+
 describe("generate plan", () => {
   it("keeps every rule over generated goals, baselines and VDOT sources", () => {
     fc.assert(
@@ -653,55 +656,71 @@ describe("generate plan", () => {
     // Each plan searches the week its days need through the week builder: a few seconds in all.
   }, 30_000);
 
-  it("is deterministic: the same input gives byte-identical output, a cloned input too", () => {
-    fc.assert(
-      fc.property(inputArb, (of) => {
-        const once = JSON.stringify(generatePlan(of));
-        expect(JSON.stringify(generatePlan(of))).toBe(once);
-        expect(JSON.stringify(generatePlan(structuredClone(of)))).toBe(once);
-      }),
-      { numRuns: 100 },
-    );
-  });
-
-  it("does not change its input", () => {
-    fc.assert(
-      fc.property(inputArb, (of) => {
-        const before = structuredClone(of);
-        generatePlan(of);
-        expect(of).toEqual(before);
-      }),
-      { numRuns: 50 },
-    );
-  });
-
-  it("reports long_run_cap for a marathon on 3 days", () => {
-    expect(
-      generatePlan(
-        input({
-          goal: { distanceKey: "marathon", daysPerWeek: 3, raceDate: addDays(START, 7 * 20 - 1) },
+  it(
+    "is deterministic: the same input gives byte-identical output, a cloned input too",
+    () => {
+      fc.assert(
+        fc.property(inputArb, (of) => {
+          const once = JSON.stringify(generatePlan(of));
+          expect(JSON.stringify(generatePlan(of))).toBe(once);
+          expect(JSON.stringify(generatePlan(structuredClone(of)))).toBe(once);
         }),
-      ),
-    ).toEqual({
-      ok: false,
-      conflict: {
-        code: "long_run_cap",
-        distanceKey: "marathon",
-        daysPerWeek: 3,
-        minDaysPerWeek: 4,
-      },
-    });
-  });
+        { numRuns: 100 },
+      );
+    },
+    PROPERTY_TIMEOUT_MS,
+  );
 
-  it("makes a plan for a half on 3 days", () => {
-    const half = plan(
-      input({
-        goal: { distanceKey: "half", daysPerWeek: 3, raceDate: addDays(START, 7 * 14 - 1) },
-      }),
-    );
-    expect(half.weeks).toHaveLength(14);
-    expect(half.weeks.every((week) => week.sessions.length <= 3)).toBe(true);
-  });
+  it(
+    "does not change its input",
+    () => {
+      fc.assert(
+        fc.property(inputArb, (of) => {
+          const before = structuredClone(of);
+          generatePlan(of);
+          expect(of).toEqual(before);
+        }),
+        { numRuns: 50 },
+      );
+    },
+    PROPERTY_TIMEOUT_MS,
+  );
+
+  it(
+    "reports long_run_cap for a marathon on 3 days",
+    () => {
+      expect(
+        generatePlan(
+          input({
+            goal: { distanceKey: "marathon", daysPerWeek: 3, raceDate: addDays(START, 7 * 20 - 1) },
+          }),
+        ),
+      ).toEqual({
+        ok: false,
+        conflict: {
+          code: "long_run_cap",
+          distanceKey: "marathon",
+          daysPerWeek: 3,
+          minDaysPerWeek: 4,
+        },
+      });
+    },
+    PROPERTY_TIMEOUT_MS,
+  );
+
+  it(
+    "makes a plan for a half on 3 days",
+    () => {
+      const half = plan(
+        input({
+          goal: { distanceKey: "half", daysPerWeek: 3, raceDate: addDays(START, 7 * 14 - 1) },
+        }),
+      );
+      expect(half.weeks).toHaveLength(14);
+      expect(half.weeks.every((week) => week.sessions.length <= 3)).toBe(true);
+    },
+    PROPERTY_TIMEOUT_MS,
+  );
 
   it("sizes every 4th week from the week before as built: a half from an 8 km longest runs weeks 1 to 5 at 35 200, 38 720, 42 592, 34 073 and 46 848 m", () => {
     // The 110% run cap holds weeks 1 to 3 under the curve; week 4 recovers to 80% of week 3 as run.
