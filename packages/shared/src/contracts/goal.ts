@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { distanceKeySchema } from "../distances";
+import { DISTANCE_METERS, distanceKeySchema } from "../distances";
+import { GPS_GLITCH_PACE_S_PER_KM, METERS_PER_KM } from "../units";
 
 export const goalKindSchema = z.enum(["race", "fitness"]);
 export type GoalKind = z.infer<typeof goalKindSchema>;
@@ -17,6 +18,15 @@ export const DAYS_PER_WEEK_MIN = 3;
 export const DAYS_PER_WEEK_MAX = 6;
 
 /**
+ * The paces a recent time may imply: faster than the GPS glitch pace is no run, and slower than 20 min
+ * per km is a walk. The form checks a time against them as it is picked; the API refuses one outside.
+ */
+export const RECENT_TIME_PACE_S_PER_KM = {
+  fastest: GPS_GLITCH_PACE_S_PER_KM,
+  slowest: 1200,
+} as const;
+
+/**
  * A recent race or time trial the runner types in. It overrides the recorded races and best efforts as
  * the source of the VDOT, and is the only source for a runner with no history.
  */
@@ -25,7 +35,19 @@ export const recentTimeSchema = z
     distanceKey: distanceKeySchema,
     timeS: z.number().int().positive(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ distanceKey, timeS }) => {
+      const sPerKm = (timeS * METERS_PER_KM) / DISTANCE_METERS[distanceKey];
+      return (
+        sPerKm >= RECENT_TIME_PACE_S_PER_KM.fastest && sPerKm <= RECENT_TIME_PACE_S_PER_KM.slowest
+      );
+    },
+    {
+      path: ["timeS"],
+      message: "That time is faster or slower than any run; check the hours and minutes",
+    },
+  );
 export type RecentTime = z.infer<typeof recentTimeSchema>;
 
 const goalFieldsSchema = z

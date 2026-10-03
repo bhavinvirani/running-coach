@@ -62,7 +62,10 @@ const generatedPlan = {
   endDate: "2027-01-10",
   vdot: 41.3,
   paces,
-  warnings: [{ code: "race_date_close", weeks: 10, minimumWeeks: 12 }],
+  warnings: [
+    { code: "race_date_close", weeks: 10, minimumWeeks: 12 },
+    { code: "start_volume_lifted", recentWeeklyM: 8000, startVolumeM: 13000 },
+  ],
   weeks: [
     {
       number: 1,
@@ -210,7 +213,14 @@ describe("planGenerationResultSchema", () => {
   it("accepts each conflict with its numbers", () => {
     const conflicts = [
       { code: "long_run_cap", distanceKey: "marathon", daysPerWeek: 3, minDaysPerWeek: 4 },
-      { code: "too_many_days", daysPerWeek: 6, maxDaysPerWeek: 3, baselineWeeklyM: 9000 },
+      {
+        code: "too_many_days",
+        daysPerWeek: 6,
+        maxDaysPerWeek: 3,
+        recentWeeklyM: 9000,
+        neededWeeklyM: 22000,
+      },
+      { code: "race_too_far", raceDate: "2028-10-01", latestRaceDate: "2027-10-03" },
       { code: "race_too_soon", raceDate: "2026-10-04", earliestStart: "2026-10-05" },
       { code: "no_recent_time" },
     ];

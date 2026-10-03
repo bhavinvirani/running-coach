@@ -420,6 +420,31 @@
                     "properties": {
                       "code": {
                         "type": "string",
+                        "const": "start_volume_lifted"
+                      },
+                      "recentWeeklyM": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "startVolumeM": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "recentWeeklyM",
+                      "startVolumeM"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
                         "const": "long_run_short"
                       },
                       "peakLongRunM": {
@@ -843,9 +868,14 @@
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
                 },
-                "baselineWeeklyM": {
+                "recentWeeklyM": {
                   "type": "integer",
                   "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "neededWeeklyM": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
                 }
               },
@@ -853,7 +883,33 @@
                 "code",
                 "daysPerWeek",
                 "maxDaysPerWeek",
-                "baselineWeeklyM"
+                "recentWeeklyM",
+                "neededWeeklyM"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "race_too_far"
+                },
+                "raceDate": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "latestRaceDate": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                }
+              },
+              "required": [
+                "code",
+                "raceDate",
+                "latestRaceDate"
               ],
               "additionalProperties": false
             },

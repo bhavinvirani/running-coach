@@ -156,6 +156,14 @@ export const planWarningSchema = z.discriminatedUnion("code", [
   z
     .object({ code: z.literal("no_recent_runs"), startVolumeM: z.number().int().positive() })
     .strict(),
+  /** Recent volume is under what the requested days need: week 1 is lifted to the smallest week that holds them. */
+  z
+    .object({
+      code: z.literal("start_volume_lifted"),
+      recentWeeklyM: z.number().int().nonnegative(),
+      startVolumeM: z.number().int().positive(),
+    })
+    .strict(),
   /** The progression caps keep the peak long run under what the goal distance usually asks for. */
   z
     .object({
@@ -189,13 +197,27 @@ export const planConflictSchema = z.discriminatedUnion("code", [
       minDaysPerWeek: z.number().int().positive(),
     })
     .strict(),
-  /** Week 1, at the start volume, cannot hold a 20 min run on this many days once the long run and the quality sessions are placed. */
+  /**
+   * The smallest week that holds a 20 min run on this many days, beside the long run and the quality
+   * sessions, is more than 10% above the runner's recent volume; fewer days would fit.
+   */
   z
     .object({
       code: z.literal("too_many_days"),
       daysPerWeek: z.number().int().positive(),
       maxDaysPerWeek: z.number().int().positive(),
-      baselineWeeklyM: z.number().int().nonnegative(),
+      /** The runner's recent weekly volume the 10% applies to. */
+      recentWeeklyM: z.number().int().nonnegative(),
+      /** The smallest week this many days need. */
+      neededWeeklyM: z.number().int().positive(),
+    })
+    .strict(),
+  /** The race is further out than the longest plan the engine makes. */
+  z
+    .object({
+      code: z.literal("race_too_far"),
+      raceDate: z.iso.date(),
+      latestRaceDate: z.iso.date(),
     })
     .strict(),
   /** The race is before the plan's first Monday. */

@@ -83,6 +83,27 @@ describe("goalInputSchema", () => {
     expect(goalInputSchema.safeParse({ ...raceGoal, paceSPerKm: 300 }).success).toBe(false);
   });
 
+  it("rejects a recent time faster than the glitch pace or slower than a walk, naming timeS", () => {
+    const fast = goalInputSchema.safeParse({
+      ...raceGoal,
+      recentTime: { distanceKey: "5k", timeS: 599 },
+    });
+    expect(fast.success).toBe(false);
+    expect(fast.error?.issues[0]?.path).toEqual(["recentTime", "timeS"]);
+    expect(
+      goalInputSchema.safeParse({ ...raceGoal, recentTime: { distanceKey: "5k", timeS: 600 } })
+        .success,
+    ).toBe(true);
+    expect(
+      goalInputSchema.safeParse({ ...raceGoal, recentTime: { distanceKey: "5k", timeS: 6000 } })
+        .success,
+    ).toBe(true);
+    expect(
+      goalInputSchema.safeParse({ ...raceGoal, recentTime: { distanceKey: "5k", timeS: 6001 } })
+        .success,
+    ).toBe(false);
+  });
+
   it("rejects a recent time that is not whole positive seconds", () => {
     expect(
       goalInputSchema.safeParse({ ...raceGoal, recentTime: { distanceKey: "5k", timeS: 0 } })
