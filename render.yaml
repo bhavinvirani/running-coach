@@ -49,7 +49,8 @@ services:
       # Also passed to the Docker build as a build arg, where Vite inlines it.
       - key: VITE_MAPBOX_TOKEN
         sync: false
-      # The coach service's onrender.com URL (it can carry a suffix, so it is set by hand). Until it is set
+      # The coach service's https://…onrender.com URL (it can carry a suffix, so it is set by hand; plain http
+      # is refused in production). Until it is set
       # the plan stays off and every user, the owner included, uses their own Claude key.
       - key: COACH_SERVICE_URL
         sync: false

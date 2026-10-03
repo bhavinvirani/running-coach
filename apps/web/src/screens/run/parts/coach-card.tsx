@@ -112,6 +112,10 @@ function CoachBody({
         <p role="status" className="text-body text-ink-2">
           Coach unavailable, will retry.
         </p>
+      ) : !hasCredential ? (
+        // The plan was withdrawn on the server while the job waited: at the reset it finds no credential,
+        // and Try now could only answer 409.
+        <AddKeyLink />
       ) : (
         <PlanLimit
           resumesAt={response.resumesAt}

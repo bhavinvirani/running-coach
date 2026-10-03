@@ -235,6 +235,20 @@ describe("CoachCard", () => {
     expect(polls.delays()).toEqual([60_000]);
   });
 
+  it("offers only Add Claude key while the job waits for the plan's reset but the plan was withdrawn and no key is saved (plan usage limit, no credential)", async () => {
+    const calls = fakeCoachApi({
+      credentials: ["none"],
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+    });
+    renderRun();
+
+    const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
+    expect(link).toHaveAttribute("href", "/settings");
+    expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(coach()).queryByText(/usage limit/)).not.toBeInTheDocument();
+    expect(asks(calls)).toEqual([]);
+  });
+
   it("asks the coach at once on Try now while the plan's usage limit holds the job, and shows the coach at work (plan usage limit Try now)", async () => {
     const calls = fakeCoachApi({
       credentials: ["plan"],

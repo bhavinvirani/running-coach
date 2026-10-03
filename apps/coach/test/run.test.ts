@@ -201,7 +201,8 @@ describe("POST /v1/run", () => {
   });
 
   it("a CLI that ignores SIGTERM after a timeout is killed before the next run's CLI starts", async () => {
-    coach = await startCoach("hang-stubborn", { timeoutMs: 500 });
+    // Long enough that the prompt reaches the fake before the abort on a loaded CI runner.
+    coach = await startCoach("hang-stubborn", { timeoutMs: 1_000 });
     const first = postRun(coach);
     await waitFor(() => coach!.events().find((event) => event.event === "user"), 10_000, "prompt");
     const second = postRun(coach);
