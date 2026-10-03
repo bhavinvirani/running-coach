@@ -12,6 +12,7 @@ import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
+import { formatDayTime } from "@/lib/format";
 import { Note, RunSection } from "./run-section";
 
 const TITLE = "Coach";
@@ -23,7 +24,9 @@ type CoachCardProps = {
    * fallback card's one action is Add Claude key.
    */
   hasCredential: boolean;
-  /** Ask the coach, or Try again after a fallback card. */
+  /** The runner's time zone from settings, for when the coach tries again after the plan's usage limit. */
+  timeZone: string;
+  /** Ask the coach, Try again after a fallback card, or Try now while the plan's usage limit holds the job. */
   ask: () => void;
   asking: boolean;
   askError: Error | null;
@@ -77,6 +80,7 @@ export function CoachCard({ state, ...actions }: CoachCardProps) {
 function CoachBody({
   response,
   hasCredential,
+  timeZone,
   ask,
   asking,
   askError,
@@ -104,10 +108,18 @@ function CoachBody({
         </div>
       );
     case "retrying":
-      return (
+      return response.resumesAt === undefined ? (
         <p role="status" className="text-body text-ink-2">
           Coach unavailable, will retry.
         </p>
+      ) : (
+        <PlanLimit
+          resumesAt={response.resumesAt}
+          timeZone={timeZone}
+          ask={ask}
+          asking={asking}
+          askError={askError}
+        />
       );
     case "ready":
       return (
@@ -161,6 +173,44 @@ function AskAlert({ error }: { error: Error | null }) {
     <p role="alert" className="text-body text-ink">
       {errorMessage(error)}
     </p>
+  );
+}
+
+/**
+ * The coach's job waits for the owner's Claude plan usage limit to reset: when it runs again, in the runner's
+ * zone, and Try now, which asks the API to run it at once (the limit may already have reset early). Asking
+ * answers the new state: pending, or this again with a later reset.
+ */
+function PlanLimit({
+  resumesAt,
+  timeZone,
+  ask,
+  asking,
+  askError,
+}: {
+  resumesAt: string;
+  timeZone: string;
+  ask: () => void;
+  asking: boolean;
+  askError: Error | null;
+}) {
+  return (
+    <>
+      <p role="status" className="text-body text-ink-2">
+        Your Claude plan&apos;s usage limit is reached. The coach tries again{" "}
+        {formatDayTime(resumesAt, timeZone)}.
+      </p>
+      <AskAlert error={askError} />
+      <Button
+        variant="secondary"
+        className="self-start"
+        disabled={asking}
+        aria-busy={asking}
+        onClick={ask}
+      >
+        Try now
+      </Button>
+    </>
   );
 }
 

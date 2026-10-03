@@ -32,6 +32,8 @@ type FakeCoachApi = {
    * comes with a credential.
    */
   credentials?: CoachCredential[];
+  /** The runner's time zone in settings; the fixture's by default. */
+  timeZone?: string;
   /** What GET .../insight answers, in order; the last one repeats. */
   reads?: Answer[];
   /** What POST .../insight (Ask the coach, Try again) answers. */
@@ -47,6 +49,7 @@ function answer(value: Answer): Response | Promise<Response> {
 /** /api/me, the run with its detail already stored, and the coach's endpoints, in memory. */
 function fakeCoachApi({
   credentials = ["key"],
+  timeZone = meFixture().settings.timezone,
   reads = [{ state: "none" }],
   ask = { state: "pending" },
   feedback = (sent) => json(insightReadyFixture(insightCardFixture({ feedback: sent }))),
@@ -61,6 +64,7 @@ function fakeCoachApi({
       meRead += 1;
       const settings = {
         ...meFixture().settings,
+        timezone: timeZone,
         hasClaudeKey: coachCredential === "key",
         coachCredential,
         claudePlanAvailable: coachCredential === "plan",
@@ -200,14 +204,88 @@ describe("CoachCard", () => {
     await vi.waitFor(() => expect(polls.delays()).toEqual([]));
   });
 
-  it('says "Coach unavailable, will retry" while retrying and reads again every minute', async () => {
+  it('says "Coach unavailable, will retry" with no button while retrying without resumesAt, and reads again every minute', async () => {
     fakeCoachApi({ reads: [{ state: "retrying" }] });
     renderRun();
 
     const status = await within(await findCoach()).findByRole("status");
     expect(status).toHaveTextContent(/^Coach unavailable, will retry\.$/);
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(coach()).queryByText(/usage limit/)).not.toBeInTheDocument();
     expect(polls.delays()).toEqual([60_000]);
+  });
+
+  it("says the Claude plan's usage limit is reached and when the coach tries again, in the runner's time zone, while retrying with resumesAt (plan usage limit)", async () => {
+    // 08:30 UTC is 14:00 in Kolkata: the time shown is the runner's, not UTC's or the device's.
+    fakeCoachApi({
+      timeZone: "Asia/Kolkata",
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T08:30:00.000Z" }],
+    });
+    renderRun();
+
+    const status = await within(await findCoach()).findByRole("status");
+    expect(status).toHaveTextContent(
+      /^Your Claude plan's usage limit is reached\. The coach tries again Sun 4 Oct, 14:00\.$/,
+    );
+    expect(status).toHaveClass("text-body", "text-ink-2");
+    expect(within(coach()).getAllByRole("button")).toEqual([
+      within(coach()).getByRole("button", { name: "Try now" }),
+    ]);
+    expect(within(coach()).queryByText(/Coach unavailable/)).not.toBeInTheDocument();
+    expect(polls.delays()).toEqual([60_000]);
+  });
+
+  it("asks the coach at once on Try now while the plan's usage limit holds the job, and shows the coach at work (plan usage limit Try now)", async () => {
+    const calls = fakeCoachApi({
+      credentials: ["plan"],
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+      ask: { state: "pending" },
+    });
+    renderRun();
+
+    await userEvent.click(
+      await within(await findCoach()).findByRole("button", { name: "Try now" }),
+    );
+
+    expect(await within(coach()).findByRole("status")).toHaveTextContent(
+      "The coach is reviewing this run.",
+    );
+    expect(asks(calls)).toHaveLength(1);
+    await vi.waitFor(() => expect(polls.delays()).toEqual([3_000]));
+  });
+
+  it("disables Try now while it asks (plan usage limit Try now pending)", async () => {
+    fakeCoachApi({
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+      ask: () => never(),
+    });
+    renderRun();
+    const tryNow = await within(await findCoach()).findByRole("button", { name: "Try now" });
+
+    await userEvent.click(tryNow);
+
+    await vi.waitFor(() => expect(tryNow).toBeDisabled());
+    expect(tryNow).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("says why Try now failed and keeps the button (plan usage limit Try now, our rate limit)", async () => {
+    fakeCoachApi({
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+      ask: () => problem(429, ErrorCode.rateLimited),
+    });
+    renderRun();
+
+    await userEvent.click(
+      await within(await findCoach()).findByRole("button", { name: "Try now" }),
+    );
+
+    const alert = await within(coach()).findByRole("alert");
+    expect(alert).toHaveTextContent(errorMessages.rate_limited);
+    expect(alert).toHaveClass("text-body", "text-ink");
+    expect(within(coach()).getByRole("button", { name: "Try now" })).toBeEnabled();
+    expect(within(coach()).getByRole("status")).toHaveTextContent(
+      "The coach tries again Sun 4 Oct, 14:00.",
+    );
   });
 
   it("shows the model's card: the headline, what happened, what it means and next, with thumbs", async () => {

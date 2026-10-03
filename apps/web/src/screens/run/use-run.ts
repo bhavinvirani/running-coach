@@ -15,7 +15,7 @@ export type DetailState =
  * Everything the run screen reads and does. The stored run comes first; when it has no detail yet, the
  * screen asks the API to fetch it from Garmin, once: the ref keeps a re-render, a background reload of the
  * run or StrictMode's second effect from asking again, and only Retry repeats a failed fetch. The screen is
- * keyed by run id, so a new run starts with a fresh ref. Units come from /api/me, which the authenticated
+ * keyed by run id, so a new run starts with a fresh ref. Units and time zone come from /api/me, which the authenticated
  * loader caches before any screen renders. The coach card loads beside the run, not after it.
  */
 export function useRunScreen(id: string) {
@@ -49,6 +49,7 @@ export function useRunScreen(id: string) {
   return {
     ...state,
     units: settings.data?.units,
+    timeZone: settings.data?.timezone,
     detail: detailState,
     retryDetail: () => mutate(),
     coach: {
