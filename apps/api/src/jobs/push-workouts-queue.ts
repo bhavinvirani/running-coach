@@ -61,10 +61,10 @@ export async function enqueuePushWorkouts(
 }
 
 /**
- * Whether a push of the user is queued or running, due now rather than held back by a retry's backoff or a
- * 429's hour: the web app shows "Sending" for it, and the stored error while a push is held back.
+ * Whether a push of the user runs or is due now: the web app shows "Sending" for it, and the stored error
+ * while every push waits out a retry's backoff or a 429's hour. A Send to Garmin or an edit after an outage
+ * queues a push that runs beside the one parked in retry, so that one alone does not answer.
  */
 export async function isPushing(userId: string): Promise<boolean> {
-  const pending = await findPendingJob(name, userId);
-  return pending !== null && !pending.heldBack;
+  return (await findPendingJob(name, userId))?.due ?? false;
 }

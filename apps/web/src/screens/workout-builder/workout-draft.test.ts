@@ -4,8 +4,9 @@ import {
   type CustomSessionType,
   type SessionSteps,
 } from "@running-coach/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { errorMessages } from "@/lib/errors";
+import { formatCountValue } from "@/lib/format";
 import { customSessionFixture } from "@/test/fixtures";
 import {
   addRepeat,
@@ -26,6 +27,12 @@ import {
   type StepDraft,
   type WorkoutDraft,
 } from "./workout-draft";
+
+// The real formatter; a test swaps it to see which numbers of a message go through it.
+vi.mock("@/lib/format", async (importOriginal) => {
+  const actual = await importOriginal<{ formatCountValue: typeof formatCountValue }>();
+  return { ...actual, formatCountValue: vi.fn(actual.formatCountValue) };
+});
 
 const TODAY = "2026-10-08";
 
@@ -270,6 +277,19 @@ describe("workoutInput", () => {
     expect(workoutInput(updateRepeat(intervals, id, "50"), "km", TODAY)).toMatchObject({
       ok: true,
     });
+  });
+
+  it("formats both bounds of the repeat count sentence, never raw (repeat count)", () => {
+    const intervals = chooseType(newDraft(TODAY, "km"), "intervals", "km");
+    vi.mocked(formatCountValue).mockImplementation((count) => `<${count}>`);
+    // Back to the real formatter: restoreMocks leaves a vi.fn's swapped implementation in place.
+    onTestFinished(() => {
+      vi.mocked(formatCountValue).mockReset();
+    });
+
+    expect(
+      workoutInput(updateRepeat(intervals, intervals.items[1]!.id, "51"), "km", TODAY),
+    ).toEqual({ ok: false, message: "Repeat 2 runs <2> to <50> times. Change its count." });
   });
 
   it("refuses more steps than a watch workout holds, counting a repeat as one plus its steps (step cap)", () => {

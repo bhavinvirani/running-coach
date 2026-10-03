@@ -5,6 +5,7 @@ import {
   generatePlan,
   LONGEST_RUN_LOOKBACK_DAYS,
   RACE_LOOKBACK_DAYS,
+  sessionTarget,
   vdotFromPerformance,
 } from "@running-coach/engine";
 import {
@@ -15,6 +16,7 @@ import {
   type Plan,
   type PlanBaseline,
   type PlanGenerationInput,
+  type PlanPaces,
   type PlanPhase,
   type PlanResponse,
   type PlanSession,
@@ -361,11 +363,41 @@ export async function getPlan(userId: string): Promise<PlanResponse> {
 }
 
 /**
+ * A custom workout's target was worked out at the paces it was built with, and its pace bands read the
+ * active plan's: from today on, the ones still to run take the new plan's, so the distance shown and named
+ * on the watch matches the bands (the push re-sends them). Past and skipped ones keep theirs as history.
+ */
+async function retargetCustomSessions(
+  tx: DbTransaction,
+  userId: string,
+  today: string,
+  paces: PlanPaces,
+): Promise<void> {
+  const customs = await tx
+    .select({ id: planSession.id, steps: planSession.steps })
+    .from(planSession)
+    .where(
+      and(
+        eq(planSession.userId, userId),
+        isNull(planSession.planId),
+        gte(planSession.date, today),
+        inArray(planSession.status, ["planned", "moved"]),
+      ),
+    );
+  for (const custom of customs) {
+    await tx
+      .update(planSession)
+      .set({ target: sessionTarget(custom.steps, paces) })
+      .where(eq(planSession.id, custom.id));
+  }
+}
+
+/**
  * PUT /api/goal: generates a plan from the goal starting on the first Monday from today in the runner's
  * time zone. On a conflict nothing is written. Otherwise the goal is saved and the plan becomes the
- * goal's next version, the previous one superseded with its sessions kept, and a workout push is queued:
- * it takes the old plan's workouts off Garmin from today on and sends the new plan's. `now` is the
- * request's instant; tests pass their own.
+ * goal's next version, the previous one superseded with its sessions kept, the custom workouts still to run
+ * retargeted at its paces, and a workout push is queued: it takes the old plan's workouts off Garmin from
+ * today on and sends the new plan's. `now` is the request's instant; tests pass their own.
  */
 export async function saveGoal(
   userId: string,
@@ -436,6 +468,7 @@ export async function saveGoal(
         })),
       ),
     );
+    await retargetCustomSessions(tx, userId, today, generated.paces);
     return { ok: true as const, goal: toGoal(goalRow), plan: await loadPlan(tx, planRow) };
   });
   await queueWorkoutPush(userId);

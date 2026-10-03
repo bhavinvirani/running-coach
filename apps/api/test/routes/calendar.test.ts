@@ -198,6 +198,31 @@ describe("GET /api/calendar", () => {
     });
   });
 
+  it("answers not pushing while the only push waits out a retry or a 429's hour (Garmin outage, Garmin 429)", async () => {
+    const { agent, userId } = await owner();
+    const boss = getBoss();
+    const pushing = async () =>
+      calendarResponseSchema.parse(
+        (await agent.get("/api/calendar").query({ from: MONDAY, to: MONDAY })).body,
+      ).garmin.pushing;
+    const failed = await pushQueue.enqueuePushWorkouts({ userId });
+    if (!failed) throw new Error("push not queued");
+    // Garmin failed the attempt: pg-boss retries it 5 to 10 minutes later.
+    await boss.fail(pushQueue.name, failed);
+    expect((await pushJobs(userId)).map((job) => job.state)).toEqual(["retry"]);
+
+    const whileRetrying = await pushing();
+    await boss.deleteJob(pushQueue.name, failed);
+    await boss.send(
+      pushQueue.name,
+      { userId },
+      { ...pushQueue.sendOptions({ userId }), startAfter: 3600 },
+    );
+    const whileDeferred = await pushing();
+
+    expect([whileRetrying, whileDeferred]).toEqual([false, false]);
+  });
+
   it("returns 400 for a range that ends before it starts, is over 42 days, or is missing a date", async () => {
     const { agent } = await owner("none");
 
@@ -237,6 +262,27 @@ describe("POST /api/calendar/push", () => {
     });
     expect(second.status).toBe(200);
     expect(await pushJobs(userId)).toHaveLength(1);
+  });
+
+  it("answers pushing for a send beside a push parked in retry (Garmin outage then retry)", async () => {
+    const { agent, userId } = await owner();
+    const parked = await pushQueue.enqueuePushWorkouts({ userId });
+    if (!parked) throw new Error("push not queued");
+    await getBoss().fail(pushQueue.name, parked);
+    await db
+      .update(garminConnection)
+      .set({ workoutsPushError: ErrorCode.garminUnavailable })
+      .where(eq(garminConnection.userId, userId));
+
+    const response = await agent.post("/api/calendar/push");
+
+    expect(response.status).toBe(200);
+    expect(garminPushResponseSchema.parse(response.body).garmin).toMatchObject({
+      pushing: true,
+      error: ErrorCode.garminUnavailable,
+    });
+    // The stately queue keeps one job per state: the new one is due beside the one in retry.
+    expect((await pushJobs(userId)).map((job) => job.state).sort()).toEqual(["created", "retry"]);
   });
 
   it("returns 409 without a working Garmin login and queues nothing (not connected, token expiry)", async () => {

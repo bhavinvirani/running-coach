@@ -306,9 +306,12 @@ function parseStep(draft: StepDraft): StepParse {
   return { ok: true, step: { ...base, distanceM, durationS: null } };
 }
 
+/** The contract's fewest times a repeat runs: once is a plain step. */
+const REPEAT_MIN = 2;
+
 function parseRepeat(text: string): number | null {
   const value = Number(text.trim());
-  return Number.isInteger(value) && value >= 2 && value <= REPEAT_MAX ? value : null;
+  return Number.isInteger(value) && value >= REPEAT_MIN && value <= REPEAT_MAX ? value : null;
 }
 
 type StepsParse = { ok: true; steps: SessionSteps } | { ok: false; message: string };
@@ -333,7 +336,7 @@ function parseItems(items: ItemDraft[], units: Units): StepsParse {
     if (repeat === null) {
       return {
         ok: false,
-        message: `Repeat ${label} runs 2 to ${REPEAT_MAX} times. Change its count.`,
+        message: `Repeat ${label} runs ${formatCountValue(REPEAT_MIN)} to ${formatCountValue(REPEAT_MAX)} times. Change its count.`,
       };
     }
     const inner: Step[] = [];
