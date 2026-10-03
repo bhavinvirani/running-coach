@@ -1,8 +1,14 @@
-import { weekdaySchema } from "@running-coach/shared";
+import { sessionTypeSchema, weekdaySchema, type SessionType } from "@running-coach/shared";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { weekdayIndex } from "../dates";
-import { isSpacedFromHardDay, weekLayout } from "./hard-days";
+import { addDays, daysBetween, weekdayIndex } from "../dates";
+import { generatePlan } from "../plan/generate";
+import { planInputArb } from "../plan/plan-arbitraries";
+import { hardSessionTooClose, isSpacedFromHardDay, weekLayout } from "./hard-days";
+
+// The oracle, written out here rather than read from the engine's constant.
+const HARD = new Set<SessionType>(["long", "intervals", "tempo", "race_practice", "race"]);
+const DAY = "2026-10-07"; // a Wednesday
 
 describe("hard days", () => {
   it("puts two quality sessions 2 and 4 days after a Sunday long run, inside the week", () => {
@@ -146,4 +152,149 @@ describe("hard days", () => {
       { numRuns: 500 },
     );
   });
+});
+
+describe("hard session too close", () => {
+  it.each([
+    ["the day before", -1],
+    ["the day after", 1],
+    ["the same day", 0],
+  ])("reports a hard session %s", (_label, offset) => {
+    expect(
+      hardSessionTooClose({
+        type: "intervals",
+        date: DAY,
+        others: [{ type: "long", date: addDays(DAY, offset) }],
+      }),
+    ).toEqual({ type: "long", date: addDays(DAY, offset) });
+  });
+
+  it.each([-2, 2])("passes a hard session %s days away: exactly 48 h", (offset) => {
+    expect(
+      hardSessionTooClose({
+        type: "tempo",
+        date: DAY,
+        others: [{ type: "race", date: addDays(DAY, offset) }],
+      }),
+    ).toBeNull();
+  });
+
+  it.each(["easy", "strength", "rest"] as const)(
+    "never warns when the session moved is %s, beside hard days",
+    (type) => {
+      expect(
+        hardSessionTooClose({
+          type,
+          date: DAY,
+          others: [
+            { type: "long", date: addDays(DAY, -1) },
+            { type: "intervals", date: DAY },
+            { type: "tempo", date: addDays(DAY, 1) },
+          ],
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("ignores easy, strength and rest neighbours", () => {
+    expect(
+      hardSessionTooClose({
+        type: "long",
+        date: DAY,
+        others: [
+          { type: "easy", date: addDays(DAY, -1) },
+          { type: "strength", date: DAY },
+          { type: "rest", date: addDays(DAY, 1) },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("names the nearest hard session, then the earlier one on a tie", () => {
+    expect(
+      hardSessionTooClose({
+        type: "intervals",
+        date: DAY,
+        others: [
+          { type: "tempo", date: addDays(DAY, 1) },
+          { type: "race_practice", date: DAY },
+          { type: "long", date: addDays(DAY, -1) },
+        ],
+      }),
+    ).toEqual({ type: "race_practice", date: DAY });
+    expect(
+      hardSessionTooClose({
+        type: "intervals",
+        date: DAY,
+        others: [
+          { type: "tempo", date: addDays(DAY, 1) },
+          { type: "long", date: addDays(DAY, -1) },
+        ],
+      }),
+    ).toEqual({ type: "long", date: addDays(DAY, -1) });
+    expect(
+      hardSessionTooClose({
+        type: "intervals",
+        date: DAY,
+        others: [
+          { type: "long", date: addDays(DAY, -1) },
+          { type: "tempo", date: addDays(DAY, 1) },
+        ],
+      }),
+    ).toEqual({ type: "long", date: addDays(DAY, -1) });
+  });
+
+  it("answers no hard session when there are no others", () => {
+    expect(hardSessionTooClose({ type: "race", date: DAY, others: [] })).toBeNull();
+  });
+
+  it("agrees with the 48 h rule: conflict exactly when a hard session is nearer than 2 days", () => {
+    const othersArb = fc.array(
+      fc.record({
+        type: fc.constantFrom(...sessionTypeSchema.options),
+        date: fc.integer({ min: -4, max: 4 }).map((offset) => addDays(DAY, offset)),
+      }),
+      { maxLength: 8 },
+    );
+    fc.assert(
+      fc.property(fc.constantFrom(...sessionTypeSchema.options), othersArb, (type, others) => {
+        const gap = (date: string) => Math.abs(daysBetween(DAY, date));
+        const close = others.filter((other) => HARD.has(other.type) && gap(other.date) < 2);
+        const found = hardSessionTooClose({ type, date: DAY, others });
+        if (!HARD.has(type) || close.length === 0) {
+          expect(found).toBeNull();
+          return;
+        }
+        expect(found).not.toBeNull();
+        expect(close).toContainEqual(found);
+        for (const other of close) {
+          expect(gap(found!.date)).toBeLessThanOrEqual(gap(other.date));
+          if (gap(other.date) === gap(found!.date)) {
+            expect(daysBetween(found!.date, other.date)).toBeGreaterThanOrEqual(0);
+          }
+        }
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it("finds nothing too close in any generated plan: the move check and the generator agree", () => {
+    fc.assert(
+      fc.property(planInputArb, (of) => {
+        const result = generatePlan(of);
+        fc.pre(result.ok);
+        if (!result.ok) return;
+        const sessions = result.plan.weeks.flatMap((week) => week.sessions);
+        // Sessions are in date order: the 3 on each side hold every session within a day of this one.
+        sessions.forEach((session, k) => {
+          const others = [
+            ...sessions.slice(Math.max(0, k - 3), k),
+            ...sessions.slice(k + 1, k + 4),
+          ];
+          expect(hardSessionTooClose({ ...session, others })).toBeNull();
+        });
+      }),
+      { numRuns: 60 },
+    );
+  }, 120_000);
 });

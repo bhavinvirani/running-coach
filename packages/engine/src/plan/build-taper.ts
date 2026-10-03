@@ -1,5 +1,5 @@
 import type { GeneratedSession, GeneratedWeek, PlanPhase } from "@running-coach/shared";
-import { TAPER_BLOCK_DAYS } from "../constants";
+import { HARD_SESSION_TYPES, TAPER_BLOCK_DAYS } from "../constants";
 import { addDays, daysBetween } from "../dates";
 import { longestInWindowM, longRunM, maxRunM } from "../rules/long-run";
 import { raceWeekDays, taperPracticeDate } from "../rules/race-week";
@@ -13,7 +13,6 @@ import {
 import { weekTargetM } from "../rules/volume-curve";
 import {
   finishWeek,
-  HARD_TYPES,
   raceSession,
   sizeRaceBlock,
   sizeWeek,
@@ -100,7 +99,7 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
 
   // Hard days as laid out: sizing can turn a hard slot easy, never an easy one hard.
   const hardDates = whole.flatMap((built) =>
-    built.week.sessions.filter((s) => HARD_TYPES.has(s.type)).map((s) => s.date),
+    built.week.sessions.filter((s) => HARD_SESSION_TYPES.has(s.type)).map((s) => s.date),
   );
   if (straddler !== null) hardDates.push(...hardDatesOf(straddler.slots));
   const lastHardBefore = (date: string) =>
