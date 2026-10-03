@@ -7,7 +7,7 @@ import {
   type InsightResponse,
 } from "@running-coach/shared";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, apiFetch } from "./client";
+import { ApiError, apiFetch, isApiError } from "./client";
 import { detailKey } from "./query-keys";
 
 /** The coach writes a card in a few seconds to half a minute, and the runner is watching for it. */
@@ -64,6 +64,13 @@ export function useAskCoach(activityId: string) {
     // A read in flight answers with the card from before the ask; landing after it, it would put that back.
     onMutate: () => queryClient.cancelQueries({ queryKey: insightKey(activityId) }),
     onSuccess: (response) => queryClient.setQueryData(insightKey(activityId), response),
+    onError: (error) => {
+      // The key was removed on another device: read the card again, which answers no_key and swaps the
+      // button that cannot work for Add Claude key.
+      if (isApiError(error) && error.code === ErrorCode.claudeKeyMissing) {
+        void queryClient.invalidateQueries({ queryKey: insightKey(activityId) });
+      }
+    },
   });
 }
 
@@ -77,14 +84,26 @@ function withFeedback(
   return { state: "ready", insight: { ...response.insight, feedback } };
 }
 
+function feedbackMutationKey(activityId: string) {
+  return ["insight-feedback", activityId] as const;
+}
+
 /**
- * PUT /api/insights/:id/feedback: thumbs up, down, or null to clear. Shown at once and put back if the
- * request fails. One scope per run, so quick taps reach the API in the order they were made.
+ * PUT /api/insights/:id/feedback: thumbs up, down, or null to clear. Shown at once; one scope per run, so
+ * quick taps reach the API in the order they were made. Only the last tap still saving settles the cache:
+ * an earlier answer landing would flicker back to that tap, and an earlier failure says nothing about the
+ * last one. When the last fails, a lone tap puts back the card from before it, and the card is read again
+ * either way, since after several taps no snapshot is the server's (the one before the last tap is the
+ * tap before it, maybe never saved).
  */
 export function useInsightFeedback(activityId: string) {
   const queryClient = useQueryClient();
   const key = insightKey(activityId);
+  const mutationKey = feedbackMutationKey(activityId);
+  // This mutation is pending while its own callbacks run, and so is every queued tap after it.
+  const othersPending = () => queryClient.isMutating({ mutationKey }) > 1;
   return useMutation({
+    mutationKey,
     scope: { id: `insight-feedback:${activityId}` },
     mutationFn: ({ insightId, feedback }: FeedbackChange) => {
       const body: InsightFeedbackRequest = { feedback };
@@ -95,17 +114,21 @@ export function useInsightFeedback(activityId: string) {
       });
     },
     onMutate: async ({ feedback }) => {
+      // Counted before the await, while no later tap can have joined.
+      const alone = !othersPending();
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<InsightResponse>(key);
       queryClient.setQueryData<InsightResponse>(key, withFeedback(previous, feedback));
-      return { previous };
+      return { previous: alone ? previous : undefined };
     },
-    onError: (_error, { feedback }, context) => {
-      const current = queryClient.getQueryData<InsightResponse>(key);
-      // A later tap already changed the thumbs and its own answer settles them; only undo this tap's own.
-      if (current?.state === "ready" && current.insight.feedback !== feedback) return;
-      queryClient.setQueryData(key, context?.previous);
+    onError: (_error, _change, context) => {
+      if (othersPending()) return;
+      if (context?.previous !== undefined) queryClient.setQueryData(key, context.previous);
+      void queryClient.invalidateQueries({ queryKey: key });
     },
-    onSuccess: (response) => queryClient.setQueryData(key, response),
+    onSuccess: (response) => {
+      if (othersPending()) return;
+      queryClient.setQueryData(key, response);
+    },
   });
 }

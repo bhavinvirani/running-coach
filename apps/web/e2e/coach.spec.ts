@@ -233,7 +233,7 @@ test("Try again on a fallback card asks the coach again, and its card replaces t
   });
 });
 
-test("a fallback card for a rejected key sends the runner to Settings to update it", async ({
+test("a fallback card for a rejected key offers Replace key, which opens Settings, beside Try again", async ({
   page,
 }) => {
   await seedRun();
@@ -242,7 +242,7 @@ test("a fallback card for a rejected key sends the runner to Settings to update 
     fixtureRunIds.longRun,
     {
       ...longRunFallbackInsight,
-      whatItMeans: "No coach review: Claude rejected your API key. Update it in Settings.",
+      whatItMeans: "No coach review: Claude rejected your API key. Replace it in Settings.",
     },
     { fallbackReason: "key_invalid" },
   );
@@ -250,14 +250,15 @@ test("a fallback card for a rejected key sends the runner to Settings to update 
   const coach = region(page, "Coach");
 
   await expect(
-    coach.getByText("No coach review: Claude rejected your API key. Update it in Settings.", {
+    coach.getByText("No coach review: Claude rejected your API key. Replace it in Settings.", {
       exact: true,
     }),
   ).toBeVisible();
-  // Asking again would fail the same way: the one way on is a new key.
-  await expect(coach.getByRole("button")).toHaveCount(0);
+  // Try again stays for a key replaced since the card was written; not the coach's work, so no thumbs.
+  await expect(coach.getByRole("button", { name: "Try again" })).toBeVisible();
+  await expect(coach.getByRole("button", { name: "Helpful", exact: true })).toHaveCount(0);
 
-  await coach.getByRole("link", { name: "Update key" }).click();
+  await coach.getByRole("link", { name: "Replace key" }).click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
   await expect(region(page, "Claude key").getByText("Saved", { exact: true })).toBeVisible();
   await expect(

@@ -34,9 +34,10 @@ export function useSettingsScreen() {
       clearSaveError: () => saveKey.reset(),
       removing: removeKey.isPending,
       removeError: removeKey.error,
-      remove: () => {
+      /** `onRemoved` runs once the key is gone, so the section can move focus to the empty field. */
+      remove: (onRemoved: () => void) => {
         saveKey.reset();
-        removeKey.mutate();
+        removeKey.mutate(undefined, { onSuccess: onRemoved });
       },
     },
     loggingOut: logOut.isPending,

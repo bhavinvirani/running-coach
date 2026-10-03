@@ -104,7 +104,10 @@ function CoachBody({
     case "ready":
       return (
         <>
-          <InsightText content={response.insight.content} />
+          <InsightText
+            content={response.insight.content}
+            fallback={response.insight.fallbackReason !== null}
+          />
           {response.insight.fallbackReason === null ? (
             <Thumbs insight={response.insight} setFeedback={setFeedback} error={feedbackError} />
           ) : (
@@ -132,7 +135,10 @@ function AddKey() {
   );
 }
 
-/** A failed Ask the coach or Try again: 409 claude_key_missing, 429, or the API down. */
+/**
+ * A failed Ask the coach or Try again: 429, or the API down. A 409 claude_key_missing shows here only until
+ * the card is read again and answers no_key (useAskCoach).
+ */
 function AskAlert({ error }: { error: Error | null }) {
   if (error === null) return null;
   return (
@@ -147,13 +153,21 @@ const CAUTION_TEXT = {
   rest_and_check: "Rest, and see a professional if it persists",
 } as const;
 
-/** The headline, then the three parts in the coach's order, and the caution when there is one. */
-function InsightText({ content }: { content: RunInsight }) {
+/**
+ * The headline, then the three parts in the coach's order, and the caution when there is one. A fallback
+ * card's middle part says why there is no review rather than what the run means, so it reads as its own
+ * sentence, without the label.
+ */
+function InsightText({ content, fallback }: { content: RunInsight; fallback: boolean }) {
   return (
     <>
       <p className="text-body font-semibold text-ink">{content.headline}</p>
       <Part label="What happened" text={content.whatHappened} />
-      <Part label="What it means" text={content.whatItMeans} />
+      {fallback ? (
+        <p className="text-body text-ink">{content.whatItMeans}</p>
+      ) : (
+        <Part label="What it means" text={content.whatItMeans} />
+      )}
       <Part label="Next" text={content.nextStep} />
       {content.caution === "none" ? null : (
         <p className="flex items-center gap-2 text-body font-semibold text-ink">
@@ -182,8 +196,10 @@ function Part({ label, text }: { label: string; text: string }) {
 }
 
 /**
- * A fallback card already says why the coach could not write one; this is what to do about it. A rejected
- * key is fixed in Settings (asking again would fail the same way); anything else may pass on another try.
+ * A fallback card already says why the coach could not write one; this is what to do about it. A missing
+ * key is added in Settings. A rejected key is replaced there, and Try again stays beside it for when it
+ * already was (the card is from before) or Claude turned the key down only for a moment; any other reason
+ * may pass on another try.
  */
 function FallbackAction({
   reason,
@@ -203,25 +219,30 @@ function FallbackAction({
       </Button>
     );
   }
-  if (reason === "key_invalid") {
-    return (
-      <Button asChild variant="secondary" className="self-start">
-        <Link to="/settings">Update key</Link>
-      </Button>
-    );
-  }
+  const tryAgain = (
+    <Button
+      variant="secondary"
+      className="self-start"
+      disabled={asking}
+      aria-busy={asking}
+      onClick={ask}
+    >
+      Try again
+    </Button>
+  );
   return (
     <>
       <AskAlert error={askError} />
-      <Button
-        variant="secondary"
-        className="self-start"
-        disabled={asking}
-        aria-busy={asking}
-        onClick={ask}
-      >
-        Try again
-      </Button>
+      {reason === "key_invalid" ? (
+        <div className="flex flex-wrap gap-3">
+          <Button asChild variant="secondary">
+            <Link to="/settings">Replace key</Link>
+          </Button>
+          {tryAgain}
+        </div>
+      ) : (
+        tryAgain
+      )}
     </>
   );
 }

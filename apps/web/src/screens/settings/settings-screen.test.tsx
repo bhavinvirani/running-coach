@@ -192,7 +192,7 @@ describe("SettingsScreen", () => {
     expect(router.state.location.pathname).toBe("/login");
     expect(calls.some((call) => call.path === "/api/auth/sign-out")).toBe(true);
   });
-  it("asks for a Claude key with what it costs and how it is kept, and saves nothing while the field is blank", async () => {
+  it("asks for a Claude key with what it costs and how it is kept, keeps password managers out, and saves nothing while the field is blank", async () => {
     fakeMeApi(meFixture());
     renderSettings();
 
@@ -200,6 +200,9 @@ describe("SettingsScreen", () => {
     const field = within(section).getByLabelText("Claude API key");
     expect(field).toHaveAttribute("type", "password");
     expect(field).toHaveAttribute("autocomplete", "off");
+    // Password managers would offer the app password here, or save the API key as one.
+    expect(field).toHaveAttribute("data-1p-ignore");
+    expect(field).toHaveAttribute("data-lpignore", "true");
     expect(field).toHaveAttribute("spellcheck", "false");
     expect(field).toHaveAttribute("autocapitalize", "off");
     expect(field).toHaveAccessibleDescription(
@@ -215,7 +218,7 @@ describe("SettingsScreen", () => {
     expect(within(section).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 
-  it("checks and saves a key, then shows it as saved without the key itself", async () => {
+  it("checks and saves a key (Saving key…), then shows it as saved without the key itself, focus on Replace key", async () => {
     let answer!: () => void;
     const calls = fakeMeApi(meFixture(), {
       saveKey: () =>
@@ -229,13 +232,16 @@ describe("SettingsScreen", () => {
     await userEvent.type(within(section).getByLabelText("Claude API key"), ` ${FAKE_KEY} `);
     await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
 
-    expect(await within(section).findByRole("button", { name: "Checking key…" })).toBeDisabled();
+    expect(await within(section).findByRole("button", { name: "Saving key…" })).toBeDisabled();
     act(() => answer());
 
     expect(await within(claudeKey()).findByText("Saved")).toBeInTheDocument();
     expect(within(claudeKey()).queryByLabelText("Claude API key")).not.toBeInTheDocument();
     expect(claudeKey()).not.toHaveTextContent(FAKE_KEY);
-    expect(within(claudeKey()).getByRole("button", { name: "Replace key" })).toBeInTheDocument();
+    // The field and its button are gone; focus lands on the control that took their place.
+    await vi.waitFor(() =>
+      expect(within(claudeKey()).getByRole("button", { name: "Replace key" })).toHaveFocus(),
+    );
     expect(within(claudeKey()).getByRole("button", { name: "Remove key" })).toBeInTheDocument();
     expect(calls.filter((call) => call.method === "PUT").map((call) => call.body)).toEqual([
       { key: FAKE_KEY },
@@ -282,7 +288,7 @@ describe("SettingsScreen", () => {
     expect(within(section).queryByText("Saved")).not.toBeInTheDocument();
   });
 
-  it("opens the field with Cancel on Replace key, closes it on Cancel and saves a new key", async () => {
+  it("opens the field with Cancel on Replace key, closes it on Cancel and saves a new key, moving focus with each swap", async () => {
     const calls = fakeMeApi(withSavedKey(), {
       saveKey: (key) => (key === FAKE_KEY ? "stored" : problem(422, ErrorCode.claudeKeyInvalid)),
     });
@@ -293,6 +299,8 @@ describe("SettingsScreen", () => {
     expect(within(section).queryByLabelText("Claude API key")).not.toBeInTheDocument();
 
     await userEvent.click(within(section).getByRole("button", { name: "Replace key" }));
+    // Replace key is gone: focus goes to the field that replaced it.
+    expect(within(section).getByLabelText("Claude API key")).toHaveFocus();
     await userEvent.type(within(section).getByLabelText("Claude API key"), "sk-ant-wrong");
     await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
     expect(await within(section).findByRole("alert")).toHaveTextContent(
@@ -302,6 +310,7 @@ describe("SettingsScreen", () => {
     await userEvent.click(within(section).getByRole("button", { name: "Cancel" }));
     expect(within(section).getByText("Saved")).toBeInTheDocument();
     expect(within(section).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: "Replace key" })).toHaveFocus();
 
     // Opened again: empty, with no error from the last try.
     await userEvent.click(within(section).getByRole("button", { name: "Replace key" }));
@@ -313,25 +322,32 @@ describe("SettingsScreen", () => {
 
     expect(await within(section).findByText("Saved")).toBeInTheDocument();
     expect(within(section).queryByLabelText("Claude API key")).not.toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(within(section).getByRole("button", { name: "Replace key" })).toHaveFocus(),
+    );
     expect(keyCalls(calls)).toEqual(["PUT", "PUT"]);
   });
 
-  it("removes the key without a confirm dialog and asks for one again", async () => {
+  it("removes the key without a confirm dialog, reads every run's coach state again and asks for a key with focus in the field", async () => {
     const confirm = vi.spyOn(window, "confirm");
     const calls = fakeMeApi(withSavedKey());
     const { queryClient } = renderSettings();
+    // A run screen opened before cached its coach card.
+    queryClient.setQueryData(insightKey(RUN_ID), { state: "none" });
 
     await userEvent.click(
       within(await findClaudeKey()).getByRole("button", { name: "Remove key" }),
     );
 
-    expect(await within(claudeKey()).findByLabelText("Claude API key")).toBeInTheDocument();
+    const field = await within(claudeKey()).findByLabelText("Claude API key");
+    await vi.waitFor(() => expect(field).toHaveFocus());
     expect(within(claudeKey()).queryByText("Saved")).not.toBeInTheDocument();
     expect(confirm).not.toHaveBeenCalled();
     expect(keyCalls(calls)).toEqual(["DELETE"]);
     expect(queryClient.getQueryData<MeResponse>(detailKey("me"))?.settings.hasClaudeKey).toBe(
       false,
     );
+    expect(queryClient.getQueryState(insightKey(RUN_ID))?.isInvalidated).toBe(true);
   });
 
   it("explains a failed removal and keeps the key", async () => {
@@ -346,6 +362,8 @@ describe("SettingsScreen", () => {
 
     expect(await within(claudeKey()).findByRole("alert")).toHaveTextContent(errorMessages.internal);
     expect(within(claudeKey()).getByText("Saved")).toBeInTheDocument();
+    // Nothing swapped, so nothing to move focus to.
+    expect(within(claudeKey()).queryByLabelText("Claude API key")).not.toBeInTheDocument();
   });
 
   it("places the Claude key between units and coach detail and Garmin", async () => {

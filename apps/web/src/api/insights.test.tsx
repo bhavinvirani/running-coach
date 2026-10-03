@@ -1,4 +1,9 @@
-import { ErrorCode, type InsightResponse } from "@running-coach/shared";
+import {
+  ErrorCode,
+  type CoachFeedback,
+  type InsightFeedbackRequest,
+  type InsightResponse,
+} from "@running-coach/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -103,8 +108,34 @@ describe("useAskCoach", () => {
     expect(queryClient.getQueryData(insightKey(run.id))).toEqual({ state: "pending" });
   });
 
-  it("fails with claude_key_missing when the key was removed and leaves the cached state", async () => {
-    stubFetch(() => problem(409, ErrorCode.claudeKeyMissing));
+  it("reads the run's card again when the key was removed on another device (409 claude_key_missing)", async () => {
+    const calls = stubFetch(({ method }) =>
+      method === "POST" ? problem(409, ErrorCode.claudeKeyMissing) : json({ state: "no_key" }),
+    );
+    const { queryClient, Wrapper } = wrapper();
+    queryClient.setQueryData(insightKey(run.id), { state: "none" });
+    const { result } = renderHook(
+      () => ({ insight: useInsight(run.id), ask: useAskCoach(run.id) }),
+      { wrapper: Wrapper },
+    );
+    await waitFor(() => expect(result.current.insight.data).toEqual({ state: "no_key" }));
+    queryClient.setQueryData(insightKey(run.id), { state: "none" });
+    const reads = () => calls.filter((call) => call.method === "GET").length;
+    const readsBefore = reads();
+
+    await act(async () => {
+      await result.current.ask.mutateAsync().catch(() => undefined);
+    });
+
+    await waitFor(() =>
+      expect(result.current.ask.error).toMatchObject({ code: "claude_key_missing" }),
+    );
+    await waitFor(() => expect(result.current.insight.data).toEqual({ state: "no_key" }));
+    expect(reads()).toBe(readsBefore + 1);
+  });
+
+  it("leaves the cached card as it is when Ask the coach is rate limited (429)", async () => {
+    stubFetch(() => problem(429, ErrorCode.rateLimited));
     const { queryClient, Wrapper } = wrapper();
     queryClient.setQueryData(insightKey(run.id), { state: "none" });
     const { result } = renderHook(() => useAskCoach(run.id), { wrapper: Wrapper });
@@ -113,8 +144,9 @@ describe("useAskCoach", () => {
       await result.current.mutateAsync().catch(() => undefined);
     });
 
-    await waitFor(() => expect(result.current.error).toMatchObject({ code: "claude_key_missing" }));
+    await waitFor(() => expect(result.current.error).toMatchObject({ code: "rate_limited" }));
     expect(queryClient.getQueryData(insightKey(run.id))).toEqual({ state: "none" });
+    expect(queryClient.getQueryState(insightKey(run.id))?.isInvalidated).toBe(false);
   });
 });
 
@@ -158,7 +190,7 @@ describe("useInsightFeedback", () => {
     expect(feedbackOf(queryClient.getQueryData(insightKey(run.id)))).toBeNull();
   });
 
-  it("puts the earlier thumb back when the request fails (rollback)", async () => {
+  it("puts the earlier thumb back and reads the card again when a lone tap fails (rollback)", async () => {
     stubFetch(() => problem(500, ErrorCode.internal));
     const { queryClient, Wrapper } = wrapper();
     queryClient.setQueryData(
@@ -172,6 +204,7 @@ describe("useInsightFeedback", () => {
     });
 
     expect(feedbackOf(queryClient.getQueryData(insightKey(run.id)))).toBe("down");
+    expect(queryClient.getQueryState(insightKey(run.id))?.isInvalidated).toBe(true);
     await waitFor(() => expect(result.current.error).toMatchObject({ code: "internal" }));
   });
 
@@ -196,6 +229,125 @@ describe("useInsightFeedback", () => {
     await waitFor(() =>
       expect(feedbackOf(queryClient.getQueryData(insightKey(run.id)))).toBe("down"),
     );
+  });
+
+  describe("two quick taps (thumbs race)", () => {
+    type Outcome = "saved" | "failed";
+
+    /**
+     * The card on the server, which keeps a thumb only when its PUT saves; each PUT waits until the test
+     * settles it, and reads can be held too.
+     */
+    function fakeFeedbackServer() {
+      let saved: CoachFeedback | null = null;
+      const puts: ((outcome: Outcome) => void)[] = [];
+      let holdReads = false;
+      const heldReads: (() => void)[] = [];
+      const read = () => json(insightReadyFixture(insightCardFixture({ feedback: saved })));
+      const calls = stubFetch(({ method, body }) => {
+        if (method === "PUT") {
+          const sent = (body as InsightFeedbackRequest).feedback;
+          return new Promise<Response>((resolve) =>
+            puts.push((outcome) => {
+              if (outcome === "failed") return resolve(problem(500, ErrorCode.internal));
+              saved = sent;
+              resolve(read());
+            }),
+          );
+        }
+        if (!holdReads) return read();
+        return new Promise<Response>((resolve) => heldReads.push(() => resolve(read())));
+      });
+      return {
+        calls,
+        sent: () => calls.filter((call) => call.method === "PUT").length,
+        reads: () => calls.filter((call) => call.method === "GET").length,
+        settle: (index: number, outcome: Outcome) => puts[index]?.(outcome),
+        holdReads: () => (holdReads = true),
+        releaseReads: () => heldReads.splice(0).forEach((release) => release()),
+      };
+    }
+
+    /** The card loaded and observed, as on the run screen, then thumbs up and down in quick succession. */
+    async function tapUpThenDown() {
+      const server = fakeFeedbackServer();
+      const { queryClient, Wrapper } = wrapper();
+      const { result } = renderHook(
+        () => ({ insight: useInsight(run.id), feedback: useInsightFeedback(run.id) }),
+        { wrapper: Wrapper },
+      );
+      await waitFor(() => expect(result.current.insight.isSuccess).toBe(true));
+      const shown = () => feedbackOf(queryClient.getQueryData(insightKey(run.id)));
+
+      act(() => result.current.feedback.mutate({ insightId: card.id, feedback: "up" }));
+      act(() => result.current.feedback.mutate({ insightId: card.id, feedback: "down" }));
+      await waitFor(() => expect(server.sent()).toBe(1));
+      expect(shown()).toBe("down");
+      return { server, queryClient, result, shown };
+    }
+
+    it("keeps the second tap on screen when the first one's answer lands, then shows the second's (both saved, no flicker)", async () => {
+      const { server, shown, result } = await tapUpThenDown();
+
+      act(() => server.settle(0, "saved"));
+      await waitFor(() => expect(server.sent()).toBe(2));
+      expect(shown()).toBe("down");
+
+      act(() => server.settle(1, "saved"));
+      await waitFor(() => expect(result.current.feedback.isSuccess).toBe(true));
+      expect(shown()).toBe("down");
+    });
+
+    it("keeps the second tap on screen when the first fails, and takes its answer once it saves (first fails, second saves)", async () => {
+      const { server, shown, result, queryClient } = await tapUpThenDown();
+
+      act(() => server.settle(0, "failed"));
+      await waitFor(() => expect(server.sent()).toBe(2));
+      expect(shown()).toBe("down");
+
+      act(() => server.settle(1, "saved"));
+      await waitFor(() => expect(result.current.feedback.isSuccess).toBe(true));
+      expect(shown()).toBe("down");
+      expect(result.current.feedback.error).toBeNull();
+      expect(queryClient.getQueryState(insightKey(run.id))?.isInvalidated).toBe(false);
+    });
+
+    it("reads the card again when the second fails after the first saved, and shows the saved thumb (first saves, second fails)", async () => {
+      const { server, shown, result } = await tapUpThenDown();
+      const readsBefore = server.reads();
+
+      act(() => server.settle(0, "saved"));
+      await waitFor(() => expect(server.sent()).toBe(2));
+      expect(shown()).toBe("down");
+
+      act(() => server.settle(1, "failed"));
+      await waitFor(() =>
+        expect(result.current.feedback.error).toMatchObject({ code: "internal" }),
+      );
+      await waitFor(() => expect(server.reads()).toBe(readsBefore + 1));
+      await waitFor(() => expect(shown()).toBe("up"));
+    });
+
+    it("reads the card again when both fail instead of putting back the first tap, which was never saved (both fail)", async () => {
+      const { server, shown, result } = await tapUpThenDown();
+      const readsBefore = server.reads();
+      server.holdReads();
+
+      act(() => server.settle(0, "failed"));
+      await waitFor(() => expect(server.sent()).toBe(2));
+      expect(shown()).toBe("down");
+
+      act(() => server.settle(1, "failed"));
+      await waitFor(() =>
+        expect(result.current.feedback.error).toMatchObject({ code: "internal" }),
+      );
+      await waitFor(() => expect(server.reads()).toBe(readsBefore + 1));
+      // Until the server answers, the cache never holds the unsaved first tap.
+      expect(shown()).not.toBe("up");
+
+      act(() => server.releaseReads());
+      await waitFor(() => expect(shown()).toBeNull());
+    });
   });
 
   it("does not touch a run whose card is not loaded", async () => {
