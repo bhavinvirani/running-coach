@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseConfig, systemEnv } from "./config";
+import { listenHost, parseConfig, systemEnv } from "./config";
 
 const SECRET = "4f1c2a9e7b3d5f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d";
 const TOKEN = "fake-plan-token-for-tests";
@@ -83,6 +83,17 @@ describe("parseConfig", () => {
     });
 
     expect(JSON.stringify(result)).not.toContain("sk-ant-api03-fake");
+  });
+});
+
+describe("listenHost", () => {
+  it("listens on every interface in production, where Render routes to the port", () => {
+    expect(listenHost("production")).toBe("0.0.0.0");
+  });
+
+  it("listens on loopback only in development and test, so the laptop's Claude login is not reachable from the network", () => {
+    expect(listenHost("development")).toBe("127.0.0.1");
+    expect(listenHost("test")).toBe("127.0.0.1");
   });
 });
 

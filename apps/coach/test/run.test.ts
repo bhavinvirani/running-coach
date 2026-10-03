@@ -117,6 +117,7 @@ describe("POST /v1/run", () => {
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: "4000",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       DISABLE_AUTOUPDATER: "1",
+      CLAUDE_CODE_STARTUP_FAILURE_RESULTS: "1",
     });
     // Our allowlist plus the markers the SDK adds itself, nothing else.
     const allowed = new Set([
@@ -129,6 +130,7 @@ describe("POST /v1/run", () => {
       "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
       "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
       "DISABLE_AUTOUPDATER",
+      "CLAUDE_CODE_STARTUP_FAILURE_RESULTS",
       "CLAUDE_CODE_ENTRYPOINT",
       "CLAUDE_AGENT_SDK_VERSION",
       "CLAUDE_CODE_SDK_READS_SESSION_STATE",
@@ -196,6 +198,60 @@ describe("POST /v1/run", () => {
 
     expect(response.failure).toBe("timeout");
     expect(coach!.events().some((event) => event.event === "exit")).toBe(true);
+  });
+
+  it("a CLI that ignores SIGTERM after a timeout is killed before the next run's CLI starts", async () => {
+    coach = await startCoach("hang-stubborn", { timeoutMs: 500 });
+    const first = postRun(coach);
+    await waitFor(() => coach!.events().find((event) => event.event === "user"), 10_000, "prompt");
+    const second = postRun(coach);
+
+    const firstResponse = coachRunResponseSchema.parse(await (await first).json());
+    const secondResponse = coachRunResponseSchema.parse(await (await second).json());
+
+    expect(firstResponse).toMatchObject({ ok: false, failure: "timeout" });
+    expect(secondResponse.ok).toBe(true);
+    const events = coach.events();
+    const [stubborn, next] = events.filter((event) => event.event === "start");
+    // The first CLI outlived a SIGTERM, so only the service's SIGKILL ended it.
+    expect(events).toContainEqual(
+      expect.objectContaining({ event: "sigterm", ignored: true, pid: stubborn!.pid }),
+    );
+    expect(next!.alive).toEqual([]);
+    expect(() => process.kill(stubborn!.pid, 0)).toThrow();
+  });
+
+  it("crash: a CLI that exits without a result answers unavailable and logs its stderr size at warn, never the text", async () => {
+    const response = failureOf(await runScenario("crash"));
+
+    expect(response.failure).toBe("unavailable");
+    const line = await waitFor(
+      () => coach!.logs.find((entry) => entry.msg === "coach run crashed"),
+      5_000,
+      "crash log",
+    );
+    expect(line).toMatchObject({ level: "warn", outcome: "unavailable" });
+    expect(line.stderrBytes).toBeGreaterThan(0);
+    expect(JSON.stringify(coach!.logs)).not.toContain("fake unexpected failure");
+  });
+
+  it("startup failure: answers unavailable and logs the reason and the stderr size at warn, never the text", async () => {
+    const response = failureOf(await runScenario("startup-failure"));
+
+    expect(response).toMatchObject({ failure: "unavailable", usage: null });
+    const line = await waitFor(
+      () => coach!.logs.find((entry) => entry.msg === "coach run failed at startup"),
+      5_000,
+      "startup failure log",
+    );
+    expect(line).toMatchObject({
+      level: "warn",
+      outcome: "unavailable",
+      startupFailureReason: "temp_dir_unusable",
+      resultSubtype: "error_during_execution",
+    });
+    expect(line.stderrBytes).toBeGreaterThan(0);
+    expect(JSON.stringify(coach!.logs)).not.toContain("temp directory");
   });
 
   it("client hang-up: aborts the running CLI", async () => {

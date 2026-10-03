@@ -4,8 +4,14 @@ import type {
   SDKMessage,
   SDKRateLimitInfo,
   SDKResultMessage,
+  SDKStartupFailureReason,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { CoachRunFailure, CoachRunResponse, CoachRunUsage } from "@running-coach/shared";
+import {
+  COACH_RUN_MAX_RETRY_AFTER_S,
+  type CoachRunFailure,
+  type CoachRunResponse,
+  type CoachRunUsage,
+} from "@running-coach/shared";
 
 // What Claude Code's messages said about one run, and the outcome they add up to. Pure, so every mapping
 // is tested without a process. Field names follow the Agent SDK 0.3.288 types (sdk.d.ts).
@@ -16,8 +22,6 @@ const SYNTHETIC_MODEL = "<synthetic>";
 /** Without a reset time the plan's limit is retried in an hour; never sooner than a minute. */
 const DEFAULT_RETRY_AFTER_S = 3600;
 const MIN_RETRY_AFTER_S = 60;
-// The longest plan window is seven days; a larger wait means a misread reset time, not a real limit.
-const MAX_RETRY_AFTER_S = 8 * 24 * 3600;
 
 const AUTH_ERRORS = new Set<SDKAssistantMessageError>([
   "authentication_failed",
@@ -36,6 +40,14 @@ const REJECTED_ERRORS = new Set<SDKAssistantMessageError>([
   "invalid_request",
   "model_not_found",
   "cloud_credential_error",
+]);
+// Startup failures where the sign-in itself is refused, so only a new plan token helps. The rest are the
+// box or the CLI (temp dir, cwd, version, proxy) or may pass later: org_verify_failed is a network
+// failure or a revoked token, which Claude Code cannot tell apart.
+const AUTH_STARTUP_FAILURES = new Set<SDKStartupFailureReason>([
+  "org_pin_mismatch",
+  "org_pin_api_key_conflict",
+  "gateway_signin_required",
 ]);
 
 export interface RunObservation {
@@ -101,7 +113,17 @@ export function observe(observation: RunObservation, message: SDKMessage): void 
 export function retryAfterSeconds(limit: SDKRateLimitInfo, nowMs: number): number {
   if (limit.resetsAt === undefined) return DEFAULT_RETRY_AFTER_S;
   const seconds = Math.ceil(limit.resetsAt - nowMs / 1000);
-  return Math.min(MAX_RETRY_AFTER_S, Math.max(MIN_RETRY_AFTER_S, seconds));
+  // A wait beyond the plan's longest window means a misread reset time, not a real limit.
+  return Math.min(COACH_RUN_MAX_RETRY_AFTER_S, Math.max(MIN_RETRY_AFTER_S, seconds));
+}
+
+/** Why Claude Code refused to start, from the result it writes with CLAUDE_CODE_STARTUP_FAILURE_RESULTS. */
+export function startupFailureOf(
+  result: SDKResultMessage | undefined,
+): SDKStartupFailureReason | undefined {
+  return result === undefined || result.subtype === "success"
+    ? undefined
+    : result.startup_failure_reason;
 }
 
 const tokenCount = (value: number | undefined) =>
@@ -150,6 +172,10 @@ function modelOfUsage(result: SDKResultMessage): string | undefined {
 /** Why a run without a usable structured output failed. */
 export function failureOf(observation: RunObservation): CoachRunFailure {
   const { result, assistantError: error } = observation;
+  const startupFailure = startupFailureOf(result);
+  if (startupFailure !== undefined) {
+    return AUTH_STARTUP_FAILURES.has(startupFailure) ? "plan_auth_failed" : "unavailable";
+  }
   if (error !== undefined && AUTH_ERRORS.has(error)) return "plan_auth_failed";
   if (observation.rejectedLimit !== undefined) return "plan_limited";
   if (observation.refused || result?.stop_reason === "refusal") return "refusal";

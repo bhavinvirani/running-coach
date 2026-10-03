@@ -13,7 +13,14 @@ import type { CoachRunRequest, CoachRunResponse } from "@running-coach/shared";
 import { z } from "zod";
 import { type Config, systemEnv } from "./config";
 import type { Logger } from "./logger";
-import { classifyRun, failure, newObservation, observe, type RunObservation } from "./outcome";
+import {
+  classifyRun,
+  failure,
+  newObservation,
+  observe,
+  type RunObservation,
+  startupFailureOf,
+} from "./outcome";
 
 // Runs one prompt through Claude Code (the Agent SDK's bundled CLI) on the owner's plan. One CLI at a time:
 // each holds 200 to 250 MB, and the free instance has 512 MB.
@@ -71,6 +78,8 @@ export function childEnv(config: Config, maxTokens: number): Record<string, stri
     CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens),
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     DISABLE_AUTOUPDATER: "1",
+    // A known startup failure then ends in a result naming its reason instead of stderr alone.
+    CLAUDE_CODE_STARTUP_FAILURE_RESULTS: "1",
   };
 }
 
@@ -129,7 +138,11 @@ function trackedSpawner() {
       });
       exited = new Promise((resolve) => {
         started.once("exit", () => resolve());
-        started.once("error", () => resolve());
+        // The SDK's abort of options.signal makes Node send SIGTERM and emit 'error' at once, while a
+        // CLI that ignores the SIGTERM still runs; only a process that never started is gone on 'error'.
+        started.on("error", () => {
+          if (started.pid === undefined) resolve();
+        });
       });
       child = started;
       return started;
@@ -137,7 +150,7 @@ function trackedSpawner() {
     get stderrBytes() {
       return stderrBytes;
     },
-    /** Resolves once the CLI has exited, killing it when it outlives the SDK's own shutdown. */
+    /** Resolves once the CLI has exited, sending SIGKILL when it outlives KILL_AFTER_ABORT_MS. */
     async stopped(): Promise<void> {
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
       const running = child;
@@ -217,10 +230,15 @@ export function createRunner({ config, logger }: { config: Config; logger: Logge
 
     const durationMs = Math.round(performance.now() - startedAt);
     const response = outcome(stop, observation, request);
-    logRun({ request, observation, response, stop, durationMs, crash });
-    if (spawner.stderrBytes > 0) {
-      logger.debug({ stderrBytes: spawner.stderrBytes }, "claude code wrote to stderr");
-    }
+    logRun({
+      request,
+      observation,
+      response,
+      stop,
+      durationMs,
+      crash,
+      stderrBytes: spawner.stderrBytes,
+    });
     return stop === "hangup" ? null : response;
   }
 
@@ -244,9 +262,11 @@ export function createRunner({ config, logger }: { config: Config; logger: Logge
     stop: StopReason | undefined;
     durationMs: number;
     crash: unknown;
+    stderrBytes: number;
   }) {
     const { observation, response } = entry;
     const { result, rateLimit } = observation;
+    const startupFailureReason = startupFailureOf(result);
     const fields = {
       model: response.ok ? response.model : (observation.model ?? null),
       requestedModel: entry.request.model,
@@ -263,11 +283,18 @@ export function createRunner({ config, logger }: { config: Config; logger: Logge
         ? {}
         : { retryAfterSeconds: response.retryAfterSeconds }),
       ...(rateLimit === undefined ? {} : { rateLimit: rateLimitSummary(rateLimit) }),
+      ...(startupFailureReason === undefined ? {} : { startupFailureReason }),
+      // The size only: stderr can carry the prompt or the account's details.
+      stderrBytes: entry.stderrBytes,
     };
     // Once a result arrived, a throw is only the CLI's non-zero exit after an error result.
     if (entry.crash !== undefined && result === undefined && entry.stop === undefined) {
       const message = entry.crash instanceof Error ? entry.crash.message : typeof entry.crash;
       logger.warn({ ...fields, crash: message.slice(0, 300) }, "coach run crashed");
+      return;
+    }
+    if (startupFailureReason !== undefined) {
+      logger.warn(fields, "coach run failed at startup");
       return;
     }
     logger.info(fields, "coach run finished");

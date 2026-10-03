@@ -257,8 +257,9 @@ jobs:
           cache-from: type=gha,scope=coach
           cache-to: type=gha,mode=max,scope=coach
       # Boot it the way Render runs it (production, its own PORT, 512 MB and no swap) with a placeholder
-      # token: /health answers without the secret, a run without it is 401 and starts no Claude Code, and
-      # the process runs as the node user. No call ever reaches Claude.
+      # token: /health answers without the secret, a run without it is 401 and starts no Claude Code, the
+      # process runs as the node user, and that user can start Claude Code's native binary where the SDK
+      # finds it. No call ever reaches Claude.
       - name: Smoke test the coach image
         shell: bash
         run: |
@@ -283,6 +284,24 @@ jobs:
           echo "$processes"
           awk 'NR > 1 && $2 == 0 { root = 1 } END { exit root }' <<<"$processes"
           if grep -q claude <<<"$processes"; then echo "a refused run started Claude Code"; exit 1; fi
+          # Resolved from the SDK as the Dockerfile's check does, run with --version only, without the
+          # placeholder token and with Claude Code's network extras off.
+          docker exec --user node --workdir /app coach node --input-type=module -e '
+          import { execFileSync } from "node:child_process";
+          import { realpathSync } from "node:fs";
+          import { createRequire } from "node:module";
+          const sdk = realpathSync(createRequire(`${process.cwd()}/`).resolve("@anthropic-ai/claude-agent-sdk"));
+          const binary = createRequire(sdk).resolve(`@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude`);
+          const env = {
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            DISABLE_AUTOUPDATER: "1",
+            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+          };
+          const version = execFileSync(binary, ["--version"], { encoding: "utf8", env, timeout: 60_000 }).trim();
+          if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`unexpected --version output: ${version}`);
+          console.log(`Claude Code ${version} at ${binary} as uid ${process.getuid()}`);
+          '
       - name: Coach image logs
         if: always()
         run: docker logs coach || true

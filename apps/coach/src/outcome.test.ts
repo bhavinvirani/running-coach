@@ -1,4 +1,5 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { COACH_RUN_MAX_RETRY_AFTER_S } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { classifyRun, newObservation, observe, retryAfterSeconds } from "./outcome";
 
@@ -47,28 +48,29 @@ const opusUsage = (input: number, output: number) => ({
 });
 
 describe("retryAfterSeconds", () => {
-  it("counts seconds to resetsAt, which is Unix seconds", () => {
+  it("returns the seconds until resetsAt, read as Unix seconds", () => {
     expect(retryAfterSeconds({ status: "rejected", resetsAt: NOW_S + 5400 }, NOW_MS)).toBe(5400);
   });
 
-  it("usage limit without a reset time: retries in an hour", () => {
+  it("retries in an hour when the limit has no reset time", () => {
     expect(retryAfterSeconds({ status: "rejected" }, NOW_MS)).toBe(3600);
   });
 
-  it("usage limit resetting within a minute or already past: waits 60 s", () => {
+  it("waits 60 s when the reset is under a minute away or already past", () => {
     expect(retryAfterSeconds({ status: "rejected", resetsAt: NOW_S + 5 }, NOW_MS)).toBe(60);
     expect(retryAfterSeconds({ status: "rejected", resetsAt: NOW_S - 300 }, NOW_MS)).toBe(60);
   });
 
-  it("a reset beyond the longest plan window (a misread unit): capped at 8 days", () => {
+  it("caps the wait at 8 days when the reset lies beyond the longest plan window (a misread unit)", () => {
     expect(retryAfterSeconds({ status: "rejected", resetsAt: NOW_MS + 60_000 }, NOW_MS)).toBe(
-      8 * 24 * 3600,
+      COACH_RUN_MAX_RETRY_AFTER_S,
     );
+    expect(COACH_RUN_MAX_RETRY_AFTER_S).toBe(8 * 24 * 3600);
   });
 });
 
 describe("classifyRun", () => {
-  it("success with structured output: ok with the answering model and usage including cache tokens", () => {
+  it("returns ok with the answering model and usage including cache tokens for a success with structured output", () => {
     const response = classify(
       assistant({ model: "claude-opus-5-5", stop_reason: null }, { request_id: "req_1" }),
       result({
@@ -93,7 +95,7 @@ describe("classifyRun", () => {
     });
   });
 
-  it("success result with is_error true is never ok: classified by the preceding assistant error", () => {
+  it("never returns ok for a success result whose is_error is true, classifying it by the preceding assistant error", () => {
     const response = classify(
       assistant(
         { model: "<synthetic>", stop_reason: "stop_sequence" },
@@ -105,7 +107,7 @@ describe("classifyRun", () => {
     expect(response).toMatchObject({ ok: false, failure: "plan_auth_failed", usage: null });
   });
 
-  it("synthetic error frames never name the model", () => {
+  it("never takes the model from a synthetic error frame", () => {
     const response = classify(
       assistant({ model: "claude-sonnet-5-5", stop_reason: null }),
       assistant({ model: "<synthetic>" }, { error: "overloaded" }),
@@ -115,13 +117,13 @@ describe("classifyRun", () => {
     expect(response.ok && response.model).toBe("claude-sonnet-5-5");
   });
 
-  it("no assistant model: the model with the most output in modelUsage", () => {
+  it("names the model with the most output in modelUsage when no assistant frame named one", () => {
     const response = classify(result({ structured_output: { a: 1 }, modelUsage: opusUsage(5, 9) }));
 
     expect(response.ok && response.model).toBe("claude-opus-5-5");
   });
 
-  it("oauth_org_not_allowed: plan_auth_failed", () => {
+  it("maps oauth_org_not_allowed to plan_auth_failed", () => {
     const response = classify(
       assistant({ model: "<synthetic>" }, { error: "oauth_org_not_allowed" }),
       result({ is_error: true, api_error_status: 403 }),
@@ -130,7 +132,7 @@ describe("classifyRun", () => {
     expect(response).toMatchObject({ ok: false, failure: "plan_auth_failed" });
   });
 
-  it("rejected plan limit with a rate_limit error: plan_limited with retryAfterSeconds", () => {
+  it("maps a rejected plan limit with a rate_limit error to plan_limited with retryAfterSeconds", () => {
     const response = classify(
       rateLimit({ status: "rejected", resetsAt: NOW_S + 900, rateLimitType: "five_hour" }),
       assistant({ model: "<synthetic>" }, { error: "rate_limit" }),
@@ -146,7 +148,7 @@ describe("classifyRun", () => {
     });
   });
 
-  it("rate_limit error without a rejected plan event: unavailable, not plan_limited", () => {
+  it("maps a rate_limit error without a rejected plan event to unavailable, not plan_limited", () => {
     const response = classify(
       rateLimit({ status: "allowed_warning", resetsAt: NOW_S + 900 }),
       assistant({ model: "<synthetic>" }, { error: "rate_limit" }),
@@ -157,7 +159,7 @@ describe("classifyRun", () => {
     expect(response.ok || response.retryAfterSeconds).toBeUndefined();
   });
 
-  it("a rejected limit followed by a success (overage): ok", () => {
+  it("returns ok when a success follows a rejected limit (overage)", () => {
     const response = classify(
       rateLimit({ status: "rejected", resetsAt: NOW_S + 900 }),
       assistant({ model: "claude-opus-5-5" }),
@@ -167,7 +169,7 @@ describe("classifyRun", () => {
     expect(response.ok).toBe(true);
   });
 
-  it("refusal arrives as an invalid_request frame with stop reason refusal: refusal, not request_rejected", () => {
+  it("maps an invalid_request frame with stop reason refusal to refusal, not request_rejected", () => {
     const response = classify(
       assistant({ model: "<synthetic>", stop_reason: "refusal" }, { error: "invalid_request" }),
       result({ is_error: true, stop_reason: "refusal", modelUsage: opusUsage(12, 3) }),
@@ -180,7 +182,7 @@ describe("classifyRun", () => {
     });
   });
 
-  it("model_refusal_no_fallback: refusal", () => {
+  it("maps model_refusal_no_fallback to refusal", () => {
     const response = classify(
       frame({ type: "system", subtype: "model_refusal_no_fallback", original_model: "x" }),
       result({ is_error: true }),
@@ -189,7 +191,7 @@ describe("classifyRun", () => {
     expect(response).toMatchObject({ ok: false, failure: "refusal" });
   });
 
-  it("max tokens by stop reason or by the max_output_tokens error: max_tokens", () => {
+  it("maps a max_tokens stop reason or a max_output_tokens error to max_tokens", () => {
     expect(
       classify(assistant({ model: "claude-opus-5-5", stop_reason: "max_tokens" }), result({})),
     ).toMatchObject({ ok: false, failure: "max_tokens" });
@@ -201,7 +203,7 @@ describe("classifyRun", () => {
     ).toMatchObject({ ok: false, failure: "max_tokens" });
   });
 
-  it.each(["overloaded", "server_error", "unknown"])("%s: unavailable", (error) => {
+  it.each(["overloaded", "server_error", "unknown"])("maps %s to unavailable", (error) => {
     const response = classify(
       assistant({ model: "<synthetic>" }, { error }),
       result({ is_error: true, api_error_status: 529 }),
@@ -216,7 +218,7 @@ describe("classifyRun", () => {
     "verification_required",
     "invalid_request",
     "model_not_found",
-  ])("%s: request_rejected", (error) => {
+  ])("maps %s to request_rejected", (error) => {
     const response = classify(
       assistant({ model: "<synthetic>" }, { error }),
       result({ is_error: true, api_error_status: 400 }),
@@ -226,7 +228,7 @@ describe("classifyRun", () => {
   });
 
   it.each(["error_max_structured_output_retries", "error_max_turns"])(
-    "%s: invalid_output",
+    "maps %s to invalid_output",
     (subtype) => {
       const response = classify(result({ subtype, is_error: true, modelUsage: opusUsage(9, 9) }));
 
@@ -234,13 +236,13 @@ describe("classifyRun", () => {
     },
   );
 
-  it("success without structured output: invalid_output", () => {
+  it("maps a success without structured output to invalid_output", () => {
     const response = classify(result({ modelUsage: opusUsage(9, 9) }));
 
     expect(response).toMatchObject({ ok: false, failure: "invalid_output" });
   });
 
-  it("an error result without an assistant error reads the HTTP status", () => {
+  it("maps an error result without an assistant error by its HTTP status: 401 to plan_auth_failed, 400 to request_rejected, 429 or none to unavailable", () => {
     expect(classify(result({ is_error: true, api_error_status: 401 }))).toMatchObject({
       failure: "plan_auth_failed",
     });
@@ -255,7 +257,7 @@ describe("classifyRun", () => {
     });
   });
 
-  it("no result (the CLI crashed or never started): unavailable", () => {
+  it("maps a run without a result (the CLI crashed or never started) to unavailable", () => {
     expect(classify(assistant({ model: "claude-opus-5-5" }))).toMatchObject({
       ok: false,
       failure: "unavailable",
@@ -263,9 +265,42 @@ describe("classifyRun", () => {
     });
   });
 
-  it("error_during_execution: unavailable", () => {
+  it("maps error_during_execution without a startup failure reason to unavailable", () => {
     expect(classify(result({ subtype: "error_during_execution", is_error: true }))).toMatchObject({
       failure: "unavailable",
     });
+  });
+
+  // The zeroed result Claude Code writes before exiting on a known startup failure.
+  const startupFailure = (reason: string) =>
+    result({
+      subtype: "error_during_execution",
+      is_error: true,
+      num_turns: 0,
+      stop_reason: null,
+      errors: ["fake startup failure text"],
+      startup_failure_reason: reason,
+    });
+
+  it.each(["org_pin_mismatch", "org_pin_api_key_conflict", "gateway_signin_required"])(
+    "maps the startup failure %s, a refused sign-in, to plan_auth_failed",
+    (reason) => {
+      expect(classify(startupFailure(reason))).toMatchObject({
+        ok: false,
+        failure: "plan_auth_failed",
+        usage: null,
+      });
+    },
+  );
+
+  it.each([
+    "temp_dir_unusable",
+    "cwd_unavailable",
+    "cli_version_too_old",
+    "proxy_invalid",
+    "managed_settings_invalid",
+    "org_verify_failed",
+  ])("maps the startup failure %s to unavailable", (reason) => {
+    expect(classify(startupFailure(reason))).toMatchObject({ ok: false, failure: "unavailable" });
   });
 });

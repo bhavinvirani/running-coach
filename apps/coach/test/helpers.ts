@@ -33,7 +33,9 @@ export function testConfig(env: Record<string, string> = {}): Config {
 export interface FakeEvent {
   pid: number;
   at: number;
-  event: "start" | "initialize" | "user" | "played" | "exit";
+  event: "start" | "initialize" | "user" | "played" | "sigterm" | "exit";
+  /** On start: pids of the token's earlier processes still running, so an overlap shows. */
+  alive?: number[];
   argv?: string[];
   envNames?: string[];
   env?: Record<string, string>;
@@ -42,6 +44,7 @@ export interface FakeEvent {
   text?: string;
   code?: number;
   signal?: string;
+  ignored?: boolean;
 }
 
 export interface Coach {

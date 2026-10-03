@@ -1,4 +1,4 @@
-import { loadConfig } from "./config";
+import { listenHost, loadConfig } from "./config";
 import { createLogger } from "./logger";
 import { createRunner } from "./run";
 import { createCoachServer } from "./server";
@@ -11,9 +11,11 @@ const logger = createLogger(config.LOG_LEVEL);
 const runner = createRunner({ config, logger });
 const server = createCoachServer({ config, logger, runner });
 
-server.listen(config.PORT, () => {
+const host = listenHost(config.NODE_ENV);
+server.listen(config.PORT, host, () => {
   logger.info(
     {
+      host,
       port: config.PORT,
       credential: config.CLAUDE_CODE_OAUTH_TOKEN === undefined ? "local_login" : "plan_token",
       executable: config.CLAUDE_CODE_EXECUTABLE === undefined ? "bundled" : "configured",

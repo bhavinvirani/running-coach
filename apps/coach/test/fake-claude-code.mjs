@@ -6,10 +6,11 @@
 // The plan token picks the scenario: CLAUDE_CODE_OAUTH_TOKEN=test-<scenario>.<nonce>; any other value is
 // rejected the way Claude rejects a bad token. Each process appends JSON lines to
 // ${os.tmpdir()}/fake-claude-code-<nonce>.jsonl: its argv and the NAMES of its env vars (never values,
-// except the non-secret limits below), the initialize request, the user message and its exit, so tests
-// assert the flags, the env allowlist and that runs never overlap.
+// except the non-secret flags below), which earlier processes of the token were still alive when it
+// started, the initialize request, the user message, an ignored SIGTERM and its exit, so tests assert
+// the flags, the env allowlist and that runs never overlap.
 import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -20,6 +21,7 @@ const NON_SECRET_ENV = [
   "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
   "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
   "DISABLE_AUTOUPDATER",
+  "CLAUDE_CODE_STARTUP_FAILURE_RESULTS",
 ];
 
 const match = TOKEN_PATTERN.exec(process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "");
@@ -33,6 +35,26 @@ function record(event) {
   }
 }
 
+const isAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+};
+
+/** Pids of the processes this token started before this one. */
+function earlierPids() {
+  if (!logFile || !existsSync(logFile)) return [];
+  return readFileSync(logFile, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((event) => event.event === "start" && event.pid !== process.pid)
+    .map((event) => event.pid);
+}
+
 const argv = process.argv.slice(2);
 const flag = (name) => {
   const index = argv.indexOf(name);
@@ -42,9 +64,12 @@ const model = flag("--model") ?? "claude-opus-5-5";
 const fallbackModel = flag("--fallback-model") ?? "claude-sonnet-5-5";
 const maxOutputTokens = process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS ?? "32000";
 const sessionId = randomUUID();
+const earlier = earlierPids();
 
 record({
   event: "start",
+  // Earlier processes of this token still running: a run that overlaps the one before it.
+  alive: earlier.filter(isAlive),
   argv,
   envNames: Object.keys(process.env).sort(),
   env: Object.fromEntries(
@@ -385,6 +410,13 @@ const scenarios = {
   },
   // Started, then never answers and ignores stdin closing: only a signal ends it.
   hang: () => undefined,
+  // The token's first process hangs like hang and also ignores SIGTERM, so only SIGKILL ends it; later
+  // processes of the token answer, so a test sees whether the run queued behind it overlapped it.
+  "hang-stubborn": () => (stubborn ? undefined : succeed()),
+  // Died mid-run without a result, after writing to stderr: Claude Code's exit 1 on an unexpected error.
+  crash: () => {
+    process.stderr.write(`${CRASH_TEXT}\n`, () => exit({ code: 1 }));
+  },
 };
 
 const INITIALIZE_RESPONSE = {
@@ -398,51 +430,100 @@ const INITIALIZE_RESPONSE = {
 
 let exitCode = 0;
 let answered = false;
+const stubborn = scenario === "hang-stubborn" && earlier.length === 0;
+
+// Fake stderr text, which the service may count but never log.
+const CRASH_TEXT = "Error: fake unexpected failure inside the fake Claude Code";
+const STARTUP_FAILURE_TEXT =
+  "Claude Code could not create its temp directory: fake-tmp/claude is not writable";
 
 function exit(fields) {
   record({ event: "exit", ...fields });
   process.exit(fields.code);
 }
 
-process.on("SIGTERM", () => exit({ code: 143, signal: "SIGTERM" }));
+process.on("SIGTERM", () => {
+  if (stubborn) {
+    record({ event: "sigterm", ignored: true });
+    return;
+  }
+  exit({ code: 143, signal: "SIGTERM" });
+});
 
-const lines = createInterface({ input: process.stdin });
-lines.on("line", (line) => {
-  if (!line.trim()) return;
-  const message = JSON.parse(line);
-  if (message.type === "control_request") {
-    const { subtype } = message.request;
-    if (subtype === "initialize") {
-      record({
-        event: "initialize",
-        systemPrompt: message.request.systemPrompt,
-        jsonSchema: message.request.jsonSchema,
+/**
+ * A known startup failure: before it reads stdin, Claude Code writes the cause to stderr and, only when
+ * the host set CLAUDE_CODE_STARTUP_FAILURE_RESULTS, a zeroed error_during_execution result naming the
+ * reason, then exits 1.
+ */
+function failAtStartup(reason, text) {
+  const frames = process.env.CLAUDE_CODE_STARTUP_FAILURE_RESULTS
+    ? `${JSON.stringify({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        duration_ms: 0,
+        duration_api_ms: 0,
+        num_turns: 0,
+        stop_reason: null,
+        total_cost_usd: 0,
+        usage: ZERO_USAGE,
+        modelUsage: {},
+        permission_denials: [],
+        errors: [text],
+        startup_failure_reason: reason,
+        ...ids(),
+      })}\n`
+    : "";
+  process.stderr.write(`${text}\n`, () => {
+    process.stdout.write(frames, () => exit({ code: 1 }));
+  });
+}
+
+if (scenario === "startup-failure") {
+  failAtStartup("temp_dir_unusable", STARTUP_FAILURE_TEXT);
+} else {
+  listen();
+}
+
+function listen() {
+  const lines = createInterface({ input: process.stdin });
+  lines.on("line", (line) => {
+    if (!line.trim()) return;
+    const message = JSON.parse(line);
+    if (message.type === "control_request") {
+      const { subtype } = message.request;
+      if (subtype === "initialize") {
+        record({
+          event: "initialize",
+          systemPrompt: message.request.systemPrompt,
+          jsonSchema: message.request.jsonSchema,
+        });
+      }
+      send({
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: message.request_id,
+          response: subtype === "initialize" ? INITIALIZE_RESPONSE : {},
+        },
       });
+      return;
     }
-    send({
-      type: "control_response",
-      response: {
-        subtype: "success",
-        request_id: message.request_id,
-        response: subtype === "initialize" ? INITIALIZE_RESPONSE : {},
-      },
-    });
-    return;
-  }
-  if (message.type === "user" && !answered) {
-    answered = true;
-    const text = message.message.content.map((block) => block.text ?? "").join("");
-    record({ event: "user", text });
-    init();
-    const play = scenarios[scenario] ?? scenarios["auth-failed"];
-    void Promise.resolve(play()).then(() => record({ event: "played", scenario }));
-  }
-});
-// The SDK closes stdin once it has the result; a hung CLI ignores it.
-lines.on("close", () => {
-  if (scenario === "hang") {
-    setInterval(() => undefined, 1000);
-    return;
-  }
-  exit({ code: exitCode });
-});
+    if (message.type === "user" && !answered) {
+      answered = true;
+      const text = message.message.content.map((block) => block.text ?? "").join("");
+      record({ event: "user", text });
+      init();
+      const play = scenarios[scenario] ?? scenarios["auth-failed"];
+      void Promise.resolve(play()).then(() => record({ event: "played", scenario }));
+    }
+  });
+  // The SDK closes stdin once it has the result; a hung CLI ignores it.
+  lines.on("close", () => {
+    if (scenario === "hang" || stubborn) {
+      setInterval(() => undefined, 1000);
+      return;
+    }
+    exit({ code: exitCode });
+  });
+}

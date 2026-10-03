@@ -78,6 +78,14 @@ export function loadConfig(): Config {
   process.exit(1);
 }
 
+/**
+ * The interface the server listens on. Render routes to the container's port, so production listens on
+ * every interface; anywhere else runs may use the laptop's own Claude login, so only loopback answers.
+ */
+export function listenHost(nodeEnv: Config["NODE_ENV"]): string {
+  return nodeEnv === "production" ? "0.0.0.0" : "127.0.0.1";
+}
+
 // What Claude Code needs from the system to run. USER and LOGNAME let it read the laptop's login from
 // the macOS keychain, so they go only to a development run without a token.
 const SYSTEM_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG"];
