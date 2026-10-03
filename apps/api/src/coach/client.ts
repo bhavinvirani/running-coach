@@ -7,11 +7,15 @@ import type { z } from "zod";
 import { config } from "../lib/config";
 import { currentRequestId, logger } from "../lib/logger";
 import { paths } from "../lib/paths";
+import { callCoachOnPlan } from "./plan-client";
 
-// The only caller of Claude (api rule). One request per call with the user's own key, the system prompt
-// from a versioned file, and structured output from the prompt's zod schema. stop_reason is checked
-// before parsing, and the output is parsed with the schema; any failure comes back as a result the
-// caller turns into its fallback card. Never logs the key, the prompt input or the model's text.
+// The only caller of Claude (api rule), with one of two credentials. The user's own key: one request per
+// call to the Messages API, the system prompt from a versioned file, and structured output from the
+// prompt's zod schema; stop_reason is checked before parsing, and the output is parsed with the schema.
+// The owner's Claude plan: the same prompt, input and schema go to the coach service (plan-client.ts),
+// which runs them through Claude Code; the plan's token never reaches this process. Any failure comes
+// back as a result the caller turns into its fallback card. Never logs the key, the prompt input or the
+// model's text.
 
 const log = logger.child({ module: "coach" });
 
@@ -29,6 +33,10 @@ export interface CoachUsage {
   outputTokens: number;
 }
 
+/**
+ * Why a call gave no usable output. plan_auth_failed and plan_limited come from the plan path only:
+ * Claude rejected the plan's token, or the plan's usage limit is reached until retryAfterSeconds.
+ */
 export type CoachFailure =
   | "refusal"
   | "max_tokens"
@@ -36,21 +44,39 @@ export type CoachFailure =
   | "timeout"
   | "unavailable"
   | "key_invalid"
-  | "request_rejected";
+  | "request_rejected"
+  | "plan_auth_failed"
+  | "plan_limited";
+
+/** Every failure but the plan's usage limit, which is a wait rather than a fallback card. */
+export type CoachCardFailure = Exclude<CoachFailure, "plan_limited">;
 
 export type CoachResult<T> =
   | { ok: true; output: T; model: string; usage: CoachUsage; requestId: string | null }
   | {
       ok: false;
-      failure: CoachFailure;
+      failure: CoachCardFailure;
       /** Set when a model answered, unusably; its tokens were billed. */
+      usage: CoachUsage | null;
+      requestId: string | null;
+    }
+  | {
+      ok: false;
+      failure: "plan_limited";
+      /** Seconds until the plan's usage limit resets. */
+      retryAfterSeconds: number;
       usage: CoachUsage | null;
       requestId: string | null;
     };
 
+/**
+ * What a call runs on: the user's decrypted key, used for this call only, or the owner's Claude plan,
+ * whose token only the coach service holds.
+ */
+export type CoachCallCredential = { kind: "key"; apiKey: string } | { kind: "plan" };
+
 export interface CoachCall<T extends z.ZodType> {
-  /** The user's decrypted key, used for this call only. */
-  apiKey: string;
+  credential: CoachCallCredential;
   /** Folder under src/coach/prompts. */
   prompt: string;
   /** "v1": prompts/<prompt>/<version>.md is the system prompt. */
@@ -171,18 +197,29 @@ function parseOutput<T extends z.ZodType>(
 }
 
 /**
- * Calls Claude once with COACH_MODEL at low effort. On 408, 409, 429, 5xx (529 included) or a dropped
- * connection it waits with jitter and tries once more, on COACH_FALLBACK_MODEL: the primary is likely
- * still overloaded and the fallback has its own rate limits. A timeout is not retried, the 60 s already
- * spent is the budget; nor is a rejected key or any other 4xx, which would get the same answer. A 4xx
- * from the fallback model after a transient failure comes back as unavailable (see below).
+ * On the plan, hands the call to the coach service (callCoachOnPlan), which has no retry here: Claude
+ * Code's capped retries and its fallback model, then the job's retries, cover it. On a key, calls Claude
+ * once with COACH_MODEL at low effort. On 408, 409, 429, 5xx (529 included) or a dropped connection it
+ * waits with jitter and tries once more, on COACH_FALLBACK_MODEL: the primary is likely still overloaded
+ * and the fallback has its own rate limits. A timeout is not retried, the 60 s already spent is the
+ * budget; nor is a rejected key or any other 4xx, which would get the same answer. A 4xx from the
+ * fallback model after a transient failure comes back as unavailable (see below).
  */
 export async function callCoach<T extends z.ZodType>(
   call: CoachCall<T>,
 ): Promise<CoachResult<z.output<T>>> {
   const system = await loadPrompt(call.prompt, call.version);
   const promptVersion = `${call.prompt}/${call.version}`;
-  const client = clientFor(call.apiKey, config.CLAUDE_TIMEOUT_MS);
+  if (call.credential.kind === "plan") {
+    return callCoachOnPlan({
+      system,
+      promptVersion,
+      input: call.input,
+      schema: call.schema,
+      maxTokens: call.maxTokens,
+    });
+  }
+  const client = clientFor(call.credential.apiKey, config.CLAUDE_TIMEOUT_MS);
   const requestId = currentRequestId();
   const models = [config.COACH_MODEL, config.COACH_FALLBACK_MODEL];
 
@@ -207,7 +244,7 @@ export async function callCoach<T extends z.ZodType>(
         usage: usageOf(message),
         durationMs: Date.now() - started,
       };
-      const failed = (failure: CoachFailure): CoachResult<z.output<T>> => ({
+      const failed = (failure: CoachCardFailure): CoachResult<z.output<T>> => ({
         ok: false,
         failure,
         usage: context.usage,

@@ -1,6 +1,12 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { callCoach, type CoachFailure, type CoachUsage, INSIGHT_MAX_TOKENS } from "./client";
+import {
+  type CoachCallCredential,
+  callCoach,
+  type CoachFailure,
+  type CoachUsage,
+  INSIGHT_MAX_TOKENS,
+} from "./client";
 import {
   buildRunInsightInput,
   type InsightActivity,
@@ -11,9 +17,10 @@ import { runInsightSchema } from "./prompts/run-insight/schema";
 import { RUN_INSIGHT_PROMPT, RUN_INSIGHT_VERSION } from "./run-insight";
 import { voiceProblems } from "./voice";
 
-// The run-insight eval against the live API (pnpm coach:eval, src/scripts/coach-eval.ts): every case's
-// input goes through callCoach exactly as the job sends it, and the answer is checked for its schema
-// (callCoach parses it) and the voice. With write, an answer that passes both becomes the case's
+// The run-insight eval against the live API, on a key or on the owner's Claude plan through the coach
+// service (pnpm coach:eval [--plan], src/scripts/coach-eval.ts): every case's input goes through
+// callCoach exactly as the job sends it, and the answer is checked for its schema (callCoach parses it)
+// and the voice. With write, an answer that passes both becomes the case's
 // recorded output, which eval.test.ts then checks on every `pnpm test`.
 
 export const RUN_INSIGHT_EVAL_DIR = path.join(import.meta.dirname, "prompts/run-insight/eval");
@@ -53,12 +60,12 @@ export async function readRunInsightEvalCases(
 
 /** Runs each case once, one after another so a rate limit hits one case, not all of them. */
 export async function runRunInsightEval({
-  apiKey,
+  credential,
   dir = RUN_INSIGHT_EVAL_DIR,
   write = false,
 }: {
-  /** Used for these calls only; never logged or stored. */
-  apiKey: string;
+  /** A key used for these calls only, never logged or stored, or the plan through the coach service. */
+  credential: CoachCallCredential;
   dir?: string;
   write?: boolean;
 }): Promise<RunInsightEvalResult[]> {
@@ -66,7 +73,7 @@ export async function runRunInsightEval({
   for (const { name, file, evalCase } of await readRunInsightEvalCases(dir)) {
     const { activity, settings, plan } = evalCase.input;
     const result = await callCoach({
-      apiKey,
+      credential,
       prompt: RUN_INSIGHT_PROMPT,
       version: RUN_INSIGHT_VERSION,
       input: buildRunInsightInput(activity, settings, plan),

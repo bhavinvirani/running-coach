@@ -10,6 +10,7 @@ import { coachMessage } from "../../src/db/schema";
 import * as analyzeRunQueue from "../../src/jobs/analyze-run-queue";
 import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
 import { askCoachLimiter } from "../../src/routes/insights";
+import { configureCoachService, FAKE_COACH_SECRET } from "../fake-coach-service";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import { claudeKey, createLongRun, createUser, setSettings } from "../seed";
 
@@ -44,15 +45,24 @@ beforeEach(async () => {
   }
 });
 
+let restoreConfig: (() => void) | undefined;
+
 afterEach(() => {
   askCoachLimiter.reset();
   vi.restoreAllMocks();
+  restoreConfig?.();
+  restoreConfig = undefined;
 });
 
-async function owner({ key = false }: { key?: boolean } = {}) {
+async function owner({ key = false, plan = false }: { key?: boolean; plan?: boolean } = {}) {
   const agent = await signedInAgent(app);
   const userId = await ownerId();
   if (key) await setSettings(userId, { claudeKey: claudeKey("valid") });
+  if (plan) {
+    // Set up, never called: pg-boss runs no workers here.
+    restoreConfig = configureCoachService({ url: "http://127.0.0.1:9", secret: FAKE_COACH_SECRET });
+    await setSettings(userId, { coachCredential: "plan" });
+  }
   const run = await createLongRun(userId);
   return { agent, userId, run };
 }
@@ -187,6 +197,20 @@ describe("GET /api/activities/:id/insight", () => {
     expect(await runJobs(run.id)).toEqual([]);
   });
 
+  it("answers none, not no_key, for the owner on the Claude plan without a saved key", async () => {
+    const { agent, run } = await owner({ plan: true });
+
+    expect((await agent.get(insightPath(run.id))).body).toEqual({ state: "none" });
+  });
+
+  it("answers no_key for a stored plan choice without a key once the coach service is no longer set up (env removed)", async () => {
+    const { agent, run } = await owner({ plan: true });
+    restoreConfig?.();
+    restoreConfig = undefined;
+
+    expect((await agent.get(insightPath(run.id))).body).toEqual({ state: "no_key" });
+  });
+
   it("answers none for a run without a card or job when a key is set (an imported or older run)", async () => {
     const { agent, run } = await owner({ key: true });
 
@@ -268,6 +292,32 @@ describe("POST /api/activities/:id/insight", () => {
 
     expectProblem(response, 409, "claude_key_missing");
     expect(await runJobs(run.id)).toEqual([]);
+  });
+
+  it("queues the run's job for the owner on the Claude plan without a saved key, instead of 409", async () => {
+    const { agent, userId, run } = await owner({ plan: true });
+
+    const response = await agent.post(insightPath(run.id));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ state: "pending" });
+    expect(await runJobs(run.id)).toMatchObject([{ data: { userId, activityId: run.id } }]);
+  });
+
+  it("answers retrying and queues no second job while the run's job waits for the plan's reset (Claude quota)", async () => {
+    const { agent, userId, run } = await owner({ plan: true });
+    await getBoss().send(
+      analyzeRunQueue.name,
+      { userId, activityId: run.id },
+      { ...analyzeRunQueue.sendOptions({ userId, activityId: run.id }), startAfter: 5400 },
+    );
+
+    const read = await agent.get(insightPath(run.id));
+    const tryAgain = await agent.post(insightPath(run.id));
+
+    expect(read.body).toEqual({ state: "retrying" });
+    expect(tryAgain.body).toEqual({ state: "retrying" });
+    expect(await runJobs(run.id)).toHaveLength(1);
   });
 
   it("returns 404 for another user's run and queues nothing", async () => {

@@ -3,7 +3,7 @@ import {
   coachFallbackReasonSchema,
   isGpsGlitch,
 } from "@running-coach/shared";
-import type { CoachFailure } from "../../client";
+import type { CoachCardFailure } from "../../client";
 import {
   formatDistance,
   formatDuration,
@@ -20,17 +20,18 @@ import {
 import type { RunInsight } from "./schema";
 
 // The card shown when there is no usable model output: no key, a refusal, max_tokens, invalid JSON, a
-// timeout, Claude being down, a rejected key or a request Claude turned down (no credit left). Built
-// from the run's numbers and the next planned session alone, in the same shape as the model's. The
-// reason is the shared enum the API stores.
+// timeout, Claude being down, a rejected key, a request Claude turned down (no credit left) or a
+// rejected plan token. Built from the run's numbers and the next planned session alone, in the same
+// shape as the model's. The reason is the shared enum the API stores.
 
 export type RunInsightFallbackReason = CoachFallbackReason;
 
-// Every way callCoach can fail has a stored reason: a new CoachFailure that is not in the shared enum
-// stops the build here instead of failing the coach_message CHECK at run time.
+// Every way callCoach can fail but the plan's usage limit (a wait, never a card) has a stored reason: a
+// new failure that is not in the shared enum stops the build here instead of failing the coach_message
+// CHECK at run time.
 type Assert<T extends true> = T;
 type _EveryFailureIsAFallbackReason = Assert<
-  [CoachFailure] extends [CoachFallbackReason] ? true : false
+  [CoachCardFailure] extends [CoachFallbackReason] ? true : false
 >;
 
 const WHY: Record<RunInsightFallbackReason, string> = {
@@ -44,6 +45,9 @@ const WHY: Record<RunInsightFallbackReason, string> = {
   timeout: "No coach review: Claude took too long to answer. These are the run's numbers only.",
   unavailable:
     "No coach review: Claude is not answering right now. These are the run's numbers only.",
+  // The plan is the owner's alone, who runs the coach service.
+  plan_auth_failed:
+    "No coach review: Claude rejected the plan token on the coach service. Make a new one with claude setup-token, replace CLAUDE_CODE_OAUTH_TOKEN on the coach service, then tap Try again.",
 };
 
 /** Every reason there is a fallback card for; the eval checks each one's card. */

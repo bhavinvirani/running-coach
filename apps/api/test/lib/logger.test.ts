@@ -29,7 +29,12 @@ describe("logger", () => {
         email: "runner@example.com",
         password: "hunter2",
         tokenBundle: { di_token: "fixture-token" },
-        headers: { authorization: "Bearer abc", cookie: "session=abc", "set-cookie": ["s=abc"] },
+        headers: {
+          authorization: "Bearer abc",
+          cookie: "session=abc",
+          "set-cookie": ["s=abc"],
+          "x-coach-secret": "coach-shared-secret-value",
+        },
         user: { email: "runner@example.com", apiKey: "sk-ant-fake" },
         userId: "4f1c2a8e-0000-4000-8000-000000000001",
       },
@@ -45,6 +50,7 @@ describe("logger", () => {
       "session=abc",
       "s=abc",
       "sk-ant",
+      "coach-shared-secret-value",
     ]) {
       expect(text).not.toContain(secret);
     }

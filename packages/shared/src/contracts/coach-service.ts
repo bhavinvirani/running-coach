@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Between the API and the coach service (services/coach), which runs one prompt on the owner's Claude plan
+// Between the API and the coach service (apps/coach), which runs one prompt on the owner's Claude plan
 // through Claude Code. The API owns the prompts, the output schemas and the fallback cards; the service
 // only runs what it is sent, so it never sees a user, a key or a database.
 

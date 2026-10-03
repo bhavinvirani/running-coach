@@ -1,4 +1,5 @@
 import {
+  type CoachCredentialChoice,
   type CoachFallbackReason,
   type CoachFeedback,
   ErrorCode,
@@ -6,6 +7,7 @@ import {
   type RunInsight,
 } from "@running-coach/shared";
 import { and, asc, eq, gt, gte, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import type { CoachCallCredential } from "../coach/client";
 import { runInsight } from "../coach/run-insight";
 import type { InsightPlan, InsightSession } from "../coach/prompts/run-insight/input";
 import { db } from "../db/client";
@@ -15,6 +17,7 @@ import {
   coachMessage,
   plan,
   planSession,
+  user,
   userSettings,
 } from "../db/schema";
 import { analyzeRunState, enqueueAnalyzeRun } from "../jobs/analyze-run-queue";
@@ -22,9 +25,12 @@ import { decrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
 import { localDateOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
+import { coachCredentialOf, effectiveCoachCredential } from "./coach-credential";
 
 // The coach's card for a run: its state for the run screen, Ask the coach, thumbs, the analyze-run job's
-// work and the queueing after a sync. The key is decrypted only in analyzeRun, for its one call.
+// work and the queueing after a sync. Each follows the user's coach credential (coach-credential.ts): the
+// Claude plan for the owner who chose it, else a saved key. The key is decrypted only in analyzeRun, for
+// its one call on the key.
 
 const log = logger.child({ module: "insights" });
 
@@ -56,14 +62,6 @@ async function readCard(activityId: string): Promise<CoachMessage | undefined> {
   return row;
 }
 
-async function hasClaudeKey(userId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ claudeKeyEnc: userSettings.claudeKeyEnc })
-    .from(userSettings)
-    .where(eq(userSettings.userId, userId));
-  return (row?.claudeKeyEnc ?? null) !== null;
-}
-
 function ready(card: CoachMessage): InsightResponse {
   return {
     state: "ready",
@@ -80,8 +78,8 @@ function ready(card: CoachMessage): InsightResponse {
 
 /**
  * GET /api/activities/:id/insight. The coach's card wins; else a live job means the coach is writing one
- * (retrying once it has failed), which also covers Try again on a fallback card; else the fallback card;
- * else no_key or none.
+ * (retrying once it has failed or waits for the plan's limit to reset), which also covers Try again on
+ * a fallback card; else the fallback card; else none, or no_key when the coach has no credential.
  */
 export async function getInsight(userId: string, activityId: string): Promise<InsightResponse> {
   await ownRun(userId, activityId);
@@ -92,18 +90,19 @@ export async function getInsight(userId: string, activityId: string): Promise<In
   if (card && card.model !== null) return ready(card);
   if (live) return { state: live };
   if (card) return ready(card);
-  return { state: (await hasClaudeKey(userId)) ? "none" : "no_key" };
+  return { state: (await coachCredentialOf(userId)) === "none" ? "no_key" : "none" };
 }
 
 /**
  * POST /api/activities/:id/insight: Ask the coach, or Try again on a fallback card. Queues the job unless
- * the coach's card exists; a tap while a job waits folds into it (stately queue). 409 without a key.
+ * the coach's card exists; a tap while a job waits folds into it (stately queue), a job deferred to the
+ * plan's reset included. 409 without a credential: no key and not on the plan.
  */
 export async function askCoach(userId: string, activityId: string): Promise<InsightResponse> {
   await ownRun(userId, activityId);
   const card = await readCard(activityId);
   if (card && card.model !== null) return ready(card);
-  if (!(await hasClaudeKey(userId))) {
+  if ((await coachCredentialOf(userId)) === "none") {
     throw new DomainError(
       ErrorCode.claudeKeyMissing,
       409,
@@ -201,9 +200,37 @@ async function insightPlan(
   return { planned: planned.map(toInsightSession), next: next ? toInsightSession(next) : null };
 }
 
+/**
+ * What runs the user's coach for one call: the Claude plan, or the saved key decrypted for this call only;
+ * null when neither applies.
+ */
+function callCredential(
+  userId: string,
+  settings: {
+    email: string;
+    coachCredential: CoachCredentialChoice;
+    claudeKeyEnc: string | null;
+  },
+): CoachCallCredential | null {
+  const { claudeKeyEnc } = settings;
+  const credential = effectiveCoachCredential({
+    email: settings.email,
+    choice: settings.coachCredential,
+    hasClaudeKey: claudeKeyEnc !== null,
+  });
+  if (credential === "plan") return { kind: "plan" };
+  if (credential === "key" && claudeKeyEnc !== null) {
+    return { kind: "key", apiKey: decrypt(claudeKeyEnc, userId) };
+  }
+  return null;
+}
+
 export type AnalyzeRunOutcome =
   | { status: "stored"; coachMessageId: string; fallbackReason: CoachFallbackReason | null }
-  /** run_missing: deleted since it was queued. has_card: the coach's card exists. no_key: removed since. */
+  /**
+   * run_missing: deleted since it was queued. has_card: the coach's card exists. no_key: no credential any
+   * more (the key removed, the plan no longer offered).
+   */
   | { status: "skipped"; reason: "run_missing" | "has_card" | "no_key" };
 
 export interface AnalyzeRunOptions {
@@ -214,7 +241,7 @@ export interface AnalyzeRunOptions {
 }
 
 // Claude did not answer: worth another try later. Any other fallback reason, request_rejected (no credit
-// left) included, gives the same answer again.
+// left) and plan_auth_failed (a rejected plan token) included, gives the same answer again.
 const RETRYABLE_REASONS: ReadonlySet<CoachFallbackReason> = new Set(["timeout", "unavailable"]);
 
 function isForeignKeyViolation(error: unknown): boolean {
@@ -227,8 +254,9 @@ function isForeignKeyViolation(error: unknown): boolean {
  * card but never the coach's own, so a double fire makes no second call and never two cards. The plan
  * lines come from the run's own local date (start_local), never its UTC date. A timeout or Claude down
  * before the last attempt stores nothing and throws claude_unavailable, so pg-boss retries with backoff;
- * a refusal, max_tokens, invalid output, a rejected key or a request Claude turned down store the
- * fallback card at once.
+ * the plan's usage limit stores nothing and throws claude_plan_limited with the seconds to its reset on
+ * any attempt, for the job to defer itself; a refusal, max_tokens, invalid output, a rejected key or plan
+ * token, or a request Claude turned down store the fallback card at once.
  */
 export async function analyzeRun(
   userId: string,
@@ -244,17 +272,21 @@ export async function analyzeRun(
 
   const [settings] = await db
     .select({
+      email: user.email,
       units: userSettings.units,
       timezone: userSettings.timezone,
       coachDetail: userSettings.coachDetail,
       claudeKeyEnc: userSettings.claudeKeyEnc,
+      coachCredential: userSettings.coachCredential,
     })
     .from(userSettings)
+    .innerJoin(user, eq(user.id, userSettings.userId))
     .where(eq(userSettings.userId, userId));
-  if (!settings?.claudeKeyEnc) return { status: "skipped", reason: "no_key" };
+  const credential = settings ? callCredential(userId, settings) : null;
+  if (!settings || !credential) return { status: "skipped", reason: "no_key" };
 
   const result = await runInsight({
-    apiKey: decrypt(settings.claudeKeyEnc, userId),
+    credential,
     activity: run,
     settings: { units: settings.units, coachDetail: settings.coachDetail },
     plan: await insightPlan(
@@ -263,9 +295,28 @@ export async function analyzeRun(
       localDateOf(now, settings.timezone),
     ),
   });
+  if (result.limited) {
+    log.warn(
+      {
+        userId,
+        activityId,
+        credential: credential.kind,
+        claudeRequestId: result.requestId,
+        retryAfterSeconds: result.retryAfterSeconds,
+      },
+      "coach plan usage limit reached; the job waits for the reset",
+    );
+    throw new DomainError(
+      ErrorCode.claudePlanLimited,
+      429,
+      "The Claude plan's usage limit is reached. The coach tries again when it resets.",
+      { retryAfterSeconds: result.retryAfterSeconds },
+    );
+  }
   const context = {
     userId,
     activityId,
+    credential: credential.kind,
     claudeRequestId: result.requestId,
     model: result.model,
     fallbackReason: result.fallbackReason,
@@ -317,8 +368,9 @@ export async function analyzeRun(
 
 /**
  * Queues the coach for the runs a sync just inserted that started within INSIGHT_WINDOW_DAYS of `now` and
- * have no card, only when the user has a Claude key: an older run, an import's or one Garmin edited gets
- * none (Ask the coach covers it). Never throws, so a sync never fails over it; returns how many it queued.
+ * have no card, only when the coach has a credential (a key, or the owner's plan): an older run, an
+ * import's or one Garmin edited gets none (Ask the coach covers it). Never throws, so a sync never fails
+ * over it; returns how many it queued.
  */
 export async function queueRunInsights(
   userId: string,
@@ -327,7 +379,7 @@ export async function queueRunInsights(
 ): Promise<number> {
   if (activityIds.length === 0) return 0;
   try {
-    if (!(await hasClaudeKey(userId))) return 0;
+    if ((await coachCredentialOf(userId)) === "none") return 0;
     const runs = await db
       .select({ id: activity.id })
       .from(activity)

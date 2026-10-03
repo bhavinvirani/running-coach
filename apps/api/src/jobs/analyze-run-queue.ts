@@ -1,6 +1,6 @@
 import type { JobWithMetadata, SendOptions } from "pg-boss";
 import { z } from "zod";
-import { getBoss } from "./boss";
+import { getBoss, HELD_BACK_AFTER_S } from "./boss";
 
 // The analyze-run queue without its handler (analyze-run.ts): the sync and Ask the coach queue through
 // these from services/insights.ts, which the handler imports, so they cannot live with the handler.
@@ -25,8 +25,10 @@ export const jobOptions = {
   retryBackoff: true,
   retryDelay: 2 * 60,
   retryDelayMax: 60 * 60,
-  // One Claude call of up to 60 s, and its one retry on the fallback model.
-  expireInSeconds: 5 * 60,
+  // The longer of the two credentials: on the plan, waking the coach service (up to 120 s,
+  // COACH_SERVICE_WAKE_MS), Claude Code's start-up (about 11 s) and the call (up to 150 s with that,
+  // COACH_SERVICE_TIMEOUT_MS); on a key, one call of up to 60 s and its retry on the fallback model.
+  expireInSeconds: 10 * 60,
 } satisfies SendOptions;
 
 /**
@@ -49,12 +51,22 @@ const LIVE_STATES: ReadonlySet<JobWithMetadata["state"]> = new Set(["created", "
 
 /**
  * What pg-boss is doing about the run's card: null when no job for it is live, "retrying" when one has
- * failed at least once (waiting out its backoff, or running again), else "pending".
+ * failed at least once (waiting out its backoff, or running again) or waits to start later than
+ * HELD_BACK_AFTER_S from now (deferred to the plan's reset), else "pending". The run screen polls a
+ * retrying card once a minute, not every few seconds.
  */
 export async function analyzeRunState(activityId: string): Promise<"pending" | "retrying" | null> {
   const jobs = (await getBoss().findJobs(name, { key: activityId })).filter((job) =>
     LIVE_STATES.has(job.state),
   );
   if (jobs.length === 0) return null;
-  return jobs.some((job) => job.state === "retry" || job.retryCount > 0) ? "retrying" : "pending";
+  const heldAfter = Date.now() + HELD_BACK_AFTER_S * 1000;
+  return jobs.some(
+    (job) =>
+      job.state === "retry" ||
+      job.retryCount > 0 ||
+      (job.state === "created" && job.startAfter.getTime() > heldAfter),
+  )
+    ? "retrying"
+    : "pending";
 }

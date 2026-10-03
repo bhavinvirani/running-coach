@@ -11,6 +11,7 @@ import { DomainError } from "../../src/lib/errors";
 import { syncGarmin } from "../../src/services/garmin-sync";
 import { importHistoryPage } from "../../src/services/history-import";
 import { queueRunInsights } from "../../src/services/insights";
+import { configureCoachService, FAKE_COACH_SECRET } from "../fake-coach-service";
 import {
   claudeKey,
   connectGarmin,
@@ -71,6 +72,30 @@ async function queuedRuns(userId: string): Promise<number[]> {
 }
 
 describe("queueing the coach after a sync", () => {
+  it("queues one job per new recent run for the owner on the Claude plan without a saved key", async () => {
+    // Set up, never called: pg-boss runs no workers here.
+    const restore = configureCoachService({ url: "http://127.0.0.1:9", secret: FAKE_COACH_SECRET });
+    try {
+      const userId = await connectedUser({ key: false });
+      await setSettings(userId, { coachCredential: "plan" });
+
+      await syncGarmin({ userId, now: NOW });
+
+      expect(await queuedRuns(userId)).toEqual(RECENT_RUNS);
+    } finally {
+      restore();
+    }
+  });
+
+  it("queues nothing for a stored plan choice without a key once the coach service is not set up (env removed)", async () => {
+    const userId = await connectedUser({ key: false });
+    await setSettings(userId, { coachCredential: "plan" });
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect(await queuedRuns(userId)).toEqual([]);
+  });
+
   it("queues one job per new run that started in the last seven days when a key is set", async () => {
     const userId = await connectedUser();
 

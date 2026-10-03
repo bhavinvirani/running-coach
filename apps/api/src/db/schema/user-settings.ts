@@ -1,4 +1,6 @@
 import {
+  type CoachCredentialChoice,
+  coachCredentialChoiceSchema,
   type CoachDetail,
   coachDetailSchema,
   type Units,
@@ -27,6 +29,12 @@ export const userSettings = pgTable(
     coachDetail: text("coach_detail").$type<CoachDetail>().notNull().default("standard"),
     // "v1:" ciphertext from src/lib/crypto.ts; never returned by a route.
     claudeKeyEnc: text("claude_key_enc"),
+    // What runs the coach: the key above, or the owner's Claude plan through the coach service; a
+    // choice honoured only while the plan is offered to the user (services/coach-credential.ts).
+    coachCredential: text("coach_credential")
+      .$type<CoachCredentialChoice>()
+      .notNull()
+      .default("key"),
     ...timestamps(),
   },
   (table) => [
@@ -34,6 +42,10 @@ export const userSettings = pgTable(
     check(
       "user_settings_coach_detail_check",
       sql`${table.coachDetail} in (${inList(coachDetailSchema.options)})`,
+    ),
+    check(
+      "user_settings_coach_credential_check",
+      sql`${table.coachCredential} in (${inList(coachCredentialChoiceSchema.options)})`,
     ),
   ],
 );

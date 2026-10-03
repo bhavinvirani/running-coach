@@ -493,7 +493,7 @@ describe("analyzeRun", () => {
 describe("runInsight", () => {
   it("makes no call and returns the missing_key fallback when the key is null", async () => {
     const result = await runInsight({
-      apiKey: null,
+      credential: null,
       activity: await createLongRun(await createUser()),
       settings: { units: "km", coachDetail: "short" },
       plan: null,

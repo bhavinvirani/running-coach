@@ -60,7 +60,7 @@ export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
   await boss.createQueue(analyzeRun.name, analyzeRun.queue);
   // With metadata, so the job knows its last attempt (retryCount against retryLimit).
   await boss.work(analyzeRun.name, { ...work, includeMetadata: true }, async ([job]) =>
-    job ? analyzeRun.handle(job) : undefined,
+    job ? analyzeRun.handle(boss, job) : undefined,
   );
 }
 

@@ -23,7 +23,7 @@ describe("callCoach", () => {
     const apiKey = claudeKey("fallback-model-missing");
 
     const result = await callCoach({
-      apiKey,
+      credential: { kind: "key", apiKey },
       prompt: "run-insight",
       version: "v1",
       input: "Run: 5.0 km",
@@ -55,7 +55,7 @@ describe("callCoach", () => {
     coachLog.warn.mockClear();
 
     const result = await callCoach({
-      apiKey,
+      credential: { kind: "key", apiKey },
       prompt: "run-insight",
       version: "v1",
       input: "Run: 5.0 km",
