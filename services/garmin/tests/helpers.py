@@ -10,7 +10,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from garmin_service.client import Connect, GarminSession, login
-from garmin_service.fake_client import FakeTokenStore
+from garmin_service.fake_client import FakeGarmin, FakeTokenStore
 
 TEST_SECRET = "test-secret-not-real"
 BASE_BUNDLE: dict[str, str] = {
@@ -58,6 +58,62 @@ def assert_valid(name: str, instance: Any) -> None:
     assert errors == [], errors
 
 
+# POST /workouts/sync request bodies. WINDOW is the calendar range they ask for.
+WINDOW = {"calendarStart": "2026-10-26", "calendarEnd": "2026-11-01"}
+EASY_RUN = {
+    "name": "Easy Run 5 km",
+    "estimatedDurationS": 1800,
+    "steps": [
+        {
+            "type": "interval",
+            "distanceM": 5000,
+            "durationS": None,
+            "pace": {"fastSPerKm": 330, "slowSPerKm": 360},
+        }
+    ],
+}
+# A workout and its schedule the app created earlier.
+OURS = 900_000_777
+OURS_SCHEDULE = 800_000_777
+
+
+def create(ref: str = "s-create", day: str = "2026-10-27") -> dict[str, Any]:
+    return {"action": "create", "ref": ref, "date": day, "workout": EASY_RUN}
+
+
+def move(
+    ref: str = "s-move",
+    workout_id: int = OURS,
+    schedule_id: int | None = OURS_SCHEDULE,
+    day: str = "2026-10-28",
+) -> dict[str, Any]:
+    return {
+        "action": "move",
+        "ref": ref,
+        "workoutId": workout_id,
+        "scheduleId": schedule_id,
+        "date": day,
+    }
+
+
+def remove(
+    ref: str = "s-remove", workout_id: int = OURS + 1, schedule_id: int | None = OURS_SCHEDULE + 1
+) -> dict[str, Any]:
+    return {"action": "remove", "ref": ref, "workoutId": workout_id, "scheduleId": schedule_id}
+
+
+def unschedule(ref: str = "6000000004", schedule_id: int = 6_000_000_004) -> dict[str, Any]:
+    return {"action": "unschedule", "ref": ref, "scheduleId": schedule_id}
+
+
+def workout_sync_body(*actions: dict[str, Any], token_bundle: str | None = None) -> dict[str, Any]:
+    return {
+        "tokenBundle": bundle() if token_bundle is None else token_bundle,
+        "actions": list(actions),
+        **WINDOW,
+    }
+
+
 class ScriptedGarmin:
     """Implements GarminApi with canned answers and records every call."""
 
@@ -77,6 +133,11 @@ class ScriptedGarmin:
         personal_records: Any = None,
         records_error: BaseException | None = None,
         rotate_to: str | None = None,
+        write_errors: dict[str, BaseException] | None = None,
+        upload_answer: Any = None,
+        schedule_answer: Any = None,
+        calendar: Any = None,
+        calendar_error: BaseException | None = None,
         full_name: str | None = "Alex Fixture",
         display_name: str | None = "fixture-runner",
     ) -> None:
@@ -103,6 +164,17 @@ class ScriptedGarmin:
         self._personal_records = personal_records
         # Raised by get_personal_record.
         self._records_error = records_error
+        # Raised by the workout write of that name (upload_running_workout, schedule_workout,
+        # unschedule_workout, delete_workout) every time it is called.
+        self._write_errors = write_errors or {}
+        # The upload and schedule answers; None answers a new id each time (1001, 1002, ... and
+        # 2001, 2002, ...).
+        self._upload_answer = upload_answer
+        self._schedule_answer = schedule_answer
+        # get_scheduled_workouts' answer; None serves the fake's calendar for the month.
+        self._calendar = calendar
+        self._calendar_error = calendar_error
+        self.uploaded: list[Any] = []
         self.full_name = full_name
         self.display_name = display_name
         self.calls: list[str] = []
@@ -178,6 +250,47 @@ class ScriptedGarmin:
             raise self._records_error
         answer: list[Any] = read_fixture("personal-records.json")
         return answer if self._personal_records is None else self._personal_records
+
+    def upload_running_workout(self, workout: Any) -> dict[str, Any]:
+        self.calls.append(f"upload_running_workout:{workout.workoutName}")
+        self._raise_write_error("upload_running_workout")
+        self.uploaded.append(workout)
+        if self._upload_answer is not None:
+            answer: dict[str, Any] = self._upload_answer
+            return answer
+        return {"workoutId": 1000 + len(self.uploaded)}
+
+    def schedule_workout(self, workout_id: int | str, date_str: str) -> dict[str, Any]:
+        self.calls.append(f"schedule_workout:{workout_id}:{date_str}")
+        self._raise_write_error("schedule_workout")
+        if self._schedule_answer is not None:
+            answer: dict[str, Any] = self._schedule_answer
+            return answer
+        scheduled = sum(call.startswith("schedule_workout:") for call in self.calls)
+        return {"workoutScheduleId": 2000 + scheduled, "calendarDate": date_str}
+
+    def unschedule_workout(self, scheduled_workout_id: int | str) -> Any:
+        self.calls.append(f"unschedule_workout:{scheduled_workout_id}")
+        self._raise_write_error("unschedule_workout")
+        return {}
+
+    def delete_workout(self, workout_id: int | str) -> Any:
+        self.calls.append(f"delete_workout:{workout_id}")
+        self._raise_write_error("delete_workout")
+        return {}
+
+    def get_scheduled_workouts(self, year: int | str, month: int | str) -> dict[str, Any]:
+        self.calls.append(f"get_scheduled_workouts:{year}:{month}")
+        if self._calendar_error is not None:
+            raise self._calendar_error
+        if self._calendar is not None:
+            answer: dict[str, Any] = self._calendar
+            return answer
+        return FakeGarmin().get_scheduled_workouts(year, month)
+
+    def _raise_write_error(self, name: str) -> None:
+        if name in self._write_errors:
+            raise self._write_errors[name]
 
     def connect(self) -> Connect:
         def connect(token_bundle: str) -> GarminSession:

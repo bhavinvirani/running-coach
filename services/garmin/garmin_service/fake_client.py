@@ -22,6 +22,15 @@ same details at maxchart 10000 and gets the same fixture rows; a manual entry an
 get_personal_record serves personal-records.json: made-up values in the shape captured from Garmin
 (distance records 1 to 5, the longest run 7, step and goal records 12 to 16).
 
+The workout calls serve workout-upload.json and workout-schedule.json (spike 2's captures) with
+fresh ids from per-process counters (workouts from FAKE_FIRST_WORKOUT_ID, schedules from
+FAKE_FIRST_SCHEDULE_ID), so ids never repeat across requests while the fake keeps no other state:
+nothing uploaded shows on its calendar. Unschedule and delete answer {}, as the library does on 204.
+get_scheduled_workouts serves workout-calendar.json (other apps' workouts on days 1 to 26, and one
+activity) with every workout moved into the month asked for, same day of the month, so any 7-day
+window holds some, across a month's end too. FAKE_GONE_WORKOUT_ID answers 404 to schedule and
+delete, FAKE_GONE_SCHEDULE_ID to unschedule: deleted in Garmin Connect.
+
 The token bundle drives the behaviour, so the API's integration tests and e2e reach every path
 through the real service. Base bundle:
     {"di_token":"fixture-token","di_refresh_token":"fixture-refresh","di_client_id":"fixture-client"}
@@ -29,13 +38,19 @@ Add "fixture": "expired" (401 garmin_auth_expired), "rate_limited" (429), "unava
 "rotate" (success, and the returned bundle carries "fixture": "rotated").
 "rotate_then_rate_limited" and "rotate_then_unavailable" rotate like "rotate" at login, then fail
 the next library call with a 429 or a 502 whose problem carries the rotated bundle (/profile makes
-no further call, so it succeeds).
+no further call, so it succeeds; /workouts/sync answers 200 with the stop and the rotated bundle).
+"workout_outage" fails the second upload of a request with a 503 before it uploads, so the first
+create completes; "workout_rate_limited" does the same with a 429; "workout_schedule_outage" fails
+every schedule with a 503, so a create uploads and stops halfway. Writes fail the way the library's
+client.post and client.delete raise, with no retries and no wrapper.
 Anything else succeeds with the bundle unchanged. Failures are raised the way garminconnect raises
 them, causes chained, so errors.py runs exactly as in production.
 """
 
 from __future__ import annotations
 
+import calendar
+import itertools
 import json
 import math
 from pathlib import Path
@@ -47,6 +62,7 @@ from garminconnect import (
     GarminConnectNotFoundError,
     GarminConnectTooManyRequestsError,
 )
+from garminconnect.workout import RunningWorkout
 
 from garmin_service.activities import INDOOR_TYPE_KEYS
 
@@ -56,6 +72,17 @@ SPLITS_FIXTURE = "detail-splits.json"
 SERIES_FIXTURE = "detail-series.json"
 HR_ZONES_FIXTURE = "detail-hr-zones.json"
 RECORDS_FIXTURE = "personal-records.json"
+UPLOAD_FIXTURE = "workout-upload.json"
+SCHEDULE_FIXTURE = "workout-schedule.json"
+CALENDAR_FIXTURE = "workout-calendar.json"
+FAKE_FIRST_WORKOUT_ID = 900_000_001
+FAKE_FIRST_SCHEDULE_ID = 800_000_001
+# Deleted in Garmin Connect: a 404 from schedule and delete, or from unschedule.
+FAKE_GONE_WORKOUT_ID = 404_404
+FAKE_GONE_SCHEDULE_ID = 404_405
+# Per process, not per request: the API's tests see a new id for every upload and schedule.
+_workout_ids = itertools.count(FAKE_FIRST_WORKOUT_ID)
+_schedule_ids = itertools.count(FAKE_FIRST_SCHEDULE_ID)
 # The fictional route: a loop in open ocean, far from anyone's real runs.
 FAKE_ROUTE_CENTER = (0.0, -30.0)
 FAKE_ROUTE_RADIUS_DEG = 0.02
@@ -90,6 +117,13 @@ def _not_found() -> Exception:
     error = GarminConnectNotFoundError("API call client error (404): API Error 404")
     error.__cause__ = GarminConnectNotFoundError("API Error 404")
     return error
+
+
+def _write_failure(status: Literal[404, 429, 503]) -> Exception:
+    """What the library's client.post and client.delete raise: no wrapper, no retries."""
+    if status == 404:
+        return GarminConnectNotFoundError("API Error 404")
+    return GarminConnectConnectionError(f"API Error {status}")
 
 
 def _drop_metric(details: dict[str, Any], key: str) -> None:
@@ -139,6 +173,8 @@ class FakeGarmin:
         self.display_name: str | None = None
         self.full_name: str | None = None
         self._fail_next_call: str | None = None
+        self._behaviour: str | None = None
+        self._uploads = 0
 
     @property
     def client(self) -> FakeTokenStore:
@@ -154,6 +190,7 @@ class FakeGarmin:
             raise GarminConnectAuthenticationError("Username and password are required")
 
         behaviour = bundle.get("fixture")
+        self._behaviour = behaviour if isinstance(behaviour, str) else None
         if isinstance(behaviour, str) and behaviour in _LOGIN_FAILURES:
             raise GarminConnectAuthenticationError(
                 "Failed to retrieve social profile"
@@ -250,6 +287,66 @@ class FakeGarmin:
         self._fail_pending_call()
         records: list[dict[str, Any]] = self._read(RECORDS_FIXTURE)
         return records
+
+    def upload_running_workout(self, workout: Any) -> dict[str, Any]:
+        self._fail_pending_call()
+        if not isinstance(workout, RunningWorkout):
+            raise TypeError("workout must be a RunningWorkout instance")
+        self._uploads += 1
+        if self._uploads == 2 and self._behaviour == "workout_outage":
+            raise _write_failure(503)
+        if self._uploads == 2 and self._behaviour == "workout_rate_limited":
+            raise _write_failure(429)
+        uploaded: dict[str, Any] = self._read(UPLOAD_FIXTURE)
+        uploaded.update(
+            workoutId=next(_workout_ids),
+            workoutName=workout.workoutName,
+            estimatedDurationInSecs=workout.estimatedDurationInSecs,
+        )
+        return uploaded
+
+    def schedule_workout(self, workout_id: int | str, date_str: str) -> dict[str, Any]:
+        self._fail_pending_call()
+        if self._behaviour == "workout_schedule_outage":
+            raise _write_failure(503)
+        if int(workout_id) == FAKE_GONE_WORKOUT_ID:
+            raise _write_failure(404)
+        scheduled: dict[str, Any] = self._read(SCHEDULE_FIXTURE)
+        scheduled.update(workoutScheduleId=next(_schedule_ids), calendarDate=date_str)
+        scheduled["workout"]["workoutId"] = int(workout_id)
+        return scheduled
+
+    def unschedule_workout(self, scheduled_workout_id: int | str) -> dict[str, Any]:
+        self._fail_pending_call()
+        if int(scheduled_workout_id) == FAKE_GONE_SCHEDULE_ID:
+            raise _write_failure(404)
+        return {}
+
+    def delete_workout(self, workout_id: int | str) -> dict[str, Any]:
+        self._fail_pending_call()
+        if int(workout_id) == FAKE_GONE_WORKOUT_ID:
+            raise _write_failure(404)
+        return {}
+
+    def get_scheduled_workouts(self, year: int | str, month: int | str) -> dict[str, Any]:
+        self._fail_pending_call()
+        year, month = int(year), int(month)
+        # The library's own checks: a 0-based month here would be a bug in the route.
+        if year < 2000 or not 1 <= month <= 12:
+            raise ValueError(f"no such month: {year}-{month}")
+        answer: dict[str, Any] = self._read(CALENDAR_FIXTURE)
+        last_day = calendar.monthrange(year, month)[1]
+        items = []
+        for item in answer["calendarItems"]:
+            if item.get("itemType") == "workout":
+                day = int(str(item["date"])[8:10])
+                if day > last_day:
+                    continue
+                item = {**item, "date": f"{year:04d}-{month:02d}-{day:02d}"}
+            items.append(item)
+        # Garmin answers the 0-based month it was sent.
+        answer.update(year=year, month=month - 1, calendarItems=items)
+        return answer
 
     def _activity(self, activity_id: str) -> dict[str, Any]:
         if activity_id in {str(unavailable) for unavailable in FAKE_UNAVAILABLE_ACTIVITY_IDS}:

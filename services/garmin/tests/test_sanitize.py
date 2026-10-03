@@ -24,6 +24,10 @@ RAW: list[dict[str, Any]] = [
         "ownerDisplayName": "jane.doe.42",
         "ownerFullName": "Jane Doe",
         "ownerProfileImageUrlLarge": "https://img.example.org/jane.png",
+        "author": {
+            "userProfilePk": 55501,
+            "profileImgNameMedium": "f3b1c2d4-1111-4000-8000-aaaaaaaaaaaa-prfr.png",
+        },
         "locationName": "Springfield",
         "startLatitude": 12.345,
         "startLongitude": 67.89,
@@ -119,6 +123,8 @@ def test_removes_locations_coordinates_polylines_and_profile_images() -> None:
         "ownerProfileImageUrlLarge",
     ):
         assert key not in newer
+    # A workout author's profile image file name, as Garmin's workout upload answers it.
+    assert newer["author"] == {"userProfilePk": 100_001}
 
 
 def test_sanitizes_a_social_profile() -> None:
@@ -163,7 +169,7 @@ def test_leaves_nothing_of_the_raw_personal_values() -> None:
 
     for value in ("Jane", "jane", "Springfield", "Sam", "sore", "12.345", "987654321", "444555666"):
         assert value not in text
-    for value in ("1987", '"MALE"', "81234", "183.5", "3XK9", "3412345678", "3400000001"):
+    for value in ("1987", '"MALE"', "81234", "183.5", "3XK9", "3412345678", "3400000001", "f3b1"):
         assert value not in text
 
 

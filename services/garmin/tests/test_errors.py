@@ -17,6 +17,7 @@ from garmin_service.errors import (
     DEFAULT_RETRY_AFTER_S,
     from_garmin_exception,
     from_login_exception,
+    from_write_exception,
 )
 from garmin_service.models.problem import ErrorCode
 
@@ -172,3 +173,34 @@ def test_route_mapping_still_ignores_a_bare_network_error() -> None:
 def test_login_mapping_returns_none_for_an_error_that_is_neither_garmin_nor_network() -> None:
     assert from_login_exception(ValueError("bug")) is None
     assert from_login_exception(chained(KeyError("di_token"), ValueError("bug"))) is None
+
+
+@pytest.mark.parametrize(
+    ("exc", "status", "code", "retry_after"),
+    [
+        # client.post and client.delete raise these bare, with no API-call wrapper around them.
+        (GarminConnectConnectionError("API Error 429"), 429, "garmin_rate_limited", 3600),
+        (GarminConnectConnectionError("API Error 503"), 502, "garmin_unavailable", None),
+        (GarminConnectConnectionError("API Error 401"), 401, "garmin_auth_expired", None),
+        (GarminConnectConnectionError("API Error 400 - bad step"), 502, "garmin_unavailable", None),
+        (GarminConnectNotFoundError("API Error 404"), 404, "not_found", None),
+        (requests.exceptions.ConnectionError("reset by peer"), 502, "garmin_unavailable", None),
+        (requests.exceptions.ReadTimeout("read timed out"), 502, "garmin_unavailable", None),
+    ],
+)
+def test_write_mapping_reads_the_bare_errors_of_the_librarys_post_and_delete(
+    exc: BaseException, status: int, code: str, retry_after: int | None
+) -> None:
+    error = from_write_exception(exc)
+
+    assert error is not None
+    assert (error.status, error.code.value, error.retry_after_seconds) == (
+        status,
+        code,
+        retry_after,
+    )
+
+
+def test_write_mapping_returns_none_for_an_error_that_is_neither_garmin_nor_network() -> None:
+    assert from_write_exception(ValueError("bug")) is None
+    assert from_write_exception(TypeError("workout must be a RunningWorkout instance")) is None

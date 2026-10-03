@@ -78,6 +78,19 @@ class GarminApi(Protocol):
     # Typed dict by the library; Garmin answers a list of records ({} on 204 No Content).
     def get_personal_record(self) -> dict[str, Any] | list[Any]: ...
 
+    # The four writes go through the library's client.post and client.delete directly: no retries
+    # (errors.from_write_exception). `workout` is a garminconnect.workout.RunningWorkout.
+    def upload_running_workout(self, workout: Any) -> dict[str, Any]: ...
+
+    def schedule_workout(self, workout_id: int | str, date_str: str) -> dict[str, Any]: ...
+
+    def unschedule_workout(self, scheduled_workout_id: int | str) -> Any: ...
+
+    def delete_workout(self, workout_id: int | str) -> Any: ...
+
+    # month is 1-based; the library sends Garmin the 0-based month.
+    def get_scheduled_workouts(self, year: int | str, month: int | str) -> dict[str, Any]: ...
+
 
 class GarminSession:
     """One logged-in client for one request.

@@ -63,7 +63,8 @@ PROFILE_FAKES: dict[str, Any] = {
 }
 _FREE_TEXT_KEYS = frozenset({"description", "bio", "motivation", "notes", "comment"})
 _REMOVED_KEYS = frozenset({"location", "locationName", "lat", "lon", "lng"})
-_REMOVED_FRAGMENTS = ("latitude", "longitude", "polyline", "profileimage", "email")
+# profileImg: the workout author's profileImgNameSmall and friends, file names built on a uuid.
+_REMOVED_FRAGMENTS = ("latitude", "longitude", "polyline", "profileimage", "profileimg", "email")
 
 FIXTURE_EMAIL = "runner@example.com"
 FIXTURE_URL = "https://example.com/"
