@@ -8,11 +8,12 @@ import type {
 import {
   FITNESS_PHASE_WEEKS,
   FITNESS_PLAN_WEEKS,
+  MAX_PLAN_WEEKS,
   MIN_PLAN_WEEKS,
   PEAK_PHASE_WEEKS,
   TAPER_WEEKS,
 } from "../constants";
-import { addDays, daysBetween } from "../dates";
+import { addDays, daysBetween, weekdayOf } from "../dates";
 
 export interface PlanLengthInput {
   kind: GoalKind;
@@ -32,9 +33,12 @@ function repeat(phase: PlanPhase, count: number): PlanPhase[] {
 }
 
 /**
- * The phase of every week. A race plan ends with its taper, the race week last; a plan at least the
- * distance's minimum puts 2 peak weeks before the taper and a quarter of the rest as base. A shorter
- * plan is the taper weeks that fit, counted back from the race, with build weeks before them.
+ * The phase of every week. A race plan ends with its taper, the race week last. The taper runs in 7-day
+ * blocks counted back from the race; a taper week is a week wholly inside them, so a Monday race, whose
+ * blocks fill whole weeks, has one more than any other race day, where the last peak week runs into the
+ * first block. A plan at least the distance's minimum puts 2 peak weeks before the taper and a quarter
+ * of the rest as base. A shorter plan is the taper weeks that fit, counted back from the race, with
+ * build weeks before them. A race past week 52 is a conflict: the engine plans at most a year.
  */
 export function planLength({
   kind,
@@ -61,8 +65,19 @@ export function planLength({
     return { ok: false, conflict: { code: "race_too_soon", raceDate, earliestStart: startDate } };
   }
   const weeks = Math.ceil((daysOut + 1) / 7);
+  if (weeks > MAX_PLAN_WEEKS) {
+    return {
+      ok: false,
+      conflict: {
+        code: "race_too_far",
+        raceDate,
+        latestRaceDate: addDays(startDate, MAX_PLAN_WEEKS * 7 - 1),
+      },
+    };
+  }
   const minimumWeeks = MIN_PLAN_WEEKS[distanceKey];
-  const taperWeeks = Math.min(TAPER_WEEKS[distanceKey], weeks);
+  const raceOnMonday = weekdayOf(raceDate) === "mon";
+  const taperWeeks = Math.min(TAPER_WEEKS[distanceKey] + (raceOnMonday ? 1 : 0), weeks);
   const preTaperWeeks = weeks - taperWeeks;
   const taper = [...repeat("taper", taperWeeks - 1), "race" as const];
   if (weeks < minimumWeeks) {
@@ -73,7 +88,7 @@ export function planLength({
       warning: { code: "race_date_close", weeks, minimumWeeks },
     };
   }
-  // At the minimum the pre-taper weeks number at least 6, so base and peak never overlap.
+  // At the minimum the pre-taper weeks number at least 5, so base and peak never overlap.
   const baseWeeks = Math.floor(preTaperWeeks / 4);
   return {
     ok: true,

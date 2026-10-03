@@ -5,7 +5,7 @@ import {
 } from "@running-coach/shared";
 
 // Stored on each plan so a plan can be traced to the rule set that produced it.
-export const ENGINE_VERSION = "0.2.0";
+export const ENGINE_VERSION = "0.3.0";
 
 // The 10% rule: weekly running volume rises at most 10% over the previous week.
 export const WEEKLY_VOLUME_MAX_INCREASE = 0.1;
@@ -54,6 +54,10 @@ export const RACE_PACE_BAND = 0.015;
 // A target more than 5% faster than the prediction is a wish, not a pace to train at.
 export const TARGET_TIME_AMBITIOUS_MARGIN = 0.05;
 
+// SPEC "Plan engine": a plan covers at most 52 weeks. A year is the longest plan the engine makes:
+// beyond it the baseline is stale before the build starts.
+export const MAX_PLAN_WEEKS = 52;
+
 // SPEC "Plan engine": minimum plan 8 weeks for 5K and 10K, 12 for the half, 18 for the marathon.
 export const MIN_PLAN_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
   "5k": 8,
@@ -62,13 +66,16 @@ export const MIN_PLAN_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
   marathon: 18,
 };
 
-// SPEC "Plan engine": taper 2 weeks, 3 for the marathon; the race week is the last of them.
+// SPEC "Plan engine": taper 2 weeks, 3 for the marathon, as 7-day blocks counted back from the race.
 export const TAPER_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
   "5k": 2,
   "10k": 2,
   half: 2,
   marathon: 3,
 };
+
+// The taper's blocks are 7 days counted back from race day, so the 7 days before any race are one.
+export const TAPER_BLOCK_DAYS = 7;
 
 // Daniels' phase IV: the 2 weeks before the taper carry the plan's peak work.
 export const PEAK_PHASE_WEEKS = 2;
@@ -77,13 +84,30 @@ export const PEAK_PHASE_WEEKS = 2;
 export const FITNESS_PLAN_WEEKS = 12;
 export const FITNESS_PHASE_WEEKS = 4;
 
+// The contract's planBaselineSchema: the volume of the 4 Monday-to-Sunday weeks before this week.
+export const BASELINE_WEEKS = 4;
+
+// SPEC "Plan engine": no run over 110% of the longest run of the last 30 days.
+export const LONGEST_RUN_LOOKBACK_DAYS = 30;
+
+// SPEC "Plan engine": paces from the VDOT of the best race in 180 days, else the best effort of 5K or
+// more in 90 days. A race older than half a year, or a training best effort older than a quarter, no
+// longer says what the runner can do.
+export const RACE_LOOKBACK_DAYS = 180;
+export const BEST_EFFORT_LOOKBACK_DAYS = 90;
+// SPEC "Plan engine": only best efforts of 5K or more; shorter ones overstate endurance.
+export const BEST_EFFORT_MIN_DISTANCE_M = 5000;
+
 // SPEC re-entry: volume at 70% after 7 days off and 50% after 14.
 export const RE_ENTRY_SHORT_BREAK_DAYS = 7;
 export const RE_ENTRY_LONG_BREAK_DAYS = 14;
 export const RE_ENTRY_SHORT_BREAK_FACTOR = 0.7;
 export const RE_ENTRY_LONG_BREAK_FACTOR = 0.5;
+// An empty baseline week right before the plan is a week off: one counts as 7 days, two as 14.
+export const RE_ENTRY_DAYS_PER_EMPTY_WEEK = 7;
 
-// Lowest first week by distance: about 3 to 5 short runs, enough for the plan's sessions to fit.
+// First week of a runner with no recent runs, by distance: about 3 to 5 short runs. Only that runner
+// starts here; a runner with history starts from their own volume (rules/baseline.ts).
 export const START_VOLUME_FLOOR_M: Readonly<Record<RaceDistanceKey, number>> = {
   "5k": 15_000,
   "10k": 20_000,
@@ -103,8 +127,8 @@ export const PEAK_VOLUME_M: Readonly<Record<RaceDistanceKey, number>> = {
 export const DOWN_WEEK_EVERY = 4;
 export const DOWN_WEEK_FACTOR = 0.8;
 
-// SPEC taper cuts volume 40 to 60%: the race week runs 40% of the peak, the race excluded, the full
-// 60% cut, so the legs are fresh on race day.
+// SPEC taper cuts volume 40 to 60%, per 7-day block counted back from the race: the 7 days before it
+// run 40% of the peak, the race excluded, the full 60% cut, so the legs are fresh on race day.
 export const TAPER_FRACTIONS: Readonly<Record<number, readonly number[]>> = {
   2: [0.65, 0.4],
   3: [0.8, 0.6, 0.4],
@@ -117,6 +141,10 @@ export const LONG_RUN_MAX_S = 9000;
 
 // At 3 runs a week the longest is at least a third of the week, so 30% cannot hold; 40% leaves room.
 export const LONG_RUN_SHARE_3_DAYS = 0.4;
+
+// A taper block can hold fewer than 3 runs: the long run of n runs takes 1.2/n of them, the room 3 runs
+// at 40% leave, so the runs still hold the block instead of shrinking it towards nothing.
+export const LONG_RUN_SHARE_FEW_RUNS = 1.2;
 
 // SPEC "Plan engine": no run over 110% of the longest of the last 30 days (4 plan weeks).
 export const LONGEST_RUN_MAX_INCREASE = 0.1;

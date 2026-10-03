@@ -4,6 +4,7 @@ import {
   LONG_RUN_MAX_S,
   LONG_RUN_SHARE,
   LONG_RUN_SHARE_3_DAYS,
+  LONG_RUN_SHARE_FEW_RUNS,
   LONGEST_RUN_LOOKBACK_WEEKS,
   LONGEST_RUN_MAX_INCREASE,
   MIN_DAYS_PER_WEEK,
@@ -13,6 +14,7 @@ import { distanceForDurationM } from "./session-target";
 
 export interface LongRunInput {
   weekVolumeM: number;
+  /** Days that run: the runner's days a week, or the runs a taper block holds. */
   daysPerWeek: number;
   /** The easy band's midpoint, the pace the long run is planned at. */
   easyPaceSPerKm: number;
@@ -22,6 +24,7 @@ export interface LongRunInput {
 
 export interface LongRunRoomInput {
   weekVolumeM: number;
+  /** Days that run, the long run's included. */
   daysPerWeek: number;
   /** 20 min at the easy midpoint: what each easy run needs at least. */
   minRunM: number;
@@ -41,8 +44,13 @@ export interface LongestInWindowInput {
   seedM: number;
 }
 
-export function longRunShare(daysPerWeek: number): number {
-  return daysPerWeek === 3 ? LONG_RUN_SHARE_3_DAYS : LONG_RUN_SHARE;
+/**
+ * The long run's largest share of the volume its runs hold: 30% from 4 runs, 40% at 3. Fewer runs, in a
+ * taper block cut short, take more, so the runs, none longer than the long run, can still hold it.
+ */
+export function longRunShare(runs: number): number {
+  if (runs >= 4) return LONG_RUN_SHARE;
+  return runs === 3 ? LONG_RUN_SHARE_3_DAYS : LONG_RUN_SHARE_FEW_RUNS / runs;
 }
 
 /** The week's long run: the smallest of its share of the week, 150 min easy and 110% of the recent longest. */

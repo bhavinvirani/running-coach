@@ -1,7 +1,13 @@
 export * from "./constants";
 export { addDays, daysBetween, nextMonday, weekdayIndex, weekdayOf } from "./dates";
-export { generatePlan } from "./plan/generate";
-export { recentVolumeM, startVolume } from "./rules/baseline";
+export { generatePlan, planStartVolume } from "./plan/generate";
+export {
+  baselineReEntryFactor,
+  recentVolumeM,
+  reEnteredVolumeM,
+  startVolume,
+  trailingEmptyWeeks,
+} from "./rules/baseline";
 export type { StartVolumeInput, StartVolumeResult } from "./rules/baseline";
 export { bestEfforts } from "./rules/best-efforts";
 export type { BestEffort, BestEffortsInput } from "./rules/best-efforts";
@@ -42,8 +48,8 @@ export {
   workCapM,
 } from "./rules/quality";
 export type { QualityStepsInput, Work, WorkZone } from "./rules/quality";
-export { raceWeekDays } from "./rules/race-week";
-export type { RaceWeekDays, RaceWeekDaysInput } from "./rules/race-week";
+export { raceWeekDays, taperPracticeDate } from "./rules/race-week";
+export type { RaceWeekDays, RaceWeekDaysInput, TaperPracticeInput } from "./rules/race-week";
 export { reEntryFactor } from "./rules/re-entry";
 export {
   bandMidpointSPerKm,
@@ -53,13 +59,19 @@ export {
   stepDistanceM,
   stepDurationS,
 } from "./rules/session-target";
-export { peakPhaseVolumeM, taperVolumesM } from "./rules/taper";
-export type { PeakPhaseVolumeInput, TaperVolumesInput } from "./rules/taper";
+export { taperBlocks, taperPeakM, taperStartDate, taperVolumesM } from "./rules/taper";
+export type {
+  TaperBlock,
+  TaperBlocksInput,
+  TaperDatesInput,
+  TaperPeakInput,
+  TaperVolumesInput,
+} from "./rules/taper";
 export { paceAtShareSPerKm, pacesFromVdot, roundVdot, vdotFromPerformance } from "./rules/vdot";
 export type { Performance, TrainingPaces } from "./rules/vdot";
 export { baseCurveM, downWeekM, isDownWeek, weekTargetM } from "./rules/volume-curve";
 export type { BaseCurveInput, WeekTargetInput } from "./rules/volume-curve";
-export { daysHeld, fillWeek, minRunDistanceM, tooManyDaysConflict } from "./rules/week-fill";
+export { fillWeek, minRunDistanceM } from "./rules/week-fill";
 export type { FillWeekInput, FillWeekResult } from "./rules/week-fill";
 export { clampWeeklyVolume, maxWeeklyVolumeM } from "./rules/weekly-volume";
 export type { WeeklyVolumeInput, WeeklyVolumeResult } from "./rules/weekly-volume";

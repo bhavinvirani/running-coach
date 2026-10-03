@@ -101,6 +101,55 @@ describe("plan length", () => {
     });
   });
 
+  it("gives a Monday race one more taper week: its 7-day taper blocks fill the 2 weeks before it", () => {
+    // Every other race day shares its first taper week with the last peak week.
+    expect(race("10k", addDays(START, 56))).toMatchObject({
+      phases: phasesOf([
+        ["base", 1],
+        ["build", 3],
+        ["peak", 2],
+        ["taper", 2],
+        ["race", 1],
+      ]),
+      endDate: addDays(START, 56),
+      warning: null,
+    });
+    expect(race("10k", addDays(START, 57))).toMatchObject({
+      phases: phasesOf([
+        ["base", 1],
+        ["build", 4],
+        ["peak", 2],
+        ["taper", 1],
+        ["race", 1],
+      ]),
+    });
+  });
+
+  it("makes a marathon on the Monday of week 19 three taper weeks and the race day", () => {
+    expect(race("marathon", addDays(START, 126))).toMatchObject({
+      phases: phasesOf([
+        ["base", 3],
+        ["build", 10],
+        ["peak", 2],
+        ["taper", 3],
+        ["race", 1],
+      ]),
+    });
+  });
+
+  it("makes a race on the 52nd Sunday a 52-week plan and reports race_too_far for the 53rd Monday", () => {
+    const sunday = race("half", addDays(START, 363));
+    expect(sunday.ok && sunday.phases.length).toBe(52);
+    expect(race("half", addDays(START, 364))).toEqual({
+      ok: false,
+      conflict: {
+        code: "race_too_far",
+        raceDate: addDays(START, 364),
+        latestRaceDate: addDays(START, 363),
+      },
+    });
+  });
+
   it("makes a 10K 4 weeks away the taper and build weeks before it", () => {
     expect(race("10k", addDays(START, 27))).toEqual({
       ok: true,
@@ -138,10 +187,18 @@ describe("plan length", () => {
         (distanceKey, daysOut) => {
           const raceDate = addDays(START, daysOut);
           const result = race(distanceKey, raceDate);
-          if (!result.ok) throw new Error("a race on or after the start always has a plan");
           const weeks = Math.ceil((daysOut + 1) / 7);
+          if (weeks > 52) {
+            expect(result).toEqual({
+              ok: false,
+              conflict: { code: "race_too_far", raceDate, latestRaceDate: addDays(START, 363) },
+            });
+            return;
+          }
+          if (!result.ok) throw new Error("a race in the first 52 weeks always has a plan");
           const minimumWeeks = { "5k": 8, "10k": 8, half: 12, marathon: 18 }[distanceKey];
-          const taperWeeks = distanceKey === "marathon" ? 3 : 2;
+          // A taper week lies wholly in the 7-day blocks before the race: a Monday race has one more.
+          const taperWeeks = (distanceKey === "marathon" ? 3 : 2) + (daysOut % 7 === 0 ? 1 : 0);
           expect(result.phases).toHaveLength(weeks);
           expect(result.phases.at(-1)).toBe("race");
           expect(result.endDate).toBe(raceDate);

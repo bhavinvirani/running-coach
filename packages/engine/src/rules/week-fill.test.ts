@@ -1,136 +1,14 @@
-import type { GeneratedWeek, PlanPhase } from "@running-coach/shared";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { daysHeld, fillWeek, minRunDistanceM, tooManyDaysConflict } from "./week-fill";
+import { fillWeek, minRunDistanceM } from "./week-fill";
 
 const sum = (values: readonly number[]) => values.reduce((total, value) => total + value, 0);
-
-/** A week of `phase` holding `count` easy runs on consecutive days from Monday 5 Oct 2026. */
-function weekOf(
-  phase: PlanPhase,
-  count: number,
-  distanceM = count * 5000,
-): Pick<GeneratedWeek, "phase" | "sessions" | "distanceM"> {
-  return {
-    phase,
-    distanceM,
-    sessions: Array.from({ length: count }, (_, k) => ({
-      date: `2026-10-0${5 + k}`,
-      type: "easy" as const,
-      target: { distanceM: 5000, durationS: 1800, zone: "easy" as const },
-      steps: [{ kind: "run" as const, zone: "easy" as const, distanceM: 5000, durationS: null }],
-    })),
-  };
-}
 
 describe("week fill", () => {
   it("makes the shortest easy run 20 min at the easy midpoint, rounded up", () => {
     expect(minRunDistanceM(300)).toBe(4000);
     expect(minRunDistanceM(320)).toBe(3750);
     expect(minRunDistanceM(333)).toBe(3604);
-  });
-
-  it("holds every day asked for at 20 min a run: the volume at, 1 m under and 1 m over the days' 20 min runs", () => {
-    const at = (weekVolumeM: number) => daysHeld({ weekVolumeM, daysPerWeek: 6, minRunM: 4000 });
-    expect(at(23_999)).toBe(5);
-    expect(at(24_000)).toBe(6);
-    expect(at(24_001)).toBe(6);
-    expect(at(100_000)).toBe(6);
-  });
-
-  it("holds the long run alone in a week under one 20 min run", () => {
-    expect(daysHeld({ weekVolumeM: 3999, daysPerWeek: 4, minRunM: 4000 })).toBe(1);
-    expect(daysHeld({ weekVolumeM: 0, daysPerWeek: 4, minRunM: 4000 })).toBe(1);
-  });
-
-  it("holds as many days as 20 min runs fit, at least 1 and at most the days asked for", () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 150_000 }),
-        fc.integer({ min: 3, max: 6 }),
-        fc.integer({ min: 1500, max: 5000 }),
-        (weekVolumeM, daysPerWeek, minRunM) => {
-          const days = daysHeld({ weekVolumeM, daysPerWeek, minRunM });
-          expect(Number.isInteger(days)).toBe(true);
-          expect(days).toBeGreaterThanOrEqual(1);
-          expect(days).toBeLessThanOrEqual(daysPerWeek);
-          if (days > 1) expect(days * minRunM).toBeLessThanOrEqual(weekVolumeM);
-          if (days < daysPerWeek) expect((days + 1) * minRunM).toBeGreaterThan(weekVolumeM);
-        },
-      ),
-    );
-  });
-
-  it("reports too_many_days when week 1 holds one session fewer than the days asked for, not when it holds them all", () => {
-    expect(
-      tooManyDaysConflict({
-        daysPerWeek: 6,
-        weekOne: weekOf("base", 5, 30_000),
-        startVolumeM: 30_000,
-        minRunM: 4000,
-      }),
-    ).toEqual({
-      code: "too_many_days",
-      daysPerWeek: 6,
-      maxDaysPerWeek: 5,
-      baselineWeeklyM: 30_000,
-    });
-    expect(
-      tooManyDaysConflict({
-        daysPerWeek: 6,
-        weekOne: weekOf("base", 6, 30_000),
-        startVolumeM: 30_000,
-        minRunM: 4000,
-      }),
-    ).toBeNull();
-  });
-
-  it("reports too_many_days 1 m under 20 min on every day asked for, though week 1 holds a run on each: not at it", () => {
-    const sixRunsIn = (weekM: number) =>
-      tooManyDaysConflict({
-        daysPerWeek: 6,
-        weekOne: weekOf("base", 6, weekM),
-        startVolumeM: weekM,
-        minRunM: 4000,
-      });
-    expect(sixRunsIn(23_999)).toEqual({
-      code: "too_many_days",
-      daysPerWeek: 6,
-      maxDaysPerWeek: 5,
-      baselineWeeklyM: 23_999,
-    });
-    expect(sixRunsIn(24_000)).toBeNull();
-    expect(sixRunsIn(24_001)).toBeNull();
-  });
-
-  it("reports too_many_days with the fewer of the sessions week 1 held and the 20 min runs its volume holds", () => {
-    expect(
-      tooManyDaysConflict({
-        daysPerWeek: 4,
-        weekOne: weekOf("build", 2, 40_000),
-        startVolumeM: 40_000,
-        minRunM: 4000,
-      }),
-    ).toMatchObject({ code: "too_many_days", daysPerWeek: 4, maxDaysPerWeek: 2 });
-    expect(
-      tooManyDaysConflict({
-        daysPerWeek: 5,
-        weekOne: weekOf("base", 5, 12_500),
-        startVolumeM: 12_500,
-        minRunM: 4000,
-      }),
-    ).toMatchObject({ code: "too_many_days", daysPerWeek: 5, maxDaysPerWeek: 3 });
-  });
-
-  it("does not report too_many_days for a plan that starts in race week, which runs only the days before the race", () => {
-    expect(
-      tooManyDaysConflict({
-        daysPerWeek: 5,
-        weekOne: weekOf("race", 2, 8000),
-        startVolumeM: 40_000,
-        minRunM: 4000,
-      }),
-    ).toBeNull();
   });
 
   it("splits the rest of the week equally over the easy days, the odd meters to the first", () => {

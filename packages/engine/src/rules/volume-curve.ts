@@ -11,9 +11,9 @@ export interface BaseCurveInput {
 export type WeekTargetInput =
   /** A pre-taper week that is not a down week, against the last such week as run. */
   | { kind: "climb"; curveM: number; previousNonDownWeekM: number | null }
-  /** A down week, against the week before it as run. */
+  /** A down week, against the week before it as built. */
   | { kind: "down"; curveM: number; previousWeekM: number }
-  /** A taper week or the race week's running, against the week before it as run (none in week 1). */
+  /** A taper block, against the block or week before it as built (none at the plan's start). */
   | { kind: "eased"; volumeM: number; previousWeekM: number | null };
 
 /**
@@ -44,7 +44,8 @@ export function downWeekM(curveM: number): number {
 
 /**
  * A week's volume target, measured against the weeks as they were actually built: a week that could
- * not hold its volume holds the next one back too, so no week rises more than 10% over what was run.
+ * not hold its volume holds the next one back too, so no week rises more than 10% over what was run,
+ * and a down week recovers from the week the runner ran, not from the curve it lagged.
  */
 export function weekTargetM(input: WeekTargetInput): number {
   switch (input.kind) {
@@ -53,7 +54,7 @@ export function weekTargetM(input: WeekTargetInput): number {
         ? input.curveM
         : Math.min(input.curveM, maxWeeklyVolumeM(input.previousNonDownWeekM));
     case "down":
-      return Math.min(downWeekM(input.curveM), input.previousWeekM);
+      return downWeekM(Math.min(input.curveM, input.previousWeekM));
     case "eased":
       return input.previousWeekM === null
         ? input.volumeM

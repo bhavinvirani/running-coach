@@ -7,7 +7,7 @@ import {
 
 /**
  * The share of recent volume a runner restarts at after time off. Null is a runner with no runs on
- * record: there is no recent volume to return to, so the plan starts from the floor.
+ * record: there is no recent volume to return to, so the plan starts as for a runner with no history.
  */
 export function reEntryFactor(daysSinceLastRun: number | null): number {
   if (daysSinceLastRun === null) return 0;

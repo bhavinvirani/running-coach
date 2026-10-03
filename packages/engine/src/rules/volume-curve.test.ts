@@ -59,9 +59,20 @@ describe("volume curve", () => {
     );
   });
 
-  it("keeps a down week or a taper week from rising over the week before it", () => {
-    expect(weekTargetM({ kind: "down", curveM: 30_000, previousWeekM: 25_000 })).toBe(24_000);
-    expect(weekTargetM({ kind: "down", curveM: 30_000, previousWeekM: 20_000 })).toBe(20_000);
+  it("cuts a down week to 80% of the curve when the week before reached it", () => {
+    expect(weekTargetM({ kind: "down", curveM: 30_000, previousWeekM: 30_000 })).toBe(24_000);
+    expect(weekTargetM({ kind: "down", curveM: 30_000, previousWeekM: 40_000 })).toBe(24_000);
+  });
+
+  it("cuts a down week to 80% of the week before as built when it lags the curve: 42 592 m gives 34 073 m, not 42 592 m", () => {
+    // A half on 4 days from an 8 km longest: the 110% run cap holds weeks 1 to 3 at 35 200, 38 720 and
+    // 42 592 m while the curve asks for 40 000, 44 000 and 48 400 m.
+    expect(weekTargetM({ kind: "down", curveM: 53_240, previousWeekM: 42_592 })).toBe(34_073);
+    expect(weekTargetM({ kind: "down", curveM: 42_593, previousWeekM: 42_592 })).toBe(34_073);
+    expect(weekTargetM({ kind: "down", curveM: 42_591, previousWeekM: 42_592 })).toBe(34_072);
+  });
+
+  it("keeps a taper week from rising over the week before it", () => {
     expect(weekTargetM({ kind: "eased", volumeM: 28_000, previousWeekM: 27_999 })).toBe(27_999);
     expect(weekTargetM({ kind: "eased", volumeM: 28_000, previousWeekM: 28_000 })).toBe(28_000);
     expect(weekTargetM({ kind: "eased", volumeM: 28_000, previousWeekM: null })).toBe(28_000);
@@ -89,7 +100,7 @@ describe("volume curve", () => {
     );
   });
 
-  it("never sets a climbing week above +10% of the last non-down week or an eased week above the last", () => {
+  it("never sets a climbing week above +10% of the last non-down week, a down week above 80% of the week before or an eased week above it", () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 1, max: 150_000 }),
@@ -98,9 +109,9 @@ describe("volume curve", () => {
           expect(
             weekTargetM({ kind: "climb", curveM: volumeM, previousNonDownWeekM: previousM }),
           ).toBeLessThanOrEqual(Math.floor(previousM * 1.1));
-          expect(
-            weekTargetM({ kind: "down", curveM: volumeM, previousWeekM: previousM }),
-          ).toBeLessThanOrEqual(Math.min(previousM, volumeM * 0.8));
+          expect(weekTargetM({ kind: "down", curveM: volumeM, previousWeekM: previousM })).toBe(
+            Math.floor(0.8 * Math.min(previousM, volumeM)),
+          );
           expect(
             weekTargetM({ kind: "eased", volumeM, previousWeekM: previousM }),
           ).toBeLessThanOrEqual(previousM);

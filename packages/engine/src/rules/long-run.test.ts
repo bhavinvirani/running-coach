@@ -40,6 +40,20 @@ describe("long run", () => {
     expect(longRunShare(6)).toBe(0.3);
   });
 
+  it("lets the long run of a taper block cut short to 2 runs take 60%, and a lone run all of it", () => {
+    expect(longRunShare(2)).toBe(0.6);
+    expect(longRunShare(1)).toBe(1.2);
+  });
+
+  it("leaves the runs room to hold the week at every count: the share times the runs is over 1", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 7 }), (runs) => {
+        expect(longRunShare(runs) * runs).toBeGreaterThan(1);
+        if (runs > 1) expect(longRunShare(runs)).toBeLessThanOrEqual(longRunShare(runs - 1));
+      }),
+    );
+  });
+
   it("takes the share of the week when that is the smallest cap", () => {
     expect(
       longRunM({ weekVolumeM: 40_000, daysPerWeek: 4, easyPaceSPerKm: PACE, maxRunM: 20_000 }),

@@ -13,6 +13,14 @@ export interface RaceWeekDaysInput {
   lastHardDate: string | null;
 }
 
+export interface TaperPracticeInput {
+  /** Quality days of the week before the race week that fall in the 7 days before the race. */
+  qualityDates: readonly string[];
+  raceDate: string;
+  /** The race week's own race practice, null with none. */
+  raceWeekPracticeDate: string | null;
+}
+
 export interface RaceWeekDays {
   racePracticeDate: string | null;
   /** In fill order. */
@@ -51,4 +59,21 @@ export function raceWeekDays({
     .filter((date) => date !== racePracticeDate)
     .slice(0, daysPerWeek - 1 - (racePracticeDate === null ? 0 : 1));
   return { racePracticeDate, easyDates };
+}
+
+/**
+ * The 7 days before the race hold one race practice at most, at least 3 days out. When they reach into
+ * the week before the race week (a race early in the week), that week's quality day there stays race
+ * practice only if the race week holds none: the latest one at least 3 days out. The others run easy.
+ */
+export function taperPracticeDate({
+  qualityDates,
+  raceDate,
+  raceWeekPracticeDate,
+}: TaperPracticeInput): string | null {
+  if (raceWeekPracticeDate !== null) return null;
+  const farEnough = qualityDates
+    .filter((date) => daysBetween(date, raceDate) >= RACE_PRACTICE_MIN_DAYS_BEFORE_RACE)
+    .sort((a, b) => daysBetween(b, a));
+  return farEnough.at(-1) ?? null;
 }
