@@ -1,21 +1,30 @@
+import { createHash } from "node:crypto";
 import { expect, type APIRequestContext } from "@playwright/test";
-import { generatePlan } from "@running-coach/engine";
+import { garminWorkout, generatePlan } from "@running-coach/engine";
 import {
   ErrorCode,
   RACE_EVENT_TYPE,
   connectGarminResponseSchema,
+  garminWorkoutName,
   meResponseSchema,
   personalBestsResponseSchema,
   syncResponseSchema,
   type DistanceKey,
   type GeneratedPlan,
   type MeResponse,
+  type OtherGarminWorkout,
   type PlanGenerationInput,
+  type PlanPaces,
+  type PlanPhase,
   type RecentTime,
+  type SessionSteps,
+  type SessionTarget,
+  type SessionType,
   type SyncResponse,
   type UpdateSettingsRequest,
 } from "@running-coach/shared";
 import pg from "pg";
+import { addDays, today, weekStart } from "../../src/lib/dates";
 
 /**
  * The fictional runner every flow and screenshot runs as. playwright.config.ts passes these to the API as
@@ -42,14 +51,28 @@ export const defaultSettings = {
 } as const satisfies Required<UpdateSettingsRequest>;
 
 /**
- * The fixture Garmin's plain login (services/garmin/garmin_service/fake_client.py): no "fixture" key, so
- * every call succeeds, as the account "Alex Fixture".
+ * The runner's local date now, in the zone every test starts with: the API's today, which decides the days
+ * it keeps on Garmin, and the browser's under playwright.config.ts's zone and the real clock.
  */
-const fixtureTokenBundle = JSON.stringify({
-  di_token: "fixture-token",
-  di_refresh_token: "fixture-refresh",
-  di_client_id: "fixture-client",
-});
+export function runnerToday(): string {
+  return today(defaultSettings.timezone);
+}
+
+/**
+ * The fixture Garmin's logins (services/garmin/garmin_service/fake_client.py), as the account "Alex
+ * Fixture": "plain" has no "fixture" key, so every call succeeds; "workout_outage" fails the second upload
+ * of every workout push with a 503, so the first workout goes and the push stops at the second.
+ */
+export type FixtureLogin = "plain" | "workout_outage";
+
+function fixtureTokenBundle(login: FixtureLogin): string {
+  return JSON.stringify({
+    di_token: "fixture-token",
+    di_refresh_token: "fixture-refresh",
+    di_client_id: "fixture-client",
+    ...(login === "plain" ? {} : { fixture: login }),
+  });
+}
 
 /**
  * Where every seeded sync resumes from. A first sync reads only the last 30 days, which loses the fixture
@@ -111,15 +134,44 @@ async function clearBestEffortsBatches(db: pg.Client): Promise<void> {
   await db.query(`delete ${runnerBatches} and state in ('created', 'retry')`, [runner.email]);
 }
 
+/** The runner's pushes on the push-workouts queue (apps/api/src/jobs/push-workouts-queue.ts), by user. */
+const runnerPushes = `from pgboss.job where name = 'push-workouts'
+  and data->>'userId' = (select id::text from "user" where email = $1)`;
+
+/**
+ * Leaves no push of the runner queued, running or waiting out a retry. A push left by an earlier test (the
+ * workout outage's retry starts 5 min later) or queued by connecting would otherwise write Garmin ids onto
+ * this test's sessions whenever it ran, and on a screen pinned to October 2026 it would strip seeded ones,
+ * since the API pushes the server's real week. Waiting ones are deleted as pg-boss's deleteJob does; a
+ * running one is waited out (a fixture push takes about a second) and deleted if it ends in a retry.
+ */
+async function clearPushes(db: pg.Client): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        await db.query(`delete ${runnerPushes} and state in ('created', 'retry')`, [runner.email]);
+        const { rows } = await db.query<{ pending: number }>(
+          `select count(*)::int as pending ${runnerPushes} and state in ('created', 'retry', 'active')`,
+          [runner.email],
+        );
+        return rows[0]?.pending;
+      },
+      { message: "A workout push of the runner is still running", timeout: 10_000 },
+    )
+    .toBe(0);
+}
+
 /**
  * Every test starts from "no goal or plan, no runs, no history import, Garmin not connected, default
- * settings": the runner's plan sessions, plans, goal, runs, import progress and Garmin connection are
- * deleted first, then the settings go back to the defaults through the API, the way the app changes them,
- * so the MeResponse returned already shows the reset state. An import page job left queued by an earlier test finds no progress row and does nothing;
- * a best-efforts batch left waiting is deleted (clearBestEffortsBatches).
+ * settings": no workout push of the runner is left (clearPushes), then the runner's plan sessions, plans,
+ * goal, runs, import progress and Garmin connection are deleted, then the settings go back to the defaults
+ * through the API, the way the app changes them, so the MeResponse returned already shows the reset state.
+ * An import page job left queued by an earlier test finds no progress row and does nothing; a best-efforts
+ * batch left waiting is deleted (clearBestEffortsBatches).
  */
 export async function resetRunner(request: APIRequestContext): Promise<MeResponse> {
   await withDatabase(async (db) => {
+    await clearPushes(db);
     // Sessions before their plans, plans before their goal: each would go with its parent (on delete
     // cascade), but each table is emptied by its own user_id so none is left behind if that ever changes.
     await db.query(`delete from plan_session where user_id = ${runnerId}`, [runner.email]);
@@ -138,26 +190,31 @@ export async function resetRunner(request: APIRequestContext): Promise<MeRespons
 }
 
 /**
- * The fixture login as the API stored it on this worker's first connect: encrypted with the e2e MASTER_KEY
- * for the runner, whose id stays the same for the whole run. The fixture Garmin never rotates the plain
- * bundle, so the value stays good for every later sync.
+ * Each fixture login as the API stored it on this worker's first connect with it: encrypted with the e2e
+ * MASTER_KEY for the runner, whose id stays the same for the whole run. The fixture Garmin never rotates
+ * these bundles, so each value stays good for every later sync and push.
  */
-let storedFixtureLogin: string | undefined;
+const storedFixtureLogins = new Map<FixtureLogin, string>();
 
 /**
- * Connects the fixture Garmin account, then pins the sync cursor (pinnedLastSyncAt unless the test names
- * another) with the one statement no route offers. The worker's first connect goes through the API, as
- * `pnpm garmin:connect` does; every later one writes back the row that connect stored (storedFixtureLogin),
- * as a reconnect leaves it: status ok, no last error. One Garmin login per worker keeps the
- * suite quick and every later connect deterministic.
+ * Connects the fixture Garmin account with one of its logins (plain unless the test names another), then
+ * pins the sync cursor (pinnedLastSyncAt unless the test names another) with the one statement no route
+ * offers. The worker's first connect with a login goes through the API, as `pnpm garmin:connect` does;
+ * every later one writes back the row that connect stored (storedFixtureLogins), as a reconnect leaves it:
+ * status ok, no last error. One Garmin login per worker keeps the suite quick and every later connect
+ * deterministic. The API's connect queues a workout push; it is waited out and deleted, and what it stored
+ * cleared, so every connect leaves Garmin connected with nothing pushed and no push queued. Connect before
+ * seeding sessions: that push would send any already stored.
  */
 export async function connectGarmin(
   request: APIRequestContext,
   lastSyncAt: string = pinnedLastSyncAt,
+  login: FixtureLogin = "plain",
 ): Promise<void> {
-  if (storedFixtureLogin === undefined) {
+  const stored = storedFixtureLogins.get(login);
+  if (stored === undefined) {
     const response = await request.put("/api/garmin/connection", {
-      data: { tokenBundle: fixtureTokenBundle },
+      data: { tokenBundle: fixtureTokenBundle(login) },
     });
     if (!response.ok()) {
       throw new Error(`Connecting the fixture Garmin account failed with ${response.status()}`);
@@ -166,21 +223,29 @@ export async function connectGarmin(
   }
 
   await withDatabase(async (db) => {
-    if (storedFixtureLogin === undefined) {
+    if (stored === undefined) {
       const { rows } = await db.query<{ token_bundle_enc: string }>(
         `select token_bundle_enc from garmin_connection where user_id = ${runnerId}`,
         [runner.email],
       );
-      storedFixtureLogin = rows[0]?.token_bundle_enc;
-      if (storedFixtureLogin === undefined) {
+      const encrypted = rows[0]?.token_bundle_enc;
+      if (encrypted === undefined) {
         throw new Error("The API answered the connect but stored no Garmin connection");
       }
+      storedFixtureLogins.set(login, encrypted);
+      await clearPushes(db);
+      await db.query(
+        `update garmin_connection
+         set workouts_pushed_at = null, workouts_push_error = null, garmin_calendar = '[]'::jsonb
+         where user_id = ${runnerId}`,
+        [runner.email],
+      );
     } else {
       await db.query(
         `insert into garmin_connection (user_id, token_bundle_enc, status) values (${runnerId}, $2, 'ok')
          on conflict (user_id) do update
          set token_bundle_enc = excluded.token_bundle_enc, status = 'ok', last_error = null`,
-        [runner.email, storedFixtureLogin],
+        [runner.email, stored],
       );
     }
     const pinned = await db.query(
@@ -205,6 +270,32 @@ export async function seedExpiredGarminLogin(): Promise<void> {
       `insert into garmin_connection (user_id, token_bundle_enc, status, last_sync_at, last_error)
        values (${runnerId}, 'v1:e2e-expired-login-never-decrypted', 'expired', $2, $3)`,
       [runner.email, pinnedLastSyncAt, ErrorCode.garminAuthExpired],
+    ),
+  );
+}
+
+/** The state a finished workout push leaves on the connection: when it ended and other apps' workouts. */
+export type SeededPush = {
+  pushedAt: string;
+  others: readonly OtherGarminWorkout[];
+};
+
+/**
+ * A working Garmin login with the state a finished workout push leaves, written straight into the
+ * database for screens that show where workouts stand on Garmin. Unlike connectGarmin it queues no push:
+ * the API pushes the server's real week, which would strip the ids seeded on a plan pinned to October 2026
+ * while the screen is captured. The token bundle is a stand-in that never decrypts, so nothing may call
+ * Garmin with it: open the app with skipSyncOnOpen, and tap nothing that pushes. The cursor is
+ * pinnedLastSyncAt. The API lists only the others dated in its own week, so a screen showing one seeds
+ * it on runnerToday() and masks its day.
+ */
+export async function seedPushedGarmin({ pushedAt, others }: SeededPush): Promise<void> {
+  await withDatabase((db) =>
+    db.query(
+      `insert into garmin_connection (user_id, token_bundle_enc, status, last_sync_at, workouts_pushed_at,
+         garmin_calendar)
+       values (${runnerId}, 'v1:e2e-pushed-login-never-decrypted', 'ok', $2, $3, $4::jsonb)`,
+      [runner.email, pinnedLastSyncAt, pushedAt, JSON.stringify(others)],
     ),
   );
 }
@@ -951,25 +1042,38 @@ const planSavedAt = "2026-10-02T09:00:00Z";
  */
 export const planWeekTwoAt = new Date("2026-10-14T09:00:00Z");
 
-/**
- * Stores seededPlanInput's goal with the plan the engine makes from it, as PUT /api/goal saves them
- * (apps/api/src/services/plan.ts): the goal row, version 1 of its plan, active, and one plan_session per
- * session with its week's phase. Written directly with the engine's own output, so the plan is what the API
- * would make from these inputs on 2 Oct 2026 whatever today is; a change to the engine's rules changes the
- * seeded plan with it. Returns the plan for tests that assert on its numbers.
- */
-export async function seedPlan(): Promise<GeneratedPlan> {
-  const result = generatePlan(seededPlanInput);
+/** The engine's plan for a seeded goal, which never conflicts. */
+function generateSeededPlan(input: PlanGenerationInput): GeneratedPlan {
+  const result = generatePlan(input);
   if (!result.ok) {
     throw new Error(`The engine answered the seeded goal with a conflict: ${result.conflict.code}`);
   }
-  const generated = result.plan;
-  const { goal, vdotSource } = seededPlanInput;
-  const sessions = generated.weeks.flatMap((week) =>
-    week.sessions.map((session) => ({ ...session, phase: week.phase })),
-  );
+  return result.plan;
+}
 
-  await withDatabase(async (db) => {
+/** A plan session as storePlan writes it. */
+type SessionRow = {
+  date: string;
+  type: SessionType;
+  phase: PlanPhase;
+  target: SessionTarget;
+  steps: SessionSteps;
+};
+
+/**
+ * Stores the input's goal with its generated plan as PUT /api/goal saves them
+ * (apps/api/src/services/plan.ts), in one transaction: the goal row, version 1 of its plan, active, and the
+ * sessions `writeSessions` inserts for that plan.
+ */
+async function storePlan<T>(
+  input: PlanGenerationInput,
+  generated: GeneratedPlan,
+  writeSessions: (db: pg.Client, plan: { id: string; user_id: string }) => Promise<T>,
+): Promise<T> {
+  const { goal, vdotSource } = input;
+  if (goal.kind !== "race") throw new Error("A seeded goal is a race");
+
+  return withDatabase(async (db) => {
     await db.query("begin");
     try {
       const goalRows = await db.query<{ id: string }>(
@@ -1008,7 +1112,7 @@ export async function seedPlan(): Promise<GeneratedPlan> {
           generated.vdot,
           JSON.stringify(vdotSource),
           JSON.stringify(generated.paces),
-          JSON.stringify(seededPlanInput),
+          JSON.stringify(input),
           JSON.stringify(generated.warnings),
           planSavedAt,
         ],
@@ -1016,19 +1120,177 @@ export async function seedPlan(): Promise<GeneratedPlan> {
       const planRow = planRows.rows[0];
       if (planRow === undefined) throw new Error("The plan insert returned nothing");
 
-      await db.query(
-        `insert into plan_session (plan_id, user_id, date, type, phase, target, steps, created_at,
-           updated_at)
-         select $1, $2, session.date, session.type, session.phase, session.target, session.steps, $4, $4
-         from jsonb_to_recordset($3::jsonb)
-           as session(date date, type text, phase text, target jsonb, steps jsonb)`,
-        [planRow.id, planRow.user_id, JSON.stringify(sessions), planSavedAt],
-      );
+      const written = await writeSessions(db, planRow);
       await db.query("commit");
+      return written;
     } catch (error) {
       await db.query("rollback");
       throw error;
     }
   });
+}
+
+/**
+ * Stores seededPlanInput's goal with the plan the engine makes from it, as PUT /api/goal saves them
+ * (apps/api/src/services/plan.ts): the goal row, version 1 of its plan, active, and one plan_session per
+ * session with its week's phase. Written directly with the engine's own output, so the plan is what the API
+ * would make from these inputs on 2 Oct 2026 whatever today is; a change to the engine's rules changes the
+ * seeded plan with it. Returns the plan for tests that assert on its numbers.
+ */
+export async function seedPlan(): Promise<GeneratedPlan> {
+  const generated = generateSeededPlan(seededPlanInput);
+  const sessions: SessionRow[] = generated.weeks.flatMap((week) =>
+    week.sessions.map((session) => ({ ...session, phase: week.phase })),
+  );
+
+  await storePlan(seededPlanInput, generated, (db, plan) =>
+    db.query(
+      `insert into plan_session (plan_id, user_id, date, type, phase, target, steps, created_at,
+         updated_at)
+       select $1, $2, session.date, session.type, session.phase, session.target, session.steps, $4, $4
+       from jsonb_to_recordset($3::jsonb)
+         as session(date date, type text, phase text, target jsonb, steps jsonb)`,
+      [plan.id, plan.user_id, JSON.stringify(sessions), planSavedAt],
+    ),
+  );
   return generated;
+}
+
+/** The weeks seedPlanSessions' plan runs, as seedPlan's: a half marathon 20 weeks on. */
+const PLAN_WEEKS = 20;
+
+/**
+ * seededPlanInput moved to start on the Monday of the week that holds `date`, its race on the Sunday 20
+ * weeks on: the same runner and recent 10K, so the same paces, in a plan that holds that day.
+ */
+function planInputAround(date: string): PlanGenerationInput {
+  const startDate = weekStart(date);
+  const { goal } = seededPlanInput;
+  if (goal.kind !== "race") throw new Error("A seeded goal is a race");
+  return {
+    ...seededPlanInput,
+    startDate,
+    goal: { ...goal, raceDate: addDays(startDate, PLAN_WEEKS * 7 - 1) },
+  };
+}
+
+/** A session for seedPlanSessions to store: its day and its type, one the seeded plan has. */
+export type SeededSession = { date: string; type: SessionType };
+
+/** A session as seedPlanSessions stored it. */
+export type StoredSession = SeededSession & {
+  id: string;
+  target: SessionTarget;
+  steps: SessionSteps;
+};
+
+/**
+ * For flows on the real clock: stores seededPlanInput's goal with its plan, active, as seedPlan does, but
+ * moved to the week of runnerToday() (planInputAround) and with only the sessions named, each on its day
+ * with the steps, target and phase of the first session of its type in that plan. A flow then knows which
+ * sessions sit in the days the API keeps on Garmin. Name at least one, inside the plan's 20 weeks: the API
+ * refuses to read a plan without sessions (GET /api/plan), as the engine never makes one. Returns the
+ * stored sessions in the order named.
+ */
+export async function seedPlanSessions(
+  sessions: readonly SeededSession[],
+): Promise<StoredSession[]> {
+  if (sessions.length === 0) throw new Error("A seeded plan needs at least one session");
+  const input = planInputAround(runnerToday());
+  const generated = generateSeededPlan(input);
+  const planned = generated.weeks.flatMap((week) =>
+    week.sessions.map((session) => ({ ...session, phase: week.phase })),
+  );
+  const rows: SessionRow[] = sessions.map(({ date, type }) => {
+    const model = planned.find((session) => session.type === type);
+    if (!model) throw new Error(`The seeded plan has no ${type} session`);
+    return { ...model, date };
+  });
+
+  return storePlan(input, generated, async (db, plan) => {
+    const stored: StoredSession[] = [];
+    for (const row of rows) {
+      const inserted = await db.query<{ id: string }>(
+        `insert into plan_session (plan_id, user_id, date, type, phase, target, steps, created_at,
+           updated_at)
+         values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $8)
+         returning id`,
+        [
+          plan.id,
+          plan.user_id,
+          row.date,
+          row.type,
+          row.phase,
+          JSON.stringify(row.target),
+          JSON.stringify(row.steps),
+          planSavedAt,
+        ],
+      );
+      const id = inserted.rows[0]?.id;
+      if (id === undefined) throw new Error("The session insert returned nothing");
+      stored.push({ id, date: row.date, type: row.type, target: row.target, steps: row.steps });
+    }
+    return stored;
+  });
+}
+
+/**
+ * Garmin ids for seedSessionsOnGarmin, counted per worker: far from the fixture Garmin's own (workouts
+ * from 900000001, schedules from 800000001, its calendar's other apps from 5000000001), and never shown.
+ */
+const SEEDED_WORKOUT_IDS = 700_000_000;
+const SEEDED_SCHEDULE_IDS = 600_000_000;
+let seededOnGarmin = 0;
+
+/**
+ * Marks the runner's sessions on these days as on Garmin, as a finished push leaves them: workout and
+ * schedule ids, the day it is scheduled on, and the hash of the workout the API would send for it now
+ * (desiredWorkout in apps/api/src/services/workout-push-plan.ts: the active plan's paces, the default
+ * units), so the API answers onGarmin for each. A push that runs later moves or removes them on the fixture
+ * Garmin like any it made. Seed the plan first.
+ */
+export async function seedSessionsOnGarmin(dates: readonly string[]): Promise<void> {
+  await withDatabase(async (db) => {
+    const plans = await db.query<{ paces: PlanPaces }>(
+      `select paces from plan where user_id = ${runnerId} and status = 'active'`,
+      [runner.email],
+    );
+    const paces = plans.rows[0]?.paces;
+    if (!paces) throw new Error("Seed a plan before putting its sessions on Garmin");
+    const { rows } = await db.query<{
+      id: string;
+      date: string;
+      type: SessionType;
+      title: string | null;
+      target: SessionTarget;
+      steps: SessionSteps;
+    }>(
+      `select id, date::text as date, type, title, target, steps from plan_session
+       where user_id = ${runnerId} and date = any($2::date[])
+       order by date, id`,
+      [runner.email, dates],
+    );
+    const missing = dates.filter((date) => !rows.some((row) => row.date === date));
+    if (missing.length > 0) throw new Error(`No session to put on Garmin on ${missing.join(", ")}`);
+
+    for (const row of rows) {
+      seededOnGarmin += 1;
+      const workout = garminWorkout({
+        name: garminWorkoutName(row, defaultSettings.units),
+        steps: row.steps,
+        paces,
+      });
+      await db.query(
+        `update plan_session
+         set garmin_workout_id = $2, garmin_schedule_id = $3, garmin_date = date, garmin_hash = $4
+         where id = $1`,
+        [
+          row.id,
+          String(SEEDED_WORKOUT_IDS + seededOnGarmin),
+          String(SEEDED_SCHEDULE_IDS + seededOnGarmin),
+          createHash("sha256").update(JSON.stringify(workout)).digest("hex"),
+        ],
+      );
+    }
+  });
 }
