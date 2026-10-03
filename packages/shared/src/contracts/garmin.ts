@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { activityDetailSchema } from "./activity";
+import { errorCodeSchema } from "../error-codes";
 import { garminRecordSchema } from "./personal-bests";
+import { paceBandSchema } from "./plan";
 import { problemSchema } from "./problem";
 
 /**
@@ -188,3 +190,179 @@ export const garminSeriesResponseSchema = z
   })
   .strict();
 export type GarminSeriesResponse = z.infer<typeof garminSeriesResponseSchema>;
+
+/** Garmin's ids for a workout and for one scheduled instance of it on the calendar. */
+export const garminWorkoutIdSchema = z.number().int().positive();
+export const garminScheduleIdSchema = z.number().int().positive();
+
+/**
+ * Garmin's step types the service builds with garminconnect's workout helpers: a "Run" step on the watch
+ * is Garmin's "interval".
+ */
+export const garminStepTypeSchema = z.enum(["warmup", "interval", "recovery", "cooldown"]);
+export type GarminStepType = z.infer<typeof garminStepTypeSchema>;
+
+/** One step of a Garmin workout: ends after a distance or a time, with a pace target or open. */
+export const garminWorkoutStepSchema = z
+  .object({
+    type: garminStepTypeSchema,
+    distanceM: z.number().int().positive().nullable(),
+    durationS: z.number().int().positive().nullable(),
+    /** Seconds per km, fast end first, as the plan stores it; the service converts to m/s. Null: open. */
+    pace: paceBandSchema.nullable(),
+  })
+  .strict()
+  .refine(
+    (step) => (step.distanceM === null) !== (step.durationS === null),
+    "A step is by distance or by time",
+  );
+export type GarminWorkoutStep = z.infer<typeof garminWorkoutStepSchema>;
+
+export const garminWorkoutRepeatSchema = z
+  .object({
+    repeat: z.number().int().min(2),
+    steps: z.array(garminWorkoutStepSchema).min(1),
+  })
+  .strict();
+export type GarminWorkoutRepeat = z.infer<typeof garminWorkoutRepeatSchema>;
+
+/** Garmin's workout name limit is longer; this keeps a name readable on a watch face. */
+export const GARMIN_WORKOUT_NAME_MAX = 60;
+
+/** A running workout as the engine's garminWorkout builds it from a session's steps and the plan's paces. */
+export const garminWorkoutSchema = z
+  .object({
+    name: z.string().min(1).max(GARMIN_WORKOUT_NAME_MAX),
+    /** The session's planned time at each zone's midpoint pace. */
+    estimatedDurationS: z.number().int().nonnegative(),
+    steps: z.array(z.union([garminWorkoutStepSchema, garminWorkoutRepeatSchema])).min(1),
+  })
+  .strict();
+export type GarminWorkout = z.infer<typeof garminWorkoutSchema>;
+
+/**
+ * One change to the runner's Garmin workouts and calendar. `ref` is the API's handle for it (a session id,
+ * or the schedule id of a workout the app did not create) and comes back on the result.
+ * - create: upload the workout, then schedule it on `date`.
+ * - move: unschedule `scheduleId` when set, then schedule `workoutId` on `date`.
+ * - remove: unschedule `scheduleId` when set, then delete `workoutId`. Only ever a workout the app made.
+ * - unschedule: take a workout the app did not create off the calendar; the workout itself stays.
+ * A 404 on unschedule or delete means it is already gone and counts as done.
+ */
+export const garminWorkoutActionSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("create"),
+      ref: z.string().min(1).max(64),
+      date: z.iso.date(),
+      workout: garminWorkoutSchema,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("move"),
+      ref: z.string().min(1).max(64),
+      workoutId: garminWorkoutIdSchema,
+      scheduleId: garminScheduleIdSchema.nullable(),
+      date: z.iso.date(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("remove"),
+      ref: z.string().min(1).max(64),
+      workoutId: garminWorkoutIdSchema,
+      scheduleId: garminScheduleIdSchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("unschedule"),
+      ref: z.string().min(1).max(64),
+      scheduleId: garminScheduleIdSchema,
+    })
+    .strict(),
+]);
+export type GarminWorkoutAction = z.infer<typeof garminWorkoutActionSchema>;
+export type GarminWorkoutActionKind = GarminWorkoutAction["action"];
+
+/** Actions per POST /workouts/sync: at most two paced calls each, a login and the calendar read stay inside the 60 s timeout. */
+export const GARMIN_WORKOUT_BATCH_MAX = 8;
+
+/**
+ * POST /workouts/sync: the actions in order under one login, then, unless the batch stopped, the workouts
+ * scheduled between calendarStart and calendarEnd (get_scheduled_workouts, one call per month touched).
+ */
+export const garminWorkoutSyncRequestSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    actions: z.array(garminWorkoutActionSchema).max(GARMIN_WORKOUT_BATCH_MAX),
+    calendarStart: z.iso.date(),
+    calendarEnd: z.iso.date(),
+  })
+  .strict();
+export type GarminWorkoutSyncRequest = z.infer<typeof garminWorkoutSyncRequestSchema>;
+
+/**
+ * What became of one action. done: it completed. gone: the workout it names no longer exists on Garmin
+ * (deleted in Garmin Connect), so the API forgets its ids and creates it again. failed: the failure that
+ * stopped the batch hit this action, possibly halfway. skipped: never tried, because the batch stopped
+ * first or ran out of its time budget.
+ */
+export const garminWorkoutOutcomeSchema = z.enum(["done", "gone", "failed", "skipped"]);
+export type GarminWorkoutOutcome = z.infer<typeof garminWorkoutOutcomeSchema>;
+
+/**
+ * One result per action, in request order. workoutId and scheduleId are what Garmin holds for the ref
+ * after the action, whatever the outcome: a create that uploaded but failed to schedule answers its
+ * workoutId with a null scheduleId, so the API stores it and the retry only schedules. For "skipped" they
+ * repeat the action's own ids (null for a create).
+ */
+export const garminWorkoutResultSchema = z
+  .object({
+    ref: z.string().min(1).max(64),
+    action: z.enum(["create", "move", "remove", "unschedule"]),
+    outcome: garminWorkoutOutcomeSchema,
+    workoutId: garminWorkoutIdSchema.nullable(),
+    scheduleId: garminScheduleIdSchema.nullable(),
+  })
+  .strict();
+export type GarminWorkoutResult = z.infer<typeof garminWorkoutResultSchema>;
+
+/** A workout on the runner's Garmin calendar: Garmin's calendarItems with itemType "workout". */
+export const garminCalendarEntrySchema = z
+  .object({
+    scheduleId: garminScheduleIdSchema,
+    workoutId: garminWorkoutIdSchema,
+    date: z.iso.date(),
+    title: z.string().nullable(),
+  })
+  .strict();
+export type GarminCalendarEntry = z.infer<typeof garminCalendarEntrySchema>;
+
+/**
+ * Why the batch stopped: the same code and retry delay a whole-request failure would answer. Writes are not
+ * idempotent, so a failure after the login answers 200 with the results so far instead of a problem; a
+ * failure of the login itself still answers the problem, with nothing done.
+ */
+export const garminWorkoutStopSchema = z
+  .object({
+    code: errorCodeSchema,
+    retryAfterSeconds: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type GarminWorkoutStop = z.infer<typeof garminWorkoutStopSchema>;
+
+export const garminWorkoutSyncResponseSchema = z
+  .object({
+    tokenBundle: garminTokenBundleSchema,
+    results: z.array(garminWorkoutResultSchema),
+    stopped: garminWorkoutStopSchema.nullable(),
+    /**
+     * Every workout scheduled in the calendar range, the app's own included; null when the batch stopped
+     * or the calendar read failed, which never fails the batch.
+     */
+    calendar: z.array(garminCalendarEntrySchema).nullable(),
+  })
+  .strict();
+export type GarminWorkoutSyncResponse = z.infer<typeof garminWorkoutSyncResponseSchema>;

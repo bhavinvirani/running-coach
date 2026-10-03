@@ -12,3 +12,5 @@ export * from "./contracts/import";
 export * from "./contracts/personal-bests";
 export * from "./contracts/goal";
 export * from "./contracts/plan";
+export * from "./contracts/sessions";
+export * from "./contracts/calendar";

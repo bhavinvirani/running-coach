@@ -622,7 +622,7 @@
                                       {
                                         "type": "integer",
                                         "exclusiveMinimum": 0,
-                                        "maximum": 9007199254740991
+                                        "maximum": 100000
                                       },
                                       {
                                         "type": "null"
@@ -634,7 +634,7 @@
                                       {
                                         "type": "integer",
                                         "exclusiveMinimum": 0,
-                                        "maximum": 9007199254740991
+                                        "maximum": 21600
                                       },
                                       {
                                         "type": "null"
@@ -656,10 +656,11 @@
                                   "repeat": {
                                     "type": "integer",
                                     "minimum": 2,
-                                    "maximum": 9007199254740991
+                                    "maximum": 50
                                   },
                                   "steps": {
                                     "minItems": 1,
+                                    "maxItems": 10,
                                     "type": "array",
                                     "items": {
                                       "type": "object",
@@ -690,7 +691,7 @@
                                             {
                                               "type": "integer",
                                               "exclusiveMinimum": 0,
-                                              "maximum": 9007199254740991
+                                              "maximum": 100000
                                             },
                                             {
                                               "type": "null"
@@ -702,7 +703,7 @@
                                             {
                                               "type": "integer",
                                               "exclusiveMinimum": 0,
-                                              "maximum": 9007199254740991
+                                              "maximum": 21600
                                             },
                                             {
                                               "type": "null"
@@ -740,7 +741,27 @@
                             "planned",
                             "done",
                             "missed",
-                            "moved"
+                            "moved",
+                            "skipped"
+                          ]
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "plan",
+                            "custom"
+                          ]
+                        },
+                        "title": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 60
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "activityId": {
@@ -754,6 +775,9 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "onGarmin": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -763,7 +787,10 @@
                         "steps",
                         "id",
                         "status",
-                        "activityId"
+                        "source",
+                        "title",
+                        "activityId",
+                        "onGarmin"
                       ],
                       "additionalProperties": false
                     }

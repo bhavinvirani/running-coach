@@ -5,34 +5,21 @@
     "repeat": {
       "type": "integer",
       "minimum": 2,
-      "maximum": 50
+      "maximum": 9007199254740991
     },
     "steps": {
       "minItems": 1,
-      "maxItems": 10,
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "kind": {
+          "type": {
             "type": "string",
             "enum": [
               "warmup",
-              "run",
-              "work",
+              "interval",
               "recovery",
               "cooldown"
-            ]
-          },
-          "zone": {
-            "type": "string",
-            "enum": [
-              "easy",
-              "marathon",
-              "threshold",
-              "interval",
-              "repetition",
-              "race"
             ]
           },
           "distanceM": {
@@ -40,7 +27,7 @@
               {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 100000
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -52,7 +39,34 @@
               {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 21600
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pace": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "fastSPerKm": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "slowSPerKm": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "fastSPerKm",
+                  "slowSPerKm"
+                ],
+                "additionalProperties": false
               },
               {
                 "type": "null"
@@ -61,10 +75,10 @@
           }
         },
         "required": [
-          "kind",
-          "zone",
+          "type",
           "distanceM",
-          "durationS"
+          "durationS",
+          "pace"
         ],
         "additionalProperties": false
       }

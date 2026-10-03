@@ -20,6 +20,9 @@ export const errorMessages: Record<ErrorCode, string> = {
   claude_key_missing: "No Claude API key is set. Add one in Settings.",
   claude_key_invalid: "Claude rejected your API key. Update it in Settings.",
   claude_unavailable: "Claude is not responding. Try again in a few minutes.",
+  plan_missing: "Workouts read their paces from your plan. Set a goal first.",
+  session_locked:
+    "This session can no longer change: it is past, done or skipped. Refresh to see it.",
 };
 
 export const networkErrorMessage =

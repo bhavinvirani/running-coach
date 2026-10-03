@@ -138,7 +138,9 @@
             "garmin_mfa_required",
             "claude_key_missing",
             "claude_key_invalid",
-            "claude_unavailable"
+            "claude_unavailable",
+            "plan_missing",
+            "session_locked"
           ]
         },
         {

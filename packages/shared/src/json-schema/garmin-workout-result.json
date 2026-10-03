@@ -2,45 +2,47 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
-    "kind": {
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "action": {
       "type": "string",
       "enum": [
-        "warmup",
-        "run",
-        "work",
-        "recovery",
-        "cooldown"
+        "create",
+        "move",
+        "remove",
+        "unschedule"
       ]
     },
-    "zone": {
+    "outcome": {
       "type": "string",
       "enum": [
-        "easy",
-        "marathon",
-        "threshold",
-        "interval",
-        "repetition",
-        "race"
+        "done",
+        "gone",
+        "failed",
+        "skipped"
       ]
     },
-    "distanceM": {
+    "workoutId": {
       "anyOf": [
         {
           "type": "integer",
           "exclusiveMinimum": 0,
-          "maximum": 100000
+          "maximum": 9007199254740991
         },
         {
           "type": "null"
         }
       ]
     },
-    "durationS": {
+    "scheduleId": {
       "anyOf": [
         {
           "type": "integer",
           "exclusiveMinimum": 0,
-          "maximum": 21600
+          "maximum": 9007199254740991
         },
         {
           "type": "null"
@@ -49,10 +51,11 @@
     }
   },
   "required": [
-    "kind",
-    "zone",
-    "distanceM",
-    "durationS"
+    "ref",
+    "action",
+    "outcome",
+    "workoutId",
+    "scheduleId"
   ],
   "additionalProperties": false
 }

@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "string",
   "enum": [
-    "planned",
-    "done",
-    "missed",
-    "moved",
-    "skipped"
+    "easy",
+    "intervals",
+    "tempo",
+    "long",
+    "race_practice"
   ]
 }

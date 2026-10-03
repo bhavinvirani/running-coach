@@ -87,7 +87,10 @@ const planWeek = {
       ...generatedSession,
       id: "4d3a8a3c-2f8e-4c6d-9c2a-8d9c4a2e3f44",
       status: "planned",
+      source: "plan",
+      title: null,
       activityId: null,
+      onGarmin: false,
     },
   ],
 };
