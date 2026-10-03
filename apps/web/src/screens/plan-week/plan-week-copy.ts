@@ -8,4 +8,8 @@ export const planWeekCopy = {
   noSuchWeek: (number: string) => `Your plan has no week ${number}.`,
   noPlan: "You have no plan yet.",
   openPlan: "Open plan",
+  add: "Add",
+  /** Add's name for a screen reader, which hears seven of them: "Add a workout on Thu 8 Oct". */
+  addOn: (day: string) => `Add a workout on ${day}`,
+  skipped: "Skipped",
 } as const;

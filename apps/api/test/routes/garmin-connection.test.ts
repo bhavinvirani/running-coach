@@ -2,10 +2,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { connectGarminResponseSchema, ErrorCode } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
+import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
+import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { decrypt } from "../../src/lib/crypto";
 import { connectGarminLimiter } from "../../src/routes/garmin";
 import { syncLimiter } from "../../src/routes/sync";
@@ -13,10 +15,24 @@ import { syncGarmin } from "../../src/services/garmin-sync";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import { connectGarmin, createLongRun, fixtureOf, fixturesSentTo, garminBundle } from "../seed";
 
-// Against the Garmin service in fixture mode: the bundle picks its answer (see test/seed.ts).
+// Against the Garmin service in fixture mode: the bundle picks its answer (see test/seed.ts). pg-boss runs
+// without workers, so the workout push a connect queues stays queued.
 
 const app = createTestApp();
 const PATH = "/api/garmin/connection";
+
+beforeAll(async () => {
+  const boss = await startBoss();
+  await boss.createQueue(pushQueue.name, pushQueue.queue);
+});
+
+afterAll(async () => {
+  await stopBoss();
+});
+
+async function pushJobs(userId: string) {
+  return getBoss().findJobs(pushQueue.name, { key: userId });
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -50,6 +66,25 @@ describe("PUT /api/garmin/connection", () => {
     expect(row).toMatchObject({ status: "ok", lastError: null, lastSyncAt: null });
     expect(row.tokenBundleEnc.startsWith("v1:")).toBe(true);
     expect(decrypt(row.tokenBundleEnc, userId)).toBe(garminBundle());
+  });
+
+  it("queues one workout push once the login works, and none when the check fails (reconnect)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+
+    expectProblem(
+      await agent.put(PATH).send({ tokenBundle: garminBundle("expired") }),
+      409,
+      ErrorCode.garminAuthExpired,
+    );
+    expect(await pushJobs(userId)).toEqual([]);
+    await agent.put(PATH).send({ tokenBundle: garminBundle() });
+    await agent.put(PATH).send({ tokenBundle: garminBundle() });
+
+    // The second connect's push folds into the one waiting.
+    expect((await pushJobs(userId)).map((job) => [job.state, job.data])).toEqual([
+      ["created", { userId }],
+    ]);
   });
 
   it("never sends the bundle back, plain or encrypted", async () => {

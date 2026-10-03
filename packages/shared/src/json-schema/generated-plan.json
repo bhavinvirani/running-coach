@@ -406,7 +406,7 @@
                               {
                                 "type": "integer",
                                 "exclusiveMinimum": 0,
-                                "maximum": 9007199254740991
+                                "maximum": 100000
                               },
                               {
                                 "type": "null"
@@ -418,7 +418,7 @@
                               {
                                 "type": "integer",
                                 "exclusiveMinimum": 0,
-                                "maximum": 9007199254740991
+                                "maximum": 21600
                               },
                               {
                                 "type": "null"
@@ -440,10 +440,11 @@
                           "repeat": {
                             "type": "integer",
                             "minimum": 2,
-                            "maximum": 9007199254740991
+                            "maximum": 50
                           },
                           "steps": {
                             "minItems": 1,
+                            "maxItems": 10,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -474,7 +475,7 @@
                                     {
                                       "type": "integer",
                                       "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
+                                      "maximum": 100000
                                     },
                                     {
                                       "type": "null"
@@ -486,7 +487,7 @@
                                     {
                                       "type": "integer",
                                       "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
+                                      "maximum": 21600
                                     },
                                     {
                                       "type": "null"

@@ -5,6 +5,7 @@
     "planned",
     "done",
     "missed",
-    "moved"
+    "moved",
+    "skipped"
   ]
 }

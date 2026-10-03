@@ -2,6 +2,7 @@ import type { CronSyncResponse } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { garminConnection } from "../db/schema";
+import { enqueuePushWorkouts } from "../jobs/push-workouts-queue";
 import { enqueueSyncGarmin } from "../jobs/sync-garmin-queue";
 import { logger } from "../lib/logger";
 
@@ -16,7 +17,8 @@ const log = logger.child({ module: "daily-sync" });
  * it, and a job a day would be one more failed Garmin login each time. A user in the hour after a Garmin
  * 429 is queued all the same: the job's openGarminAccount refuses without calling Garmin and defers itself
  * to the hour's end. A failed send throws, and the cron's retry queues the rest while the users already
- * queued fold into their jobs.
+ * queued fold into their jobs. Beside each sync it queues the user's workout push, keyed the same way, so
+ * the next seven days reach the watch even without an edit; `queued` counts the syncs.
  */
 export async function queueDailySyncs({ now }: { now: Date }): Promise<CronSyncResponse> {
   const users = await db
@@ -29,6 +31,7 @@ export async function queueDailySyncs({ now }: { now: Date }): Promise<CronSyncR
   for (const { userId } of users) {
     const id = await enqueueSyncGarmin({ userId, date });
     if (id) queued += 1;
+    await enqueuePushWorkouts({ userId }, { date });
   }
   const result = { connected: users.length, queued };
   log.info({ ...result, date }, "daily syncs queued");

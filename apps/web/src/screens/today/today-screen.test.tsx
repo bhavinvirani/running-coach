@@ -1,20 +1,30 @@
-import type { Activity, MeResponse, PersonalBestsResponse } from "@running-coach/shared";
+import type {
+  Activity,
+  CalendarResponse,
+  MeResponse,
+  PersonalBestsResponse,
+  PlanSession,
+} from "@running-coach/shared";
 import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Outlet } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { personalBestsKey } from "@/api/personal-bests";
 import { detailKey } from "@/api/query-keys";
 import { useForgetSyncOutcomeOnReconnect } from "@/api/sync";
 import { errorMessages } from "@/lib/errors";
 import { MISSING } from "@/lib/format";
-import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
+import { json, never, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
 import {
   activityFixture,
+  calendarFixture,
+  customSessionFixture,
+  garminPushStatusFixture,
   meFixture,
   personalBestFixture,
   personalBestsFixture,
+  planSessionId,
 } from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { TodayScreen } from "./today-screen";
@@ -41,7 +51,15 @@ type FakeTodayApi = {
   meAfterSync?: MeResponse;
 };
 
-/** /api/me, GET /api/activities/latest, GET /api/personal-bests and POST /api/sync, in memory. */
+/** GET /api/calendar of a runner without a plan: no paces, so Today shows no next 7 days. */
+function noPlanCalendar({ query }: FakeRequest): Response {
+  return json(calendarFixture(query.get("from") ?? "2026-09-27", { paces: null }));
+}
+
+/**
+ * /api/me, GET /api/activities/latest, GET /api/personal-bests, POST /api/sync and a calendar without a
+ * plan, in memory.
+ */
 function fakeTodayApi({
   me = meFixture(),
   latest = activityFixture(),
@@ -59,7 +77,9 @@ function fakeTodayApi({
     current = synced;
     currentBests = bestsAfterSync ?? currentBests;
   };
-  return stubFetch(({ method, path }) => {
+  return stubFetch((request) => {
+    const { method, path } = request;
+    if (method === "GET" && path === "/api/calendar") return noPlanCalendar(request);
     if (method === "GET" && path === "/api/me") {
       return typeof currentMe === "function" ? currentMe() : json(currentMe);
     }
@@ -125,7 +145,9 @@ describe("TodayScreen", () => {
 
   it("explains a failed first load and loads again on Retry", async () => {
     let attempts = 0;
-    stubFetch(({ path }) => {
+    stubFetch((request) => {
+      const { path } = request;
+      if (path === "/api/calendar") return noPlanCalendar(request);
       if (path === "/api/me") return json(meFixture());
       if (path === "/api/personal-bests") return json(personalBestsFixture());
       attempts += 1;
@@ -144,7 +166,9 @@ describe("TodayScreen", () => {
 
   it("keeps the latest run and offers Retry when a background reload fails", async () => {
     let failing = false;
-    stubFetch(({ path }) => {
+    stubFetch((request) => {
+      const { path } = request;
+      if (path === "/api/calendar") return noPlanCalendar(request);
       if (path === "/api/me") return json(meFixture());
       if (path === "/api/personal-bests") return json(personalBestsFixture());
       return failing ? problem(503, ErrorCode.internal) : json({ activity: activityFixture() });
@@ -763,5 +787,454 @@ describe("TodayScreen", () => {
     expect(screen.getByRole("button", { name: "Sync now" })).toBeEnabled();
     expect(screen.queryByRole("link", { name: "Reconnect Garmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+/** Thu 8 Oct 2026 in London, BST: the plan's first week, its intervals today. */
+const WEEK_FROM = "2026-10-08";
+
+/** The calendar from Thu 8 Oct with `change` applied to each session; the intervals already on Garmin. */
+function weekCalendar(
+  overrides: Partial<CalendarResponse> & { extra?: PlanSession[] } = {},
+  change: (session: PlanSession) => PlanSession = (session) => session,
+): CalendarResponse {
+  const calendar = calendarFixture(WEEK_FROM, overrides);
+  return {
+    ...calendar,
+    days: calendar.days.map((day) => ({
+      ...day,
+      sessions: day.sessions.map((session) =>
+        change(session.date === WEEK_FROM ? { ...session, onGarmin: true } : session),
+      ),
+    })),
+  };
+}
+
+type FakeWeekApi = {
+  /** GET /api/me: the runner, or one per read (the login found expired after the first). */
+  me?: MeResponse | (() => MeResponse);
+  /** GET /api/calendar: the week, or an answer per request. */
+  calendar?: CalendarResponse | ((request: FakeRequest) => Response | Promise<Response>);
+  /** POST /api/calendar/unschedule; by default it takes the workout off and answers the new status. */
+  unschedule?: () => Response | Promise<Response>;
+};
+
+/**
+ * Today with its latest run and no bests, and the calendar of the week from Thu 8 Oct. Send to Garmin
+ * starts a push the calendar then reports; Unschedule takes the workout off the stored list.
+ */
+function fakeWeekApi({
+  me = meFixture(),
+  calendar = weekCalendar(),
+  unschedule,
+}: FakeWeekApi = {}) {
+  let current = calendar;
+  return stubFetch((request) => {
+    const { method, path } = request;
+    if (method === "GET" && path === "/api/me") return json(typeof me === "function" ? me() : me);
+    if (method === "GET" && path === "/api/activities/latest") {
+      return json({ activity: activityFixture() });
+    }
+    if (method === "GET" && path === "/api/personal-bests") return json(personalBestsFixture());
+    if (method === "GET" && path === "/api/calendar") {
+      return typeof current === "function" ? current(request) : json(current);
+    }
+    if (typeof current === "function") return notFound();
+    if (method === "POST" && path === "/api/calendar/push") {
+      current = { ...current, garmin: { ...current.garmin, pushing: true, error: null } };
+      return json({ garmin: current.garmin });
+    }
+    if (method === "POST" && path === "/api/calendar/unschedule") {
+      if (unschedule) return unschedule();
+      current = { ...current, garmin: { ...current.garmin, others: [] } };
+      return json({ garmin: current.garmin });
+    }
+    return notFound();
+  });
+}
+
+/** The week's region once the calendar has loaded: its day list or its alert is on screen. */
+async function loadedWeek() {
+  const week = await screen.findByRole("region", { name: "Next 7 days" });
+  await waitFor(() => expect(week).toHaveAttribute("aria-busy", "false"));
+  return week;
+}
+
+async function weekRows() {
+  return within(await loadedWeek()).getAllByRole("listitem");
+}
+
+describe("TodayScreen next 7 days", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lists today and the six days after it, each session opening its screen with distance, time and Garmin state", async () => {
+    const calls = fakeWeekApi();
+    renderToday();
+
+    const rows = await weekRows();
+    expect(rows.map((row) => row.querySelector("time")?.textContent)).toEqual([
+      "Today",
+      "Tomorrow",
+      "Sat 10",
+      "Sun 11",
+      "Mon 12",
+      "Tue 13",
+      "Wed 14",
+    ]);
+    expect(
+      within(rows[0]!).getByRole("link", { name: "Intervals, 11.6 km, 1:04:00, On Garmin" }),
+    ).toHaveAttribute("href", `/plan/sessions/${planSessionId("2026-10-08")}`);
+    expect(
+      within(rows[1]!).getByRole("link", { name: "Easy, 5.0 km, 30:00, Waiting to send" }),
+    ).toBeInTheDocument();
+    expect(within(rows[2]!).getByText("Rest")).toBeInTheDocument();
+    expect(
+      within(rows[3]!).getByRole("link", { name: "Long run, 14.0 km, 1:24:30, Waiting to send" }),
+    ).toBeInTheDocument();
+    // Strength has no steps a watch workout can hold: no Garmin state at all.
+    expect(within(rows[6]!).getByRole("link", { name: "Strength, 30:00" })).toBeInTheDocument();
+    const calendarCall = calls.find((call) => call.path === "/api/calendar");
+    expect(calendarCall?.query.get("from")).toBe("2026-10-08");
+    expect(calendarCall?.query.get("to")).toBe("2026-10-14");
+  });
+
+  it("offers Add on every day, opening the workout builder on that date", async () => {
+    fakeWeekApi();
+    const { router } = renderToday();
+
+    const rows = await weekRows();
+    for (const row of rows) {
+      expect(within(row).getByRole("link", { name: /^Add a workout on / })).toBeInTheDocument();
+    }
+    const add = within(rows[2]!).getByRole("link", { name: "Add a workout on Sat 10 Oct" });
+    expect(add).toHaveAttribute("href", "/plan/sessions/new?date=2026-10-10");
+
+    await userEvent.click(add);
+    expect(router.state.location.pathname).toBe("/plan/sessions/new");
+    expect(router.state.location.search).toBe("?date=2026-10-10");
+  });
+
+  it("names a custom workout by its title and reads a skipped session as Skipped, without distance", async () => {
+    fakeWeekApi({
+      calendar: weekCalendar({ extra: [customSessionFixture()] }, (session) =>
+        session.date === "2026-10-09" && session.source === "plan"
+          ? { ...session, status: "skipped" }
+          : session,
+      ),
+    });
+    renderToday();
+
+    const rows = await weekRows();
+    expect(
+      within(rows[1]!)
+        .getAllByRole("link", { name: /, / })
+        .map((link) => link.getAttribute("aria-label")),
+    ).toEqual(["Easy, Skipped", "Hill reps, Tempo, 7.1 km, 41:04, Waiting to send"]);
+    expect(within(rows[1]!).getByText("Easy").parentElement).toHaveClass("text-ink-2");
+  });
+
+  it("names the type of a titled custom workout beside its type colour, untitled ones by the type alone (type name)", async () => {
+    const titled = customSessionFixture();
+    const untitled = customSessionFixture({
+      id: "c0ffee00-0000-4000-8000-000000000002",
+      date: "2026-10-10",
+      type: "long",
+      title: null,
+    });
+    fakeWeekApi({ calendar: weekCalendar({ extra: [titled, untitled] }) });
+    renderToday();
+
+    const rows = await weekRows();
+    const link = within(rows[1]!).getByRole("link", { name: /^Hill reps,/ });
+    expect(link).toHaveAccessibleName("Hill reps, Tempo, 7.1 km, 41:04, Waiting to send");
+    expect(within(link).getByText("Hill reps").querySelector("span")).toHaveClass("bg-type-tempo");
+    expect(within(link).getByText("Tempo")).toHaveClass("text-caption");
+    expect(
+      within(rows[2]!).getByRole("link", { name: "Long run, 7.1 km, 41:04, Waiting to send" }),
+    ).toBeInTheDocument();
+    expect(within(rows[2]!).getAllByText(/Long run/)).toHaveLength(1);
+  });
+
+  it("puts each session's Garmin state on a line of its own under distance and time (caption line)", async () => {
+    fakeWeekApi();
+    renderToday();
+
+    const rows = await weekRows();
+    const link = within(rows[3]!).getByRole("link", { name: /^Long run,/ });
+    const lines = Array.from(link.children).map((line) => line.textContent);
+    expect(lines).toEqual(["Long run", "14.0 km·1:24:30", "Waiting to send"]);
+    expect(within(link).getByText("Waiting to send")).toHaveClass("text-caption", "text-ink-2");
+  });
+
+  it("leaves the next 7 days out for a runner without an active plan (no plan)", async () => {
+    fakeWeekApi({ calendar: weekCalendar({ paces: null }) });
+    renderToday();
+
+    expect(await screen.findByRole("region", { name: "Latest run" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.queryByRole("region", { name: "Next 7 days" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send to Garmin" })).not.toBeInTheDocument();
+  });
+
+  it("shows the week's skeleton in its final layout while the calendar loads", async () => {
+    fakeWeekApi({ calendar: () => never() });
+    renderToday();
+
+    expect(await screen.findByRole("region", { name: "Latest run" })).toBeInTheDocument();
+    const week = screen.getByRole("region", { name: "Next 7 days" });
+    expect(
+      within(week).getByRole("status", { name: "Loading the next 7 days" }),
+    ).toBeInTheDocument();
+    expect(within(week).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("explains a failed calendar load beside the latest run and loads it again on Retry", async () => {
+    let attempts = 0;
+    fakeWeekApi({
+      calendar: () => {
+        attempts += 1;
+        return attempts === 1 ? problem(500, ErrorCode.internal) : json(weekCalendar());
+      },
+    });
+    renderToday();
+
+    const week = await loadedWeek();
+    expect(within(week).getByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(screen.getByRole("region", { name: "Latest run" })).toBeInTheDocument();
+    await userEvent.click(within(week).getByRole("button", { name: "Retry" }));
+
+    expect(await weekRows()).toHaveLength(7);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("offers Send to Garmin, which queues a push and then says it is sending", async () => {
+    const calls = fakeWeekApi();
+    renderToday();
+    const week = await loadedWeek();
+
+    await userEvent.click(within(week).getByRole("button", { name: "Send to Garmin" }));
+
+    expect(await within(week).findByRole("status")).toHaveTextContent(
+      "Sending workouts to Garmin.",
+    );
+    expect(within(week).queryByRole("button", { name: "Send to Garmin" })).not.toBeInTheDocument();
+    expect(
+      await within(week).findByRole("link", { name: "Easy, 5.0 km, 30:00, Sending" }),
+    ).toBeInTheDocument();
+    expect(calls.filter((call) => call.method === "POST")).toEqual([
+      expect.objectContaining({ path: "/api/calendar/push", body: undefined }),
+    ]);
+  });
+
+  it("says why the last push stopped, marks the sessions Not sent and retries with Send to Garmin (Garmin outage)", async () => {
+    fakeWeekApi({
+      calendar: weekCalendar({
+        garmin: garminPushStatusFixture({ error: ErrorCode.garminUnavailable }),
+      }),
+    });
+    renderToday();
+    const week = await loadedWeek();
+
+    expect(within(week).getByRole("alert")).toHaveTextContent(errorMessages.garmin_unavailable);
+    expect(
+      within(week).getByRole("link", { name: "Easy, 5.0 km, 30:00, Not sent" }),
+    ).toBeInTheDocument();
+    await userEvent.click(within(week).getByRole("button", { name: "Send to Garmin" }));
+
+    expect(await within(week).findByRole("status")).toHaveTextContent(
+      "Sending workouts to Garmin.",
+    );
+    expect(within(week).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("points to Settings in one sentence when Garmin is not connected, with sessions Not on Garmin", async () => {
+    fakeWeekApi({
+      me: notConnectedMe,
+      calendar: weekCalendar(
+        { garmin: garminPushStatusFixture({ connection: "not_connected", pushedAt: null }) },
+        (session) => ({ ...session, onGarmin: false }),
+      ),
+    });
+    renderToday();
+    const week = await loadedWeek();
+
+    expect(within(week).getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
+    expect(
+      within(week).getByRole("link", { name: "Intervals, 11.6 km, 1:04:00, Not on Garmin" }),
+    ).toBeInTheDocument();
+    expect(within(week).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("adds no push line while the login is expired, Reconnect Garmin already says it (token expiry)", async () => {
+    fakeWeekApi({
+      me: expiredMe,
+      calendar: weekCalendar({ garmin: garminPushStatusFixture({ connection: "expired" }) }),
+    });
+    renderToday();
+    const week = await loadedWeek();
+
+    expect(header()).toContainElement(screen.getByRole("link", { name: "Reconnect Garmin" }));
+    expect(within(week).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(week).queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      within(week).getByRole("link", { name: "Easy, 5.0 km, 30:00, Not on Garmin" }),
+    ).toBeInTheDocument();
+  });
+
+  it("reads /api/me again when the calendar finds the login expired first, so the header says Reconnect Garmin (token expiry)", async () => {
+    let meReads = 0;
+    const calls = fakeWeekApi({
+      me: () => {
+        meReads += 1;
+        return meReads === 1 ? meFixture() : expiredMe;
+      },
+      calendar: weekCalendar({ garmin: garminPushStatusFixture({ connection: "expired" }) }),
+    });
+    renderToday();
+    const week = await loadedWeek();
+
+    expect(await screen.findByRole("link", { name: "Reconnect Garmin" })).toBeInTheDocument();
+    expect(header()).toContainElement(screen.getByRole("link", { name: "Reconnect Garmin" }));
+    expect(screen.getByText(errorMessages.garmin_auth_expired)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sync now" })).not.toBeInTheDocument();
+    expect(
+      within(week).getByRole("link", { name: "Easy, 5.0 km, 30:00, Not on Garmin" }),
+    ).toBeInTheDocument();
+    expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(2);
+  });
+
+  it("lists the Garmin workouts the app did not create and unschedules one", async () => {
+    const calls = fakeWeekApi({
+      calendar: weekCalendar({
+        garmin: garminPushStatusFixture({
+          others: [{ scheduleId: 9001, date: "2026-10-09", title: "Club tempo" }],
+        }),
+      }),
+    });
+    renderToday();
+
+    const others = await screen.findByRole("region", { name: "Also on your Garmin calendar" });
+    expect(within(others).getByText("Club tempo")).toBeInTheDocument();
+    expect(within(others).getByText("Fri 9 Oct")).toBeInTheDocument();
+    await userEvent.click(
+      within(others).getByRole("button", { name: "Unschedule Club tempo on Fri 9 Oct" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Also on your Garmin calendar" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(calls.find((call) => call.path === "/api/calendar/unschedule")?.body).toEqual({
+      scheduleIds: [9001],
+    });
+  });
+
+  it("keeps a workout that failed to unschedule with the reason beside it (Garmin 429)", async () => {
+    fakeWeekApi({
+      calendar: weekCalendar({
+        garmin: garminPushStatusFixture({
+          others: [
+            { scheduleId: 9001, date: "2026-10-09", title: "Club tempo" },
+            { scheduleId: 9002, date: "2026-10-11", title: null },
+          ],
+        }),
+      }),
+      unschedule: () => problem(429, ErrorCode.garminRateLimited),
+    });
+    renderToday();
+
+    const others = await screen.findByRole("region", { name: "Also on your Garmin calendar" });
+    await userEvent.click(
+      within(others).getByRole("button", { name: "Unschedule Untitled workout on Sun 11 Oct" }),
+    );
+
+    const [first, second] = within(others).getAllByRole("listitem");
+    expect(await within(second!).findByRole("alert")).toHaveTextContent(
+      errorMessages.garmin_rate_limited,
+    );
+    expect(within(first!).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(second!).getByRole("button", { name: /^Unschedule/ })).toBeEnabled();
+  });
+
+  it("unschedules one workout at a time and keeps each failure beside its workout (double tap)", async () => {
+    let answer: (response: Response) => void = () => {};
+    const calls = fakeWeekApi({
+      calendar: weekCalendar({
+        garmin: garminPushStatusFixture({
+          others: [
+            { scheduleId: 9001, date: "2026-10-09", title: "Club tempo" },
+            { scheduleId: 9002, date: "2026-10-11", title: null },
+          ],
+        }),
+      }),
+      unschedule: () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    renderToday();
+
+    const others = await screen.findByRole("region", { name: "Also on your Garmin calendar" });
+    const [first, second] = within(others).getAllByRole("listitem");
+    await userEvent.click(within(first!).getByRole("button", { name: /^Unschedule/ }));
+
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toHaveTextContent(
+      "Unscheduling…",
+    );
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toBeDisabled();
+    expect(within(second!).getByRole("button", { name: /^Unschedule/ })).toBeDisabled();
+    await userEvent.click(within(second!).getByRole("button", { name: /^Unschedule/ }));
+    expect(calls.filter((call) => call.path === "/api/calendar/unschedule")).toHaveLength(1);
+
+    answer(problem(429, ErrorCode.garminRateLimited));
+    expect(await within(first!).findByRole("alert")).toHaveTextContent(
+      errorMessages.garmin_rate_limited,
+    );
+    await userEvent.click(within(second!).getByRole("button", { name: /^Unschedule/ }));
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toBeDisabled();
+    answer(problem(502, ErrorCode.garminUnavailable));
+
+    expect(await within(second!).findByRole("alert")).toHaveTextContent(
+      errorMessages.garmin_unavailable,
+    );
+    expect(within(first!).getByRole("alert")).toHaveTextContent(errorMessages.garmin_rate_limited);
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toBeEnabled();
+    expect(
+      calls.filter((call) => call.path === "/api/calendar/unschedule").map((call) => call.body),
+    ).toEqual([{ scheduleIds: [9001] }, { scheduleIds: [9002] }]);
+  });
+
+  it("starts the week on the runner's date, not the device's UTC one (time zones)", async () => {
+    // 23:30 UTC on Wed 7 Oct is 00:30 on Thu 8 Oct in London.
+    vi.setSystemTime(new Date("2026-10-07T23:30:00Z"));
+    const calls = fakeWeekApi();
+    renderToday();
+
+    const rows = await weekRows();
+    expect(rows[0]?.querySelector("time")).toHaveAttribute("datetime", "2026-10-08");
+    expect(calls.find((call) => call.path === "/api/calendar")?.query.get("from")).toBe(
+      "2026-10-08",
+    );
+  });
+
+  it("shows distances in mi when the runner uses miles (unit conversion)", async () => {
+    fakeWeekApi({ me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }) });
+    renderToday();
+
+    const rows = await weekRows();
+    expect(
+      within(rows[0]!).getByRole("link", { name: "Intervals, 7.2 mi, 1:04:00, On Garmin" }),
+    ).toBeInTheDocument();
   });
 });

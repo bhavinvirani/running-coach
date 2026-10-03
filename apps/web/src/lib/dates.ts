@@ -34,3 +34,14 @@ export function addDays(date: string, days: number): string {
   day.setUTCDate(day.getUTCDate() + days);
   return isoDate(day);
 }
+
+/** Whole days from one date to another: "2026-10-05" to "2026-10-08" → 3; negative when `to` is earlier. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+/** The Monday of the Monday-to-Sunday week that holds the date: "2026-10-08" (a Thursday) → "2026-10-05". */
+export function weekStart(date: string): string {
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return addDays(date, -((weekday + 6) % 7));
+}

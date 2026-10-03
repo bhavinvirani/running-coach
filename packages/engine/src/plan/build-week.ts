@@ -8,6 +8,7 @@ import type {
   Weekday,
 } from "@running-coach/shared";
 import { DISTANCE_METERS } from "@running-coach/shared";
+import { HARD_SESSION_TYPES } from "../constants";
 import { addDays, daysBetween, weekdayIndex } from "../dates";
 import { hardShareHolds, hardTimeS } from "../rules/easy-share";
 import { weekLayout } from "../rules/hard-days";
@@ -124,14 +125,6 @@ interface Placed {
 
 const KEEPS_BASELINE_LONGEST: ReadonlySet<PlanPhase> = new Set(["base", "build", "peak"]);
 
-export const HARD_TYPES: ReadonlySet<GeneratedSession["type"]> = new Set([
-  "long",
-  "intervals",
-  "tempo",
-  "race_practice",
-  "race",
-]);
-
 export const sumM = (sessions: readonly GeneratedSession[]) =>
   sessions.reduce((sum, session) => sum + session.target.distanceM, 0);
 
@@ -212,7 +205,7 @@ export function finishWeek(
   unsorted: readonly GeneratedSession[],
 ): FinishedWeek {
   const sessions = [...unsorted].sort((a, b) => daysBetween(b.date, a.date));
-  const hard = sessions.filter((session) => HARD_TYPES.has(session.type));
+  const hard = sessions.filter((session) => HARD_SESSION_TYPES.has(session.type));
   return {
     week: { number, startDate: weekStart, phase, distanceM: sumM(sessions), sessions },
     longestM: Math.max(

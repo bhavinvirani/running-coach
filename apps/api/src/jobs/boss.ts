@@ -56,11 +56,16 @@ export const HELD_BACK_AFTER_S = 60;
 export interface PendingJob {
   /** Some pending job of the key waits out a retry's backoff, or is not due for HELD_BACK_AFTER_S. */
   heldBack: boolean;
+  /**
+   * Some pending job of the key runs, or waits its turn within HELD_BACK_AFTER_S, whatever its siblings'
+   * states: the stately queue keeps one job per state, so a fresh send runs beside one parked in retry.
+   */
+  due: boolean;
 }
 
 /**
  * The jobs of the queue under this singleton key that pg-boss can still run, folded into one answer: null
- * when there is none, else whether they are held back rather than waiting their turn or running.
+ * when there is none, else whether any is held back and whether any runs or waits its turn.
  */
 export async function findPendingJob(name: string, key: string): Promise<PendingJob | null> {
   // Without `queued`, findJobs returns every state; `queued` alone would leave out the active job.
@@ -73,6 +78,11 @@ export async function findPendingJob(name: string, key: string): Promise<Pending
     heldBack: jobs.some(
       (job) =>
         job.state === "retry" || (job.state === "created" && job.startAfter.getTime() > heldAfter),
+    ),
+    due: jobs.some(
+      (job) =>
+        job.state === "active" ||
+        (job.state === "created" && job.startAfter.getTime() <= heldAfter),
     ),
   };
 }

@@ -1,5 +1,5 @@
-import { weekdaySchema, type Weekday } from "@running-coach/shared";
-import { HARD_DAY_MIN_GAP_DAYS } from "../constants";
+import { weekdaySchema, type SessionType, type Weekday } from "@running-coach/shared";
+import { HARD_DAY_MIN_GAP_DAYS, HARD_SESSION_TYPES } from "../constants";
 import { daysBetween, weekdayIndex } from "../dates";
 
 export interface WeekLayoutInput {
@@ -89,4 +89,40 @@ export function isSpacedFromHardDay({
   date: string;
 }): boolean {
   return lastHardDate === null || daysBetween(lastHardDate, date) >= HARD_DAY_MIN_GAP_DAYS;
+}
+
+/** A session by its type on a local date. */
+export interface DatedSession {
+  type: SessionType;
+  date: string;
+}
+
+export interface HardSessionTooCloseInput extends DatedSession {
+  /** The sessions around `date`, the one being placed excluded. */
+  others: readonly DatedSession[];
+}
+
+/**
+ * The hard session nearer than 48 h to a hard session of `type` placed on `date`: the nearest one,
+ * the earlier on a tie; null when `type` is not hard or none is that near. A move is the runner's call,
+ * so this is a warning to show, never a reason to refuse.
+ */
+export function hardSessionTooClose({
+  type,
+  date,
+  others,
+}: HardSessionTooCloseInput): DatedSession | null {
+  if (!HARD_SESSION_TYPES.has(type)) return null;
+  let nearest: { session: DatedSession; offset: number } | null = null;
+  for (const other of others) {
+    if (!HARD_SESSION_TYPES.has(other.type)) continue;
+    const offset = daysBetween(date, other.date);
+    if (Math.abs(offset) >= HARD_DAY_MIN_GAP_DAYS) continue;
+    const closer =
+      nearest === null ||
+      Math.abs(offset) < Math.abs(nearest.offset) ||
+      (Math.abs(offset) === Math.abs(nearest.offset) && offset < nearest.offset);
+    if (closer) nearest = { session: other, offset };
+  }
+  return nearest === null ? null : { type: nearest.session.type, date: nearest.session.date };
 }

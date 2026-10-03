@@ -14,14 +14,15 @@ import { usePlanWeekScreen } from "./use-plan-week";
 
 /**
  * One week of the plan at /plan/weeks/:number: its distance and phase, then every day Monday to Sunday
- * with its session's steps. Empty when the plan has no such week, or there is no plan.
+ * with its sessions' steps, the runner's own workouts and skipped sessions included. Each session opens
+ * its screen; days from today on take Add. Empty when the plan has no such week, or there is no plan.
  */
 export function PlanWeekScreen() {
   const { number = "" } = useParams();
   const screen = usePlanWeekScreen();
-  const { data, status, error, refetch, units } = screen;
+  const { data, status, error, refetch, units, today } = screen;
 
-  if (status === "pending" || units === undefined) {
+  if (status === "pending" || units === undefined || today === undefined) {
     return <PlanWeekSkeleton />;
   }
 
@@ -85,7 +86,7 @@ export function PlanWeekScreen() {
         <h2 className="text-body font-semibold text-ink">{planWeekCopy.days}</h2>
         <ol className="flex flex-col divide-y divide-line rounded-md bg-surface-1 px-4">
           {planDays(week).map((day) => (
-            <DayRow key={day.date} day={day} paces={plan.paces} units={units} />
+            <DayRow key={day.date} day={day} paces={plan.paces} units={units} today={today} />
           ))}
         </ol>
       </section>

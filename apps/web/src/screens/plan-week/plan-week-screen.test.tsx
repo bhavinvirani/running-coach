@@ -2,11 +2,17 @@ import type { MeResponse, PlanResponse } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { planKey } from "@/api/plan";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
-import { meFixture, planResponseFixture } from "@/test/fixtures";
+import {
+  customSessionFixture,
+  meFixture,
+  planFixture,
+  planResponseFixture,
+  planSessionId,
+} from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { PlanWeekScreen } from "./plan-week-screen";
 
@@ -35,6 +41,16 @@ async function dayRows() {
 }
 
 describe("PlanWeekScreen", () => {
+  // After race day, so no day takes Add unless a test moves the clock back into the plan.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-26T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("shows a skeleton in the final layout while loading", () => {
     stubFetch(never);
     renderWeek(1);
@@ -174,5 +190,103 @@ describe("PlanWeekScreen", () => {
     await userEvent.click(screen.getByRole("link", { name: "Back" }));
 
     expect(router.state.location.pathname).toBe("/plan");
+  });
+
+  it("opens each session's screen from its row", async () => {
+    fakePlanApi();
+    const { router } = renderWeek(1);
+
+    const rows = await dayRows();
+    const intervals = within(rows[3]!).getByRole("link", {
+      name: "Intervals, Thu 8 Oct, 11.6 km, 1:04:00",
+    });
+    expect(intervals).toHaveAttribute("href", `/plan/sessions/${planSessionId("2026-10-08")}`);
+    expect(within(rows[0]!).queryByRole("link")).not.toBeInTheDocument();
+
+    await userEvent.click(intervals);
+    expect(router.state.location.pathname).toBe(`/plan/sessions/${planSessionId("2026-10-08")}`);
+  });
+
+  it("offers Add on the days from today on, opening the builder on that date", async () => {
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+    fakePlanApi();
+    renderWeek(1);
+
+    const rows = await dayRows();
+    const adds = rows.map(
+      (row) =>
+        within(row)
+          .queryByRole("link", { name: /^Add a workout on / })
+          ?.getAttribute("href") ?? null,
+    );
+    expect(adds).toEqual([
+      null,
+      null,
+      null,
+      "/plan/sessions/new?date=2026-10-08",
+      "/plan/sessions/new?date=2026-10-09",
+      "/plan/sessions/new?date=2026-10-10",
+      "/plan/sessions/new?date=2026-10-11",
+    ]);
+    expect(
+      within(rows[5]!).getByRole("link", { name: "Add a workout on Sat 10 Oct" }),
+    ).toHaveTextContent(/^Add$/);
+  });
+
+  it("names a custom workout by its title and reads a skipped session as Skipped, without distance or steps", async () => {
+    const plan = planFixture();
+    const [first, ...rest] = plan.weeks;
+    const week = {
+      ...first!,
+      sessions: [
+        ...first!.sessions.map((session) =>
+          session.date === "2026-10-09" ? { ...session, status: "skipped" as const } : session,
+        ),
+        customSessionFixture(),
+      ],
+    };
+    fakePlanApi({ plan: planResponseFixture({ plan: { ...plan, weeks: [week, ...rest] } }) });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    const [skipped, custom] = within(rows[4]!).getAllByRole("link");
+    expect(skipped).toHaveAccessibleName("Easy, Fri 9 Oct, Skipped");
+    expect(skipped).toHaveTextContent(/^EasySkipped$/);
+    expect(skipped!.firstElementChild).toHaveClass("text-ink-2");
+    expect(custom).toHaveAccessibleName("Hill reps, Tempo, Fri 9 Oct, 7.1 km, 41:04");
+    expect(within(custom!).getByText("Hill reps").querySelector("span")).toHaveClass(
+      "bg-type-tempo",
+    );
+    expect(custom).toHaveTextContent(
+      "Tempo · 15 min easy, 4 x 400 m at 5:00-5:07 /km with 2 min jog, 10 min easy",
+    );
+  });
+
+  it("names the type of a titled custom workout beside its type colour, untitled ones by the type alone (type name)", async () => {
+    const plan = planFixture();
+    const [first, ...rest] = plan.weeks;
+    const week = {
+      ...first!,
+      sessions: [
+        ...first!.sessions,
+        customSessionFixture({ id: "c0ffee00-0000-4000-8000-000000000002", status: "skipped" }),
+        customSessionFixture({
+          id: "c0ffee00-0000-4000-8000-000000000003",
+          date: "2026-10-10",
+          type: "long",
+          title: null,
+        }),
+      ],
+    };
+    fakePlanApi({ plan: planResponseFixture({ plan: { ...plan, weeks: [week, ...rest] } }) });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    const skipped = within(rows[4]!).getByRole("link", { name: /^Hill reps,/ });
+    expect(skipped).toHaveAccessibleName("Hill reps, Tempo, Fri 9 Oct, Skipped");
+    expect(within(skipped).getByText("Tempo")).toHaveClass("text-ink-2");
+    const untitled = within(rows[5]!).getByRole("link", { name: /^Long run, Sat 10 Oct/ });
+    expect(untitled).toHaveAccessibleName("Long run, Sat 10 Oct, 7.1 km, 41:04");
+    expect(within(untitled).getAllByText(/Long run/)).toHaveLength(1);
   });
 });

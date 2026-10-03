@@ -222,6 +222,25 @@ export function formatLocalDay(local: string | null | undefined): string {
   return day ? `${weekdayOf(day)} ${day.day} ${monthOf(day)}` : MISSING;
 }
 
+/** A day of the coming week, short enough for a chip: "2026-10-08" → "Thu 8". */
+export function formatShortDay(date: string | null | undefined): string {
+  const day = calendarDay(date);
+  return day ? `${weekdayOf(day)} ${day.day}` : MISSING;
+}
+
+/** A day of the coming week from `today`, both local dates: "Today", "Tomorrow", then "Thu 8". */
+export function formatUpcomingDay(date: string, today: string): string {
+  const day = calendarDay(date);
+  const now = calendarDay(today);
+  if (!day || !now) return MISSING;
+  if (date === today) return "Today";
+  const tomorrow = addDays(now, 1);
+  if (day.year === tomorrow.year && day.month === tomorrow.month && day.day === tomorrow.day) {
+    return "Tomorrow";
+  }
+  return formatShortDay(date);
+}
+
 /** The date of a run's local start with its year, for a best that may be years old: "27 Sep 2026". */
 export function formatLocalDate(local: string | null | undefined): string {
   const day = calendarDay(local);

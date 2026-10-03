@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 
-/** A group of fields on a detail screen: its heading above a surface-1 card, fields divided by hairlines. */
-export function FormSection({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * A group of rows on a detail screen: its heading above a surface-1 card, rows divided by hairlines. The
+ * goal form's fields, the workout builder's steps, and a session's steps and Garmin state.
+ */
+export function CardSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section aria-label={title} className="flex flex-col gap-2">
       <h2 className="text-body font-semibold text-ink">{title}</h2>

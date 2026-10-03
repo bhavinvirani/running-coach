@@ -1,6 +1,7 @@
 import { paceZoneSchema, type PlanPaces, type Units } from "@running-coach/shared";
 import { formatPlanPace } from "@/lib/pace-band";
-import { paceZoneName, planCopy } from "../plan-copy";
+import { paceZoneName } from "@/lib/workout-steps";
+import { planCopy } from "../plan-copy";
 
 /**
  * Like the personal bests row: it bleeds to the screen's edges (-mx-4 undoes the screen's px-4, px-4 puts

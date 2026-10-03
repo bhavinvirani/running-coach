@@ -3,6 +3,8 @@ import {
   MAX_PLAN_WEEKS,
   METERS_PER_KM,
   type RaceDistanceKey,
+  type SessionType,
+  type StepKind,
 } from "@running-coach/shared";
 
 // Stored on each plan so a plan can be traced to the rule set that produced it.
@@ -235,6 +237,20 @@ export const RACE_PRACTICE_MIN_DAYS_BEFORE_RACE = 3;
 
 // SPEC "Plan engine": 48 h between hard days.
 export const HARD_DAY_MIN_GAP_DAYS = 2;
+
+// Daniels: the long run, quality sessions and races are the hard days the 48 h rule spaces; the plan
+// generator lays them out by it and the API warns with it when a runner moves one.
+export const HARD_SESSION_TYPES: ReadonlySet<SessionType> = new Set([
+  "long",
+  "intervals",
+  "tempo",
+  "race_practice",
+  "race",
+]);
+
+// Garmin and Runna practice: warm-ups, jogs and cool-downs run by feel, so only run and work steps
+// carry a pace target and the watch never alerts while the runner jogs.
+export const TARGETED_STEP_KINDS: ReadonlySet<StepKind> = new Set(["run", "work"]);
 
 // A fitness goal with no distance is shaped like a 10K: a middle ground of volume and speed work.
 export const FITNESS_SHAPE_DISTANCE = "10k" satisfies RaceDistanceKey;

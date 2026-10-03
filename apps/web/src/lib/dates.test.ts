@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addDays, today } from "./dates";
+import { addDays, daysBetween, today, weekStart } from "./dates";
 
 describe("today", () => {
   beforeEach(() => {
@@ -43,5 +43,23 @@ describe("addDays", () => {
 
   it("goes back with a negative count", () => {
     expect(addDays("2026-10-05", -1)).toBe("2026-10-04");
+  });
+});
+
+describe("daysBetween", () => {
+  it("counts whole days forward and back, across a DST change (DST)", () => {
+    expect(daysBetween("2026-10-05", "2026-10-08")).toBe(3);
+    expect(daysBetween("2026-10-08", "2026-10-05")).toBe(-3);
+    expect(daysBetween("2026-10-24", "2026-10-26")).toBe(2);
+    expect(daysBetween("2026-10-05", "2026-10-05")).toBe(0);
+  });
+});
+
+describe("weekStart", () => {
+  it("finds the Monday of the Monday-to-Sunday week, across a month", () => {
+    expect(weekStart("2026-10-05")).toBe("2026-10-05");
+    expect(weekStart("2026-10-08")).toBe("2026-10-05");
+    expect(weekStart("2026-10-11")).toBe("2026-10-05");
+    expect(weekStart("2026-11-01")).toBe("2026-10-26");
   });
 });

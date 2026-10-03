@@ -11,10 +11,26 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from garmin_service.fake_client import FAKE_UNAVAILABLE_ACTIVITY_ID, FAKE_UNAVAILABLE_ACTIVITY_IDS
+from garmin_service.fake_client import (
+    FAKE_GONE_SCHEDULE_ID,
+    FAKE_GONE_WORKOUT_ID,
+    FAKE_UNAVAILABLE_ACTIVITY_ID,
+    FAKE_UNAVAILABLE_ACTIVITY_IDS,
+)
 from garmin_service.models.problem import ErrorCode
 from tests.conftest import AppFactory
-from tests.helpers import JSON_SCHEMA_DIR, ScriptedGarmin, assert_valid, bundle, raw_run
+from tests.helpers import (
+    JSON_SCHEMA_DIR,
+    ScriptedGarmin,
+    assert_valid,
+    bundle,
+    create,
+    move,
+    raw_run,
+    remove,
+    unschedule,
+)
+from tests.helpers import workout_sync_body as sync_body
 
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
 # Both of the fake's unavailable runs, in a row: the series route stops after them.
@@ -216,6 +232,114 @@ def assert_series_response_valid(body: dict[str, Any]) -> None:
         assert_valid("garmin-record", record)
 
 
+# A workout with every step shape: time and distance, paced and open, and a repeat group.
+EVERY_STEP_SHAPE = {
+    "name": "Intervals 4 x 800 m",
+    "estimatedDurationS": 2640,
+    "steps": [
+        {"type": "warmup", "distanceM": None, "durationS": 600, "pace": None},
+        {
+            "repeat": 4,
+            "steps": [
+                {
+                    "type": "interval",
+                    "distanceM": 800,
+                    "durationS": None,
+                    "pace": {"fastSPerKm": 240, "slowSPerKm": 255},
+                },
+                {"type": "recovery", "distanceM": None, "durationS": 120, "pace": None},
+            ],
+        },
+        {"type": "cooldown", "distanceM": 1000, "durationS": None, "pace": None},
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    ("actions", "behaviour"),
+    [
+        ([create(), move(), remove(), unschedule()], None),
+        ([{**create(), "workout": EVERY_STEP_SHAPE}, move(schedule_id=None)], None),
+        ([], None),
+        ([create()], "rotate"),
+        ([create(), create("s-2"), move(), unschedule()], "workout_outage"),
+        ([create(), remove()], "workout_schedule_outage"),
+        ([create(), create("s-2"), create("s-3")], "workout_rate_limited"),
+        ([move(workout_id=FAKE_GONE_WORKOUT_ID), remove(workout_id=FAKE_GONE_WORKOUT_ID)], None),
+        ([unschedule(schedule_id=FAKE_GONE_SCHEDULE_ID)], None),
+        ([create()], "rotate_then_rate_limited"),
+        ([], "rotate_then_unavailable"),
+    ],
+)
+def test_workout_sync_responses_match_garmin_workout_sync_response(
+    client: TestClient, actions: list[dict[str, Any]], behaviour: str | None
+) -> None:
+    request = sync_body(
+        *actions, token_bundle=bundle() if behaviour is None else bundle(fixture=behaviour)
+    )
+    assert_valid("garmin-workout-sync-request", request)
+    for action in actions:
+        assert_valid("garmin-workout-action", action)
+
+    response = client.post("/workouts/sync", json=request)
+
+    assert response.status_code == 200
+    assert_workout_sync_response_valid(response.json())
+
+
+def test_workout_sync_responses_carry_every_outcome_the_contract_names(client: TestClient) -> None:
+    actions = [move(workout_id=FAKE_GONE_WORKOUT_ID), create(), create("s-2"), unschedule()]
+
+    response = client.post(
+        "/workouts/sync", json=sync_body(*actions, token_bundle=bundle(fixture="workout_outage"))
+    )
+
+    assert response.status_code == 200
+    assert_workout_sync_response_valid(response.json())
+    schema = json.loads(
+        (JSON_SCHEMA_DIR / "garmin-workout-outcome.json").read_text(encoding="utf-8")
+    )
+    outcomes = [result["outcome"] for result in response.json()["results"]]
+    assert outcomes == ["gone", "done", "failed", "skipped"]
+    assert sorted(outcomes) == sorted(schema["enum"])
+
+
+@pytest.mark.parametrize(
+    "garmin",
+    [
+        ScriptedGarmin(upload_answer={"workoutId": None}),
+        ScriptedGarmin(write_errors={"upload_running_workout": RuntimeError("bug")}),
+        ScriptedGarmin(calendar={"calendarItems": [{"itemType": "workout", "id": "1"}]}),
+        ScriptedGarmin(calendar={"calendarItems": "none"}),
+    ],
+)
+def test_workout_sync_responses_from_unexpected_garmin_answers_match_the_contract(
+    make_client: AppFactory, garmin: ScriptedGarmin
+) -> None:
+    response = make_client(connect=garmin.connect()).post(
+        "/workouts/sync", json=sync_body(create())
+    )
+
+    assert response.status_code == 200
+    assert_workout_sync_response_valid(response.json())
+
+
+def test_the_workouts_the_tests_send_match_garmin_workout() -> None:
+    assert_valid("garmin-workout", EVERY_STEP_SHAPE)
+    assert_valid("garmin-workout", create()["workout"])
+
+
+def assert_workout_sync_response_valid(body: dict[str, Any]) -> None:
+    assert_valid("garmin-workout-sync-response", body)
+    for result in body["results"]:
+        assert_valid("garmin-workout-result", result)
+        assert_valid("garmin-workout-outcome", result["outcome"])
+    if body["stopped"] is not None:
+        assert_valid("garmin-workout-stop", body["stopped"])
+    for entry in body["calendar"] or []:
+        assert_valid("garmin-calendar-entry", entry)
+
+
 def test_sync_requests_the_tests_send_match_garmin_sync_request() -> None:
     assert_valid("garmin-sync-request", {"tokenBundle": bundle(), **FULL_RANGE})
     assert_valid("garmin-profile-request", {"tokenBundle": bundle()})
@@ -270,6 +394,12 @@ def error_responses(make_client: AppFactory) -> dict[str, Any]:
                 "includeRecords": False,
             },
         ),
+        "workouts_expired": client.post(
+            "/workouts/sync", json=sync_body(create(), token_bundle=bundle(fixture="expired"))
+        ),
+        "workouts_validation": client.post(
+            "/workouts/sync", json=sync_body(*[create(f"s-{n}") for n in range(9)])
+        ),
         "not_found": client.get("/nope"),
         "internal": make_client(connect=crashing).post("/profile", json={"tokenBundle": bundle()}),
     }
@@ -292,6 +422,8 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         "detail_rotate_then_unavailable": 502,
         "series_rotate_then_rate_limited": 429,
         "series_validation": 400,
+        "workouts_expired": 401,
+        "workouts_validation": 400,
         "not_found": 404,
         "internal": 500,
     }

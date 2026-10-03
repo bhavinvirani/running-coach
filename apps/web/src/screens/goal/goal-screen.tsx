@@ -12,8 +12,10 @@ import {
 } from "@running-coach/shared";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { BackLink } from "@/components/back-link";
+import { CardSection } from "@/components/card-section";
 import { RetryAlert } from "@/components/retry-alert";
 import { SegmentedField, type SegmentOption } from "@/components/segmented-field";
+import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
 import { distanceLabel } from "@/lib/distance-labels";
 import { durationSeconds } from "@/lib/duration-parts";
@@ -30,8 +32,6 @@ import {
   type GoalFormField,
 } from "./goal-form";
 import { DurationField } from "./parts/duration-field";
-import { FormSection } from "./parts/form-section";
-import { TextField } from "./parts/text-field";
 import { useGoalScreen } from "./use-goal";
 
 const kindOptions: readonly SegmentOption<GoalKind>[] = [
@@ -181,7 +181,7 @@ function GoalFormView({
 
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-4">
-      <FormSection title={goalCopy.target}>
+      <CardSection title={goalCopy.target}>
         <SegmentedField
           name="kind"
           legend={goalCopy.trainingFor}
@@ -230,8 +230,8 @@ function GoalFormView({
             />
           </>
         ) : null}
-      </FormSection>
-      <FormSection title={goalCopy.week}>
+      </CardSection>
+      <CardSection title={goalCopy.week}>
         <SegmentedField
           name="daysPerWeek"
           legend={goalCopy.daysPerWeek}
@@ -246,9 +246,9 @@ function GoalFormView({
           value={form.longRunDay}
           onChange={(longRunDay) => update({ longRunDay })}
         />
-      </FormSection>
+      </CardSection>
       {form.showRecentTime ? (
-        <FormSection title={goalCopy.recentRace}>
+        <CardSection title={goalCopy.recentRace}>
           <SegmentedField
             name="recentDistance"
             legend={goalCopy.distance}
@@ -264,7 +264,7 @@ function GoalFormView({
             description={timePace(form.recentDistanceKey, durationSeconds(form.recentTime), units)}
             error={recentTimeError}
           />
-        </FormSection>
+        </CardSection>
       ) : (
         <Button
           variant="ghost"

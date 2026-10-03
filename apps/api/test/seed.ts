@@ -1,6 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { BEST_EFFORTS_VERSION } from "@running-coach/engine";
-import type { DistanceKey } from "@running-coach/shared";
+import { BEST_EFFORTS_VERSION, sessionTarget } from "@running-coach/engine";
+import {
+  type DistanceKey,
+  type PlanPaces,
+  planGenerationInputSchema,
+  planPacesSchema,
+  type SessionSteps,
+  sessionStepsSchema,
+} from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { inject, vi } from "vitest";
 import { auth } from "../src/auth/auth";
@@ -9,8 +16,14 @@ import {
   activity,
   bestEffort,
   garminConnection,
+  goal,
   type ImportProgressRow,
   importProgress,
+  type NewPlanRow,
+  type NewPlanSessionRow,
+  plan,
+  planSession,
+  type PlanSessionRow,
   userSettings,
 } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
@@ -26,7 +39,10 @@ export function garminBundle(
     | "rotate"
     | "rotated"
     | "rotate_then_rate_limited"
-    | "rotate_then_unavailable",
+    | "rotate_then_unavailable"
+    | "workout_outage"
+    | "workout_schedule_outage"
+    | "workout_rate_limited",
 ): string {
   return JSON.stringify({
     di_token: "fixture-token",
@@ -34,6 +50,25 @@ export function garminBundle(
     di_client_id: "fixture-client",
     ...(fixture ? { fixture } : {}),
   });
+}
+
+/**
+ * Watches the bodies sent to the Garmin service on `path` while letting them through; the returned function
+ * lists them parsed, oldest first, the token bundle replaced by its fixture name.
+ */
+export function bodiesSentTo<T = Record<string, unknown>>(
+  path: string,
+): () => (Omit<T, "tokenBundle"> & { fixture: string | undefined })[] {
+  const spy = vi.spyOn(globalThis, "fetch");
+  return () =>
+    spy.mock.calls
+      .filter(([input]) => href(input).endsWith(path))
+      .map(([, init]) => {
+        const { tokenBundle, ...body } = JSON.parse(
+          typeof init?.body === "string" ? init.body : "{}",
+        ) as T & { tokenBundle?: string };
+        return { ...(body as Omit<T, "tokenBundle">), fixture: fixtureOf(tokenBundle) };
+      });
 }
 
 /** The behaviour a fixture bundle names, or undefined for the base bundle. */
@@ -271,4 +306,130 @@ export async function createComputedRun(
   }));
   if (rows.length > 0) await db.insert(bestEffort).values(rows);
   return run;
+}
+
+/** A plan's paces (VDOT about 47.6), parsed so they cannot drift from the contract. */
+export const PACES: PlanPaces = planPacesSchema.parse({
+  easy: { fastSPerKm: 300, slowSPerKm: 336 },
+  marathon: { fastSPerKm: 262, slowSPerKm: 268 },
+  threshold: { fastSPerKm: 247, slowSPerKm: 253 },
+  interval: { fastSPerKm: 227, slowSPerKm: 231 },
+  repetition: { fastSPerKm: 211, slowSPerKm: 215 },
+  race: { fastSPerKm: 256, slowSPerKm: 260 },
+});
+
+/** Another runner's paces, as a new plan version after a better race would have. */
+export const FASTER_PACES: PlanPaces = planPacesSchema.parse({
+  easy: { fastSPerKm: 290, slowSPerKm: 325 },
+  marathon: { fastSPerKm: 252, slowSPerKm: 258 },
+  threshold: { fastSPerKm: 238, slowSPerKm: 244 },
+  interval: { fastSPerKm: 218, slowSPerKm: 222 },
+  repetition: { fastSPerKm: 203, slowSPerKm: 207 },
+  race: { fastSPerKm: 246, slowSPerKm: 250 },
+});
+
+export const EASY_STEPS: SessionSteps = sessionStepsSchema.parse([
+  { kind: "run", zone: "easy", distanceM: 8000, durationS: null },
+]);
+
+export const TEMPO_STEPS: SessionSteps = sessionStepsSchema.parse([
+  { kind: "warmup", zone: "easy", distanceM: 2000, durationS: null },
+  { kind: "run", zone: "threshold", distanceM: null, durationS: 1200 },
+  { kind: "cooldown", zone: "easy", distanceM: 2000, durationS: null },
+]);
+
+export const INTERVAL_STEPS: SessionSteps = sessionStepsSchema.parse([
+  { kind: "warmup", zone: "easy", distanceM: 2000, durationS: null },
+  {
+    repeat: 5,
+    steps: [
+      { kind: "work", zone: "interval", distanceM: 1000, durationS: null },
+      { kind: "recovery", zone: "easy", distanceM: null, durationS: 180 },
+    ],
+  },
+  { kind: "cooldown", zone: "easy", distanceM: 2000, durationS: null },
+]);
+
+const PLAN_INPUTS = planGenerationInputSchema.parse({
+  goal: {
+    kind: "fitness",
+    distanceKey: null,
+    raceDate: null,
+    targetTimeS: null,
+    daysPerWeek: 4,
+    longRunDay: "sun",
+    recentTime: { distanceKey: "10k", timeS: 2700 },
+  },
+  startDate: "2026-09-28",
+  baseline: {
+    weeklyVolumesM: [30_000, 30_000, 30_000, 30_000],
+    longestRunM: 15_000,
+    daysSinceLastRun: 2,
+  },
+  vdotSource: { origin: "entered", distanceM: 10_000, timeS: 2700, activityId: null, date: null },
+});
+
+/**
+ * A plan of the user's, active by default, written directly so a test chooses every session: a fitness
+ * goal (made once per user) and a plan spanning 2026-09-28 to 2026-12-20 unless `values` say otherwise.
+ */
+export async function createPlan(userId: string, values: Partial<NewPlanRow> = {}) {
+  await db
+    .insert(goal)
+    .values({ userId, kind: "fitness", daysPerWeek: 4, longRunDay: "sun" })
+    .onConflictDoNothing({ target: goal.userId });
+  const [goalRow] = await db.select({ id: goal.id }).from(goal).where(eq(goal.userId, userId));
+  const [row] = await db
+    .insert(plan)
+    .values({
+      goalId: goalRow!.id,
+      userId,
+      version: 1,
+      engineVersion: "test",
+      status: "active",
+      startDate: "2026-09-28",
+      endDate: "2026-12-20",
+      vdot: 47.6,
+      vdotSource: PLAN_INPUTS.vdotSource!,
+      paces: PACES,
+      inputs: PLAN_INPUTS,
+      warnings: [],
+      ...values,
+    })
+    .returning();
+  if (!row) throw new Error("insert returned nothing");
+  return row;
+}
+
+/**
+ * A session of the plan (phase base), or a custom workout with `planId: null` (no phase): an easy 8 km by
+ * default, its target from its steps at PACES.
+ */
+export async function createSession(
+  userId: string,
+  planId: string | null,
+  values: Partial<Omit<NewPlanSessionRow, "userId" | "planId">> & { date: string },
+): Promise<PlanSessionRow> {
+  const steps = values.steps ?? EASY_STEPS;
+  const [row] = await db
+    .insert(planSession)
+    .values({
+      userId,
+      planId,
+      phase: planId === null ? null : "base",
+      type: "easy",
+      target: sessionTarget(steps, PACES),
+      ...values,
+      steps,
+    })
+    .returning();
+  if (!row) throw new Error("insert returned nothing");
+  return row;
+}
+
+/** The session row as stored now. */
+export async function storedSession(id: string): Promise<PlanSessionRow> {
+  const [row] = await db.select().from(planSession).where(eq(planSession.id, id));
+  if (!row) throw new Error(`no session ${id}`);
+  return row;
 }

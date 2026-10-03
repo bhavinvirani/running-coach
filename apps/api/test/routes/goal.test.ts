@@ -7,6 +7,7 @@ import {
   MIN_DAYS_PER_WEEK,
   MIN_PLAN_WEEKS,
   planStartVolume,
+  sessionTarget,
   START_VOLUME_FLOOR_M,
 } from "@running-coach/engine";
 import {
@@ -17,6 +18,7 @@ import {
   planResponseSchema,
   type SaveGoalResponse,
   saveGoalResponseSchema,
+  sessionStepsSchema,
 } from "@running-coach/shared";
 import { and, eq } from "drizzle-orm";
 import request from "supertest";
@@ -25,7 +27,7 @@ import { db } from "../../src/db/client";
 import { activity, goal, plan, planSession } from "../../src/db/schema";
 import { addDays } from "../../src/lib/local-date";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
-import { createComputedRun, createRunOn, setSettings } from "../seed";
+import { createComputedRun, createRunOn, createSession, setSettings, storedSession } from "../seed";
 
 // PUT /api/goal on the real Postgres, with the clock pinned (Date only, timers run) so
 // "today", the first Monday and the baseline weeks are fixed.
@@ -98,7 +100,15 @@ function generatedWeeks(weeks: Plan["weeks"]) {
   return weeks.map((week) => ({
     ...week,
     sessions: week.sessions.map(
-      ({ id: _id, status: _status, activityId: _activityId, ...session }) => session,
+      ({
+        id: _id,
+        status: _status,
+        activityId: _activityId,
+        source: _source,
+        title: _title,
+        onGarmin: _onGarmin,
+        ...session
+      }) => session,
     ),
   }));
 }
@@ -513,6 +523,42 @@ describe("PUT /api/goal", () => {
     expect(active).toEqual([{ id: second.id }]);
     expect(await db.select().from(goal)).toHaveLength(1);
     expect((await getPlan(agent)).plan).toEqual(second);
+  });
+
+  it("moves a custom 45 min easy workout's distance to the new easy pace from today on, past and skipped ones keeping theirs (regenerating a plan without losing history)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const first = await savePlan(agent, halfMarathon);
+    const steps = sessionStepsSchema.parse([
+      { kind: "run", zone: "easy", distanceM: null, durationS: 45 * 60 },
+    ]);
+    const custom = (date: string, status: "planned" | "moved" | "skipped" = "planned") =>
+      createSession(userId, null, {
+        date,
+        status,
+        title: "45 min easy",
+        steps,
+        target: sessionTarget(steps, first.paces),
+      });
+    const upcoming = await custom(TODAY);
+    const moved = await custom(addDays(TODAY, 2), "moved");
+    const skipped = await custom(addDays(TODAY, 3), "skipped");
+    const past = await custom(addDays(TODAY, -1));
+
+    // A faster 5K: faster easy paces, so 45 minutes cover more ground.
+    const second = await savePlan(agent, {
+      ...halfMarathon,
+      recentTime: { distanceKey: "5k", timeS: 1380 },
+    });
+
+    const before = sessionTarget(steps, first.paces);
+    const after = sessionTarget(steps, second.paces);
+    expect(after.distanceM).toBeGreaterThan(before.distanceM);
+    expect(after.durationS).toBe(45 * 60);
+    expect((await storedSession(upcoming.id)).target).toEqual(after);
+    expect((await storedSession(moved.id)).target).toEqual(after);
+    expect((await storedSession(skipped.id)).target).toEqual(before);
+    expect((await storedSession(past.id)).target).toEqual(before);
   });
 
   it.each([

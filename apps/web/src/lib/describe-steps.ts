@@ -1,30 +1,7 @@
-import {
-  distanceInUnits,
-  type PaceZone,
-  type PlanPaces,
-  type Repeat,
-  type SessionSteps,
-  type Step,
-  type Units,
-} from "@running-coach/shared";
-import {
-  MISSING,
-  formatCountValue,
-  formatMeters,
-  formatStepDistance,
-  formatStepDuration,
-} from "./format";
+import type { PlanPaces, Repeat, SessionSteps, Step, Units } from "@running-coach/shared";
+import { formatCountValue } from "./format";
 import { formatPlanPace } from "./pace-band";
-
-/** A lone run's zone after its band: "5:45-6:20 /km easy", "4:56 /km race pace". */
-const LONE_RUN_ZONES: Readonly<Record<PaceZone, string>> = {
-  easy: "easy",
-  marathon: "marathon pace",
-  threshold: "threshold",
-  interval: "interval pace",
-  repetition: "repetition pace",
-  race: "race pace",
-};
+import { stepAmount, zonePhrase } from "./workout-steps";
 
 /**
  * A session's steps as one line a runner reads before heading out, with paces from the plan's bands in
@@ -37,7 +14,7 @@ const LONE_RUN_ZONES: Readonly<Record<PaceZone, string>> = {
 export function describeSteps(steps: SessionSteps, paces: PlanPaces, units: Units): string {
   const [only] = steps;
   if (steps.length === 1 && only !== undefined && !("repeat" in only) && only.kind === "run") {
-    return `${formatPlanPace(paces[only.zone], units)} ${LONE_RUN_ZONES[only.zone]}`;
+    return `${formatPlanPace(paces[only.zone], units)} ${zonePhrase(only.zone)}`;
   }
   return steps
     .map((item) =>
@@ -70,15 +47,4 @@ function describeStep(step: Step, paces: PlanPaces, units: Units): string {
   if (step.kind === "recovery") return `${amount} jog`;
   if (step.zone === "easy") return `${amount} easy`;
   return `${amount} at ${formatPlanPace(paces[step.zone], units)}`;
-}
-
-function stepAmount(step: Step, units: Units): string {
-  if (step.distanceM !== null) return stepDistance(step.distanceM, units);
-  return step.durationS !== null ? formatStepDuration(step.durationS) : MISSING;
-}
-
-/** Under one unit a rep reads in meters, as on a track whatever the unit: "400 m", not "0.25 mi". */
-function stepDistance(distanceM: number, units: Units): string {
-  const inUnits = distanceInUnits(distanceM, units);
-  return inUnits < 1 ? formatMeters(distanceM) : formatStepDistance(inUnits, units);
 }

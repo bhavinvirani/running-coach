@@ -151,13 +151,7 @@ def from_garmin_exception(exc: BaseException) -> ServiceError | None:
     return unavailable()
 
 
-def from_login_exception(exc: BaseException) -> ServiceError | None:
-    """Map a failed password login (connect_cli); None when it is neither Garmin nor the network.
-
-    Garmin.resume_login lets a network error out with no library exception around it. During a
-    login nothing else is on the wire, so that is Garmin not answering. The routes keep
-    from_garmin_exception, which leaves such an error unmapped.
-    """
+def _from_garmin_or_network(exc: BaseException) -> ServiceError | None:
     error = from_garmin_exception(exc)
     if error is not None:
         return error
@@ -165,6 +159,27 @@ def from_login_exception(exc: BaseException) -> ServiceError | None:
     if any(isinstance(e, OSError) for e in _chain(exc)):
         return unavailable()
     return None
+
+
+def from_login_exception(exc: BaseException) -> ServiceError | None:
+    """Map a failed password login (connect_cli); None when it is neither Garmin nor the network.
+
+    Garmin.resume_login lets a network error out with no library exception around it. During a
+    login nothing else is on the wire, so that is Garmin not answering. The read routes keep
+    from_garmin_exception, which leaves such an error unmapped.
+    """
+    return _from_garmin_or_network(exc)
+
+
+def from_write_exception(exc: BaseException) -> ServiceError | None:
+    """Map a failed workout write; None when it is neither Garmin nor the network.
+
+    garminconnect sends upload, schedule, unschedule and delete through client.post and
+    client.delete directly, outside its API-call wrapper: no retries, a 429 or 503 arrives as a
+    bare GarminConnectConnectionError("API Error 429"), and a network error or timeout as requests'
+    own exception with no library exception around it, which is Garmin not answering.
+    """
+    return _from_garmin_or_network(exc)
 
 
 class TokenSource(Protocol):

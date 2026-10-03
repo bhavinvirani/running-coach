@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "garmin": {
+      "type": "object",
+      "properties": {
+        "connection": {
+          "type": "string",
+          "enum": [
+            "not_connected",
+            "ok",
+            "expired"
+          ]
+        },
+        "pushing": {
+          "type": "boolean"
+        },
+        "pushedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "validation",
+                "unauthorized",
+                "not_found",
+                "rate_limited",
+                "internal",
+                "garmin_not_connected",
+                "garmin_auth_expired",
+                "garmin_rate_limited",
+                "garmin_unavailable",
+                "garmin_mfa_required",
+                "claude_key_missing",
+                "claude_key_invalid",
+                "claude_unavailable",
+                "plan_missing",
+                "session_locked"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "others": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scheduleId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "date": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "scheduleId",
+              "date",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "connection",
+        "pushing",
+        "pushedAt",
+        "error",
+        "others"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "garmin"
+  ],
+  "additionalProperties": false
+}

@@ -59,13 +59,23 @@ export type PlanPaces = z.infer<typeof planPacesSchema>;
 export const stepKindSchema = z.enum(["warmup", "run", "work", "recovery", "cooldown"]);
 export type StepKind = z.infer<typeof stepKindSchema>;
 
-/** One block of a session, by distance or by time, never both; slice 7 turns it into a Garmin step. */
+/** The longest step anyone runs: 100 km or 6 hours. Caps what a custom workout can ask of the watch. */
+export const STEP_MAX_DISTANCE_M = 100_000;
+export const STEP_MAX_DURATION_S = 6 * 3600;
+/** Garmin's repeat count tops out well above this; past 50 a runner means a different workout. */
+export const REPEAT_MAX = 50;
+export const REPEAT_STEPS_MAX = 10;
+
+/**
+ * One block of a session, by distance or by time, never both. The engine's `garminWorkout` turns it into
+ * a Garmin step: run and work steps carry their zone's pace band, the others go out without a target.
+ */
 export const stepSchema = z
   .object({
     kind: stepKindSchema,
     zone: paceZoneSchema,
-    distanceM: z.number().int().positive().nullable(),
-    durationS: z.number().int().positive().nullable(),
+    distanceM: z.number().int().positive().max(STEP_MAX_DISTANCE_M).nullable(),
+    durationS: z.number().int().positive().max(STEP_MAX_DURATION_S).nullable(),
   })
   .strict()
   .refine(
@@ -76,8 +86,8 @@ export type Step = z.infer<typeof stepSchema>;
 
 export const repeatSchema = z
   .object({
-    repeat: z.number().int().min(2),
-    steps: z.array(stepSchema).min(1),
+    repeat: z.number().int().min(2).max(REPEAT_MAX),
+    steps: z.array(stepSchema).min(1).max(REPEAT_STEPS_MAX),
   })
   .strict();
 export type Repeat = z.infer<typeof repeatSchema>;
@@ -95,11 +105,40 @@ export const sessionTargetSchema = z
   .strict();
 export type SessionTarget = z.infer<typeof sessionTargetSchema>;
 
-export const sessionStatusSchema = z.enum(["planned", "done", "missed", "moved"]);
+/**
+ * planned: as the engine or the runner made it. moved: planned, then moved by the runner to another day
+ * of its week. skipped: dropped by the runner, never made up (a custom one is hidden instead). done and
+ * missed arrive with run matching (slice 9).
+ */
+export const sessionStatusSchema = z.enum(["planned", "done", "missed", "moved", "skipped"]);
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
+
+/**
+ * plan: a session of a plan version, replaced when the goal is saved again. custom: a workout the runner
+ * built; it belongs to the runner, not to a plan version, so a new plan keeps it.
+ */
+export const sessionSourceSchema = z.enum(["plan", "custom"]);
+export type SessionSource = z.infer<typeof sessionSourceSchema>;
 
 export const planPhaseSchema = z.enum(["base", "build", "peak", "taper", "race"]);
 export type PlanPhase = z.infer<typeof planPhaseSchema>;
+
+export const SESSION_TITLE_MAX = 60;
+
+/**
+ * The one place a session type becomes a word: the web app's chips and the workout name on the watch both
+ * read it, so the two never disagree.
+ */
+export const SESSION_TYPE_NAMES: Readonly<Record<SessionType, string>> = {
+  easy: "Easy",
+  intervals: "Intervals",
+  tempo: "Tempo",
+  long: "Long run",
+  race_practice: "Race practice",
+  race: "Race",
+  strength: "Strength",
+  rest: "Rest",
+};
 
 /** A session as the engine emits it, before the API gives it a row. */
 export const generatedSessionSchema = z
@@ -116,8 +155,16 @@ export const planSessionSchema = generatedSessionSchema
   .extend({
     id: z.uuid(),
     status: sessionStatusSchema,
+    source: sessionSourceSchema,
+    /** The runner's name for a custom workout; null names it by its type. */
+    title: z.string().min(1).max(SESSION_TITLE_MAX).nullable(),
     /** The run that completed it, once slice 9 matches runs to sessions. */
     activityId: z.uuid().nullable(),
+    /**
+     * True when Garmin holds this session as it is now: its workout uploaded with the current steps and
+     * paces, and scheduled on its date. The push status (calendar.ts) says why one in the window is not.
+     */
+    onGarmin: z.boolean(),
   })
   .strict();
 export type PlanSession = z.infer<typeof planSessionSchema>;
@@ -128,7 +175,7 @@ const weekFieldsSchema = z.object({
   /** The week's Monday as a local date. */
   startDate: z.iso.date(),
   phase: planPhaseSchema,
-  /** Sum of the sessions' target distances, the race included. */
+  /** Sum of the target distances of the week's sessions that are not skipped, custom ones and the race included. */
   distanceM: z.number().int().nonnegative(),
 });
 

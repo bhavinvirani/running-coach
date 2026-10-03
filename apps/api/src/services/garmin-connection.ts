@@ -7,6 +7,7 @@ import { encrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
+import { queueWorkoutPush } from "./workout-push";
 
 const log = logger.child({ module: "garmin-connection" });
 
@@ -32,7 +33,7 @@ function isJsonObject(text: string): boolean {
  * replaces the bundle and clears an expired status and the last error but keeps last_sync_at, so the stored
  * runs stay and the next sync resumes from the cursor. Any failure stores nothing, and an existing
  * connection stays as it was. Runs under the per-user lock, so it never overlaps a sync's Garmin calls or
- * its token write-back.
+ * its token write-back. A working login then queues a workout push, which a dead one held back.
  */
 export async function connectGarmin({
   userId,
@@ -49,7 +50,7 @@ export async function connectGarmin({
     );
   }
 
-  return withUserLock(userId, async () => {
+  const connected = await withUserLock(userId, async () => {
     const checked = await garminClient.profile(
       { tokenBundle },
       // Nothing is stored before the check succeeds; its answer carries the bundle to keep, rotated or not.
@@ -66,4 +67,6 @@ export async function connectGarmin({
     log.info({ userId }, "garmin connected");
     return { displayName: checked.profile.displayName };
   });
+  await queueWorkoutPush(userId);
+  return connected;
 }

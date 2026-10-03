@@ -24,6 +24,11 @@ import {
   type GarminSyncResponse,
   garminSyncResponseSchema,
   garminTokenBundleSchema,
+  type GarminWorkoutStop,
+  type GarminWorkoutSyncRequest,
+  garminWorkoutSyncRequestSchema,
+  type GarminWorkoutSyncResponse,
+  garminWorkoutSyncResponseSchema,
 } from "@running-coach/shared";
 import { z } from "zod";
 import { config } from "../lib/config";
@@ -41,10 +46,17 @@ import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } fr
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
 // caller's onTokenBundle, awaited before the call returns, retries or throws; a retry sends the new one.
 
-// Sync and history pages list many activities, an activity's detail is a login plus three paced calls, and a
-// series batch is a login plus up to eleven: 60 s for all four (api rule), 20 s for the rest.
+// Sync and history pages list many activities, an activity's detail is a login plus three paced calls and
+// a series batch a login plus up to eleven: 60 s for all four (api rule), 20 s for the rest.
 const SYNC_TIMEOUT_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
+/**
+ * A workout batch answers by 162 s at worst: the service starts nothing after its 40 s budget, and the one
+ * action started just before it can take 122 s more (WORKOUTS_BUDGET_S in
+ * services/garmin/garmin_service/routes/workouts.py has the arithmetic). Its writes are not idempotent: an
+ * answer this side gave up on loses the ids Garmin made, and the job's retry would upload them again.
+ */
+export const WORKOUT_SYNC_TIMEOUT_MS = 180_000;
 /** Garmin blocks last about an hour; the service sends 3600 when Garmin gives no delay. */
 export const DEFAULT_RETRY_AFTER_S = 3600;
 
@@ -86,6 +98,16 @@ export interface GarminClient {
    * read this one), and Garmin's own records when asked for (null when they could not be read).
    */
   series(request: GarminSeriesRequest, options: GarminCallOptions): Promise<GarminSeriesResponse>;
+  /**
+   * Up to GARMIN_WORKOUT_BATCH_MAX workout actions in order under one login, one result each, then, when
+   * readCalendar is set, the calendar between calendarStart and calendarEnd. A failure after the login
+   * answers 200 with the results so far and `stopped` (workoutStopError turns it into the error); a failed
+   * login throws as usual.
+   */
+  syncWorkouts(
+    request: GarminWorkoutSyncRequest,
+    options: GarminCallOptions,
+  ): Promise<GarminWorkoutSyncResponse>;
 }
 
 // Read before the full response schema, so a 2xx body that breaks the contract still hands its bundle over.
@@ -97,34 +119,34 @@ function retryAfterSeconds(failed: FailedResponse<GarminProblem>): number {
   return Number.isInteger(header) && header > 0 ? header : DEFAULT_RETRY_AFTER_S;
 }
 
+const authExpired = () =>
+  new DomainError(
+    ErrorCode.garminAuthExpired,
+    409,
+    "Garmin rejected the saved login. Connect Garmin again.",
+  );
+const rateLimited = (seconds: number) =>
+  new DomainError(
+    ErrorCode.garminRateLimited,
+    429,
+    "Garmin is limiting requests. Try again later.",
+    {
+      retryAfterSeconds: seconds,
+    },
+  );
+const unavailable = () =>
+  new DomainError(ErrorCode.garminUnavailable, 502, "Garmin is not answering. Try again later.");
+// Garmin answered that the item is gone (deleted on Garmin Connect); the caller words it for its item.
+const notFound = () => new DomainError(ErrorCode.notFound, 404, "Garmin Connect has no such item.");
+
 function toError(path: string, failed: FailedResponse<GarminProblem>): Error {
   const code = failed.problem?.code;
-  if (code === ErrorCode.garminAuthExpired) {
-    return new DomainError(
-      ErrorCode.garminAuthExpired,
-      409,
-      "Garmin rejected the saved login. Connect Garmin again.",
-    );
-  }
+  if (code === ErrorCode.garminAuthExpired) return authExpired();
   if (code === ErrorCode.garminRateLimited || failed.status === 429) {
-    return new DomainError(
-      ErrorCode.garminRateLimited,
-      429,
-      "Garmin is limiting requests. Try again later.",
-      { retryAfterSeconds: retryAfterSeconds(failed) },
-    );
+    return rateLimited(retryAfterSeconds(failed));
   }
-  if (code === ErrorCode.garminUnavailable || failed.status >= 500) {
-    return new DomainError(
-      ErrorCode.garminUnavailable,
-      502,
-      "Garmin is not answering. Try again later.",
-    );
-  }
-  if (code === ErrorCode.notFound) {
-    // Garmin answered that the item is gone (deleted on Garmin Connect); the caller words it for its item.
-    return new DomainError(ErrorCode.notFound, 404, "Garmin Connect has no such item.");
-  }
+  if (code === ErrorCode.garminUnavailable || failed.status >= 500) return unavailable();
+  if (code === ErrorCode.notFound) return notFound();
   if (failed.status === 401) {
     // Our own misconfiguration, not the runner's: a 500 with the details in the log.
     return new Error(`The Garmin service rejected the shared secret on ${path}`);
@@ -132,6 +154,26 @@ function toError(path: string, failed: FailedResponse<GarminProblem>): Error {
   return new Error(
     `The Garmin service answered ${failed.status} (${code ?? "no problem body"}) on ${path}`,
   );
+}
+
+/**
+ * The error a workout batch's stop stands for: what the service would have answered had the failure ended
+ * the whole request, so callers gate a 429 and count an expired login the same way. A stop on any other
+ * code (a bug in the service mid-batch) is ours to fix: a 500.
+ */
+export function workoutStopError(stop: GarminWorkoutStop): Error {
+  switch (stop.code) {
+    case ErrorCode.garminAuthExpired:
+      return authExpired();
+    case ErrorCode.garminRateLimited:
+      return rateLimited(stop.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_S);
+    case ErrorCode.garminUnavailable:
+      return unavailable();
+    case ErrorCode.notFound:
+      return notFound();
+    default:
+      return new Error(`The Garmin service stopped a workout batch with ${stop.code}`);
+  }
 }
 
 function noAnswer(cause: unknown): DomainError {
@@ -235,6 +277,15 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
         request,
         garminSeriesResponseSchema,
         SYNC_TIMEOUT_MS,
+        callOptions,
+      ),
+    syncWorkouts: (request, callOptions) =>
+      post(
+        "/workouts/sync",
+        garminWorkoutSyncRequestSchema,
+        request,
+        garminWorkoutSyncResponseSchema,
+        WORKOUT_SYNC_TIMEOUT_MS,
         callOptions,
       ),
   };

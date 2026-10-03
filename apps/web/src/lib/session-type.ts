@@ -1,17 +1,9 @@
-import type { SessionType } from "@running-coach/shared";
+import { SESSION_TYPE_NAMES, type SessionType } from "@running-coach/shared";
 
-/** The one place a session type becomes a word; the chip and the screen-reader names read it from here. */
-const SESSION_TYPE_NAMES: Readonly<Record<SessionType, string>> = {
-  easy: "Easy",
-  intervals: "Intervals",
-  tempo: "Tempo",
-  long: "Long run",
-  race_practice: "Race practice",
-  race: "Race",
-  strength: "Strength",
-  rest: "Rest",
-};
-
+/**
+ * A session type as a word, from the shared list the watch's workout names read too, so the chip, the
+ * screen-reader names and Garmin never disagree.
+ */
 export function sessionTypeName(type: SessionType): string {
   return SESSION_TYPE_NAMES[type];
 }

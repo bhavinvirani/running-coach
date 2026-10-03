@@ -1,13 +1,31 @@
-import { meResponseSchema } from "@running-coach/shared";
+import { meResponseSchema, type UpdateSettingsRequest } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
 import { garminConnection, userSettings } from "../../src/db/schema";
+import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
+import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { encrypt } from "../../src/lib/crypto";
 import { createTestApp, expectProblem, ownerId, signedInAgent, TEST_OWNER } from "../helpers";
+import { connectGarmin } from "../seed";
+
+// pg-boss runs without workers, so a queued workout push stays queued.
 
 const app = createTestApp();
+
+beforeAll(async () => {
+  const boss = await startBoss();
+  await boss.createQueue(pushQueue.name, pushQueue.queue);
+});
+
+afterAll(async () => {
+  await stopBoss();
+});
+
+async function pushJobs(userId: string) {
+  return getBoss().findJobs(pushQueue.name, { key: userId });
+}
 
 describe("GET /api/me", () => {
   it("returns the user with the default settings created with the account", async () => {
@@ -153,6 +171,40 @@ describe("PATCH /api/me/settings", () => {
 
     expectProblem(empty, 400, "validation");
     expectProblem(broken, 400, "validation");
+  });
+
+  it.each<[string, UpdateSettingsRequest]>([
+    ["units (unit conversion)", { units: "mi" }],
+    ["time zone (time zones)", { timezone: "Europe/Berlin" }],
+  ])(
+    "queues a workout push when the %s changes, since every workout's name or the window moves",
+    async (_, patch) => {
+      const agent = await signedInAgent(app);
+      const userId = await ownerId();
+      await connectGarmin(userId);
+
+      expect((await agent.patch("/api/me/settings").send(patch)).status).toBe(200);
+
+      expect(await pushJobs(userId)).toHaveLength(1);
+    },
+  );
+
+  it("queues no workout push for an unchanged value, a coach-detail change or a login that does not work", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await connectGarmin(userId);
+
+    for (const patch of [{ units: "km" }, { timezone: "UTC" }, { coachDetail: "detailed" }]) {
+      expect((await agent.patch("/api/me/settings").send(patch)).status).toBe(200);
+    }
+    expect(await pushJobs(userId)).toEqual([]);
+
+    await db
+      .update(garminConnection)
+      .set({ status: "expired" })
+      .where(eq(garminConnection.userId, userId));
+    expect((await agent.patch("/api/me/settings").send({ units: "mi" })).status).toBe(200);
+    expect(await pushJobs(userId)).toEqual([]);
   });
 
   it("returns 401 without a session and changes nothing", async () => {

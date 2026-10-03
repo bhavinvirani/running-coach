@@ -14,6 +14,7 @@ from garminconnect import (
 
 from garmin_service.client import (
     GARMIN_CALL_GAP_S,
+    GARMIN_RETRY_ATTEMPTS,
     GarminSession,
     connect_fixture,
     connect_real,
@@ -64,6 +65,25 @@ def test_keeps_the_gap_after_a_call_that_failed() -> None:
         session.call(fail)
     session.call(lambda: None)
 
+    assert clock.slept == [pytest.approx(1.0)]
+
+
+def test_call_once_turns_the_librarys_retries_off_for_one_call_and_back_on_after_it_fails() -> None:
+    clock = FakeClock()
+    garmin = ScriptedGarmin()
+    session = GarminSession(garmin, gap_s=1.0, sleep=clock.sleep, clock=clock)
+    seen: list[int] = []
+
+    def fail() -> None:
+        seen.append(garmin.retry_attempts)
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        session.call_once(fail)
+    session.call(lambda: seen.append(garmin.retry_attempts))
+
+    assert seen == [0, GARMIN_RETRY_ATTEMPTS]
+    # Still one paced call among the others.
     assert clock.slept == [pytest.approx(1.0)]
 
 

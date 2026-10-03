@@ -39,6 +39,9 @@ class TokenStore(Protocol):
 class GarminApi(Protocol):
     """The part of garminconnect.Garmin the routes use. FakeGarmin implements the same."""
 
+    # The library's own retries of a read (Garmin(retry_attempts=...)), looked up on every call.
+    retry_attempts: int
+
     @property
     def client(self) -> TokenStore: ...
 
@@ -78,6 +81,19 @@ class GarminApi(Protocol):
     # Typed dict by the library; Garmin answers a list of records ({} on 204 No Content).
     def get_personal_record(self) -> dict[str, Any] | list[Any]: ...
 
+    # The four writes go through the library's client.post and client.delete directly: no retries
+    # (errors.from_write_exception). `workout` is a garminconnect.workout.RunningWorkout.
+    def upload_running_workout(self, workout: Any) -> dict[str, Any]: ...
+
+    def schedule_workout(self, workout_id: int | str, date_str: str) -> dict[str, Any]: ...
+
+    def unschedule_workout(self, scheduled_workout_id: int | str) -> Any: ...
+
+    def delete_workout(self, workout_id: int | str) -> Any: ...
+
+    # month is 1-based; the library sends Garmin the 0-based month.
+    def get_scheduled_workouts(self, year: int | str, month: int | str) -> dict[str, Any]: ...
+
 
 class GarminSession:
     """One logged-in client for one request.
@@ -110,6 +126,15 @@ class GarminSession:
             return fn(*args, **kwargs)
         finally:
             self._last_call_end = self._clock()
+
+    def call_once[**P, R](self, fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
+        """call() with the library's retries off: one try of a read that must fit a time budget."""
+        retries = self.api.retry_attempts
+        self.api.retry_attempts = 0
+        try:
+            return self.call(fn, *args, **kwargs)
+        finally:
+            self.api.retry_attempts = retries
 
     def token_bundle(self) -> str:
         """The bundle to hand back: refreshed when login rotated the tokens, else unchanged."""

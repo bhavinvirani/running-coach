@@ -2,6 +2,7 @@ import type { MeResponse, UpdateSettingsRequest } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { garminConnection, user, userSettings } from "../db/schema";
+import { queueWorkoutPush } from "./workout-push";
 
 /**
  * Inserts the user's settings row with the column defaults (km, UTC, standard). Runs when the user is created
@@ -51,11 +52,28 @@ export async function getMe(userId: string): Promise<MeResponse> {
   };
 }
 
-/** PATCH /api/me/settings: applies the given fields and returns the new state. */
+/**
+ * PATCH /api/me/settings: applies the given fields and returns the new state. A change of units renames
+ * every workout on the watch and a change of time zone moves the push window, so either queues a workout
+ * push (only while the Garmin login works, as queueWorkoutPush decides); the coach detail does neither.
+ */
 export async function updateSettings(
   userId: string,
   patch: UpdateSettingsRequest,
 ): Promise<MeResponse> {
-  await db.update(userSettings).set(patch).where(eq(userSettings.userId, userId));
+  const changed = await db.transaction(async (tx) => {
+    const [before] = await tx
+      .select({ units: userSettings.units, timezone: userSettings.timezone })
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId))
+      .for("update");
+    await tx.update(userSettings).set(patch).where(eq(userSettings.userId, userId));
+    return (
+      before !== undefined &&
+      ((patch.units !== undefined && patch.units !== before.units) ||
+        (patch.timezone !== undefined && patch.timezone !== before.timezone))
+    );
+  });
+  if (changed) await queueWorkoutPush(userId);
   return getMe(userId);
 }

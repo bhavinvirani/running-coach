@@ -12,8 +12,15 @@ export type { StartVolumeInput, StartVolumeResult } from "./rules/baseline";
 export { bestEfforts } from "./rules/best-efforts";
 export type { BestEffort, BestEffortsInput } from "./rules/best-efforts";
 export { hardShareHolds, hardTimeS } from "./rules/easy-share";
-export { isSpacedFromHardDay, weekLayout } from "./rules/hard-days";
-export type { WeekLayout, WeekLayoutInput } from "./rules/hard-days";
+export { garminWorkout } from "./rules/garmin-workout";
+export type { GarminWorkoutInput } from "./rules/garmin-workout";
+export { hardSessionTooClose, isSpacedFromHardDay, weekLayout } from "./rules/hard-days";
+export type {
+  DatedSession,
+  HardSessionTooCloseInput,
+  WeekLayout,
+  WeekLayoutInput,
+} from "./rules/hard-days";
 export {
   longestInWindowM,
   longestRunSeedM,

@@ -28,6 +28,8 @@ import {
   formatPaceValue,
   formatPercent,
   formatRecordTime,
+  formatShortDay,
+  formatUpcomingDay,
   formatStepDistance,
   formatStepDuration,
   formatTime,
@@ -571,5 +573,26 @@ describe("formatTwoDigits", () => {
   it("shows the missing mark for a negative or non-finite figure", () => {
     expect(formatTwoDigits(-1)).toBe(MISSING);
     expect(formatTwoDigits(Number.NaN)).toBe(MISSING);
+  });
+});
+
+describe("formatShortDay", () => {
+  it("names a date by its weekday and day of the month", () => {
+    expect(formatShortDay("2026-10-08")).toBe("Thu 8");
+    expect(formatShortDay("2026-11-01")).toBe("Sun 1");
+  });
+
+  it("shows the dash for a missing or impossible date", () => {
+    expect(formatShortDay(null)).toBe(MISSING);
+    expect(formatShortDay("2026-02-30")).toBe(MISSING);
+  });
+});
+
+describe("formatUpcomingDay", () => {
+  it("says Today and Tomorrow, then the short day, across a month end", () => {
+    expect(formatUpcomingDay("2026-10-30", "2026-10-30")).toBe("Today");
+    expect(formatUpcomingDay("2026-10-31", "2026-10-30")).toBe("Tomorrow");
+    expect(formatUpcomingDay("2026-11-01", "2026-10-30")).toBe("Sun 1");
+    expect(formatUpcomingDay("2026-11-01", "2026-10-31")).toBe("Tomorrow");
   });
 });
