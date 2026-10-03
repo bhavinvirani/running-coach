@@ -160,6 +160,27 @@ describe("analyze-run job", () => {
     ]);
   });
 
+  it("stores the request_rejected card on the first attempt, without a retry and with one Claude call, when Claude turns the request down (Claude quota or timeout)", async () => {
+    const { userId, key, run } = await runWithKey("request-rejected");
+
+    const job = await waitForJobState(await enqueueAnalyzeRun({ userId, activityId: run.id }), [
+      "completed",
+      "retry",
+      "failed",
+    ]);
+
+    expect(job).toMatchObject({ state: "completed", retryCount: 0 });
+    expect(job.output).toMatchObject({ status: "stored", fallbackReason: "request_rejected" });
+    expect(await claudeRequests(key!)).toHaveLength(1);
+    expect(await db.select().from(coachMessage)).toMatchObject([
+      { model: null, fallbackReason: "request_rejected" },
+    ]);
+    expect(await getInsight(userId, run.id)).toMatchObject({
+      state: "ready",
+      insight: { fallbackReason: "request_rejected" },
+    });
+  });
+
   it("completes and stores nothing when the key was removed after the run was queued", async () => {
     const { userId, key, run } = await runWithKey("valid");
     await setSettings(userId, { claudeKeyEnc: null });

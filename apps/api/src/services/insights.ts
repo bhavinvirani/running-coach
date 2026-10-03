@@ -20,6 +20,7 @@ import {
 import { analyzeRunState, enqueueAnalyzeRun } from "../jobs/analyze-run-queue";
 import { decrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
+import { localDateOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
 
 // The coach's card for a run: its state for the run screen, Ask the coach, thumbs, the analyze-run job's
@@ -84,9 +85,11 @@ function ready(card: CoachMessage): InsightResponse {
  */
 export async function getInsight(userId: string, activityId: string): Promise<InsightResponse> {
   await ownRun(userId, activityId);
+  // The job's state before the card: a job that stores its card and completes between the two reads is
+  // then seen by the card read. The other way round it is seen by neither, and the answer is none.
+  const live = await analyzeRunState(activityId);
   const card = await readCard(activityId);
   if (card && card.model !== null) return ready(card);
-  const live = await analyzeRunState(activityId);
   if (live) return { state: live };
   if (card) return ready(card);
   return { state: (await hasClaudeKey(userId)) ? "none" : "no_key" };
@@ -149,14 +152,21 @@ function toInsightSession(row: {
 
 /**
  * The sessions of the run's local date and the next one, from the active plan and the runner's custom
- * workouts (the calendar's sources), plan sessions first on a day. Null without an active plan.
+ * workouts (the calendar's sources), plan sessions first on a day. Null without an active plan, and for
+ * a run from before the active plan started, which the plan says nothing about. The next session is
+ * after the run's date and not before the user's today: nothing marks a session missed until slice 9,
+ * so a past session still reads planned.
  */
-async function insightPlan(userId: string, date: string): Promise<InsightPlan | null> {
+async function insightPlan(
+  userId: string,
+  date: string,
+  today: string,
+): Promise<InsightPlan | null> {
   const [active] = await db
-    .select({ id: plan.id })
+    .select({ id: plan.id, startDate: plan.startDate })
     .from(plan)
     .where(and(eq(plan.userId, userId), eq(plan.status, "active")));
-  if (!active) return null;
+  if (!active || date < active.startDate) return null;
 
   const columns = {
     date: planSession.date,
@@ -179,7 +189,12 @@ async function insightPlan(userId: string, date: string): Promise<InsightPlan | 
     .select(columns)
     .from(planSession)
     .where(
-      and(sources, gt(planSession.date, date), inArray(planSession.status, ["planned", "moved"])),
+      and(
+        sources,
+        gt(planSession.date, date),
+        gte(planSession.date, today),
+        inArray(planSession.status, ["planned", "moved"]),
+      ),
     )
     .orderBy(...order)
     .limit(1);
@@ -194,9 +209,12 @@ export type AnalyzeRunOutcome =
 export interface AnalyzeRunOptions {
   /** The job's last try: a timeout or Claude down then stores the fallback card instead of throwing. */
   lastAttempt: boolean;
+  /** The clock the user's today is read from, for the next planned session; tests pin it. */
+  now?: Date;
 }
 
-// Claude did not answer: worth another try later. Any other fallback reason gives the same answer again.
+// Claude did not answer: worth another try later. Any other fallback reason, request_rejected (no credit
+// left) included, gives the same answer again.
 const RETRYABLE_REASONS: ReadonlySet<CoachFallbackReason> = new Set(["timeout", "unavailable"]);
 
 function isForeignKeyViolation(error: unknown): boolean {
@@ -209,12 +227,13 @@ function isForeignKeyViolation(error: unknown): boolean {
  * card but never the coach's own, so a double fire makes no second call and never two cards. The plan
  * lines come from the run's own local date (start_local), never its UTC date. A timeout or Claude down
  * before the last attempt stores nothing and throws claude_unavailable, so pg-boss retries with backoff;
- * a refusal, max_tokens, invalid output or a rejected key store the fallback card at once.
+ * a refusal, max_tokens, invalid output, a rejected key or a request Claude turned down store the
+ * fallback card at once.
  */
 export async function analyzeRun(
   userId: string,
   activityId: string,
-  { lastAttempt }: AnalyzeRunOptions,
+  { lastAttempt, now = new Date() }: AnalyzeRunOptions,
 ): Promise<AnalyzeRunOutcome> {
   const [run] = await db
     .select()
@@ -226,6 +245,7 @@ export async function analyzeRun(
   const [settings] = await db
     .select({
       units: userSettings.units,
+      timezone: userSettings.timezone,
       coachDetail: userSettings.coachDetail,
       claudeKeyEnc: userSettings.claudeKeyEnc,
     })
@@ -237,7 +257,11 @@ export async function analyzeRun(
     apiKey: decrypt(settings.claudeKeyEnc, userId),
     activity: run,
     settings: { units: settings.units, coachDetail: settings.coachDetail },
-    plan: await insightPlan(userId, run.startLocal.slice(0, "YYYY-MM-DD".length)),
+    plan: await insightPlan(
+      userId,
+      run.startLocal.slice(0, "YYYY-MM-DD".length),
+      localDateOf(now, settings.timezone),
+    ),
   });
   const context = {
     userId,

@@ -30,7 +30,13 @@ export interface CoachUsage {
 }
 
 export type CoachFailure =
-  "refusal" | "max_tokens" | "invalid_output" | "timeout" | "unavailable" | "key_invalid";
+  | "refusal"
+  | "max_tokens"
+  | "invalid_output"
+  | "timeout"
+  | "unavailable"
+  | "key_invalid"
+  | "request_rejected";
 
 export type CoachResult<T> =
   | { ok: true; output: T; model: string; usage: CoachUsage; requestId: string | null }
@@ -84,22 +90,30 @@ function usageOf(message: Anthropic.Message): CoachUsage {
   return { inputTokens: message.usage.input_tokens, outputTokens: message.usage.output_tokens };
 }
 
-function isRetryable(error: unknown): boolean {
-  if (error instanceof Anthropic.APIConnectionTimeoutError) return false;
-  if (error instanceof Anthropic.APIConnectionError) return true;
-  if (error instanceof Anthropic.APIError && typeof error.status === "number") {
-    return error.status === 429 || error.status >= 500;
-  }
-  return false;
-}
+type ThrownFailure = Extract<
+  CoachFailure,
+  "timeout" | "key_invalid" | "unavailable" | "request_rejected"
+>;
 
-/** What a thrown SDK error means, for a message and the key check alike; undefined is not Claude's. */
-function failureOf(error: unknown): "timeout" | "key_invalid" | "unavailable" | undefined {
+/**
+ * What a thrown SDK error means for a message; undefined is not Claude's. Only unavailable is worth
+ * another try: a timeout already spent the budget, and a rejected key or request gets the same answer.
+ */
+function failureOf(error: unknown): ThrownFailure | undefined {
   if (error instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
+  if (error instanceof Anthropic.APIConnectionError) return "unavailable";
   if (error instanceof Anthropic.AuthenticationError) return "key_invalid";
   if (error instanceof Anthropic.PermissionDeniedError) return "key_invalid";
-  // Any other status (429, 5xx, 529) or a dropped connection: Claude, not the key.
-  if (error instanceof Anthropic.APIError) return "unavailable";
+  if (error instanceof Anthropic.APIError) {
+    const status: unknown = error.status;
+    // No status means no answer. 408, 409, 429 and 5xx (529 overloaded included): Claude busy or down.
+    if (typeof status !== "number" || [408, 409, 429].includes(status) || status >= 500) {
+      return "unavailable";
+    }
+    // Any other 4xx (400 credit balance too low, 404 model not found, 413): Claude turned this request
+    // down for good, so a retry would only bill the same refusal again.
+    return "request_rejected";
+  }
   return undefined;
 }
 
@@ -136,9 +150,10 @@ function parseOutput<T extends z.ZodType>(
 }
 
 /**
- * Calls Claude once with COACH_MODEL at low effort. On 429, 529, 5xx or a dropped connection it waits
- * with jitter and tries once more, on COACH_FALLBACK_MODEL: the primary is likely still overloaded and
- * the fallback has its own rate limits. A timeout is not retried; the 60 s already spent is the budget.
+ * Calls Claude once with COACH_MODEL at low effort. On 408, 409, 429, 5xx (529 included) or a dropped
+ * connection it waits with jitter and tries once more, on COACH_FALLBACK_MODEL: the primary is likely
+ * still overloaded and the fallback has its own rate limits. A timeout is not retried, the 60 s already
+ * spent is the budget; nor is a rejected key or any other 4xx, which would get the same answer.
  */
 export async function callCoach<T extends z.ZodType>(
   call: CoachCall<T>,
@@ -204,13 +219,13 @@ export async function callCoach<T extends z.ZodType>(
       };
     } catch (error) {
       const { status, claudeRequestId } = errorContext(error);
-      if (isRetryable(error) && attempt < models.length - 1) {
+      const failure = failureOf(error);
+      if (!failure) throw error;
+      if (failure === "unavailable" && attempt < models.length - 1) {
         log.warn({ promptVersion, model, status, claudeRequestId }, "coach call failed; retrying");
         await sleep(RETRY_BASE_DELAY_MS + Math.random() * RETRY_BASE_DELAY_MS);
         continue;
       }
-      const failure = failureOf(error);
-      if (!failure) throw error;
       log.warn({ promptVersion, model, status, claudeRequestId, failure }, "coach call failed");
       return { ok: false, failure, usage: null, requestId: claudeRequestId };
     }
@@ -238,8 +253,11 @@ export async function checkClaudeKey(apiKey: string): Promise<ClaudeKeyCheck> {
     log.info({ claudeRequestId, durationMs: Date.now() - started }, "claude key accepted");
     return "ok";
   } catch (error) {
-    const result = failureOf(error);
-    if (!result) throw error;
+    const failure = failureOf(error);
+    if (!failure) throw error;
+    // GET /v1/models takes no model and no credit, so any other 4xx says nothing against the key: Claude
+    // could not tell us, and the user can press Save again.
+    const result: ClaudeKeyCheck = failure === "request_rejected" ? "unavailable" : failure;
     log.warn(
       { ...errorContext(error), result, durationMs: Date.now() - started },
       "claude key check failed",

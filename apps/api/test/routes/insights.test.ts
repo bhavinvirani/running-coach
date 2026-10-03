@@ -4,7 +4,7 @@ import path from "node:path";
 import { type CoachFallbackReason, insightResponseSchema } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { coachMessage } from "../../src/db/schema";
 import * as analyzeRunQueue from "../../src/jobs/analyze-run-queue";
@@ -46,6 +46,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   askCoachLimiter.reset();
+  vi.restoreAllMocks();
 });
 
 async function owner({ key = false }: { key?: boolean } = {}) {
@@ -142,6 +143,24 @@ describe("GET /api/activities/:id/insight", () => {
     const [again] = await getBoss().fetch(analyzeRunQueue.name, { ignoreStartAfter: true });
     expect(again).toMatchObject({ retryCount: 1 });
     expect((await agent.get(insightPath(run.id))).body).toEqual({ state: "retrying" });
+  });
+
+  it("answers ready, not none, when the job stores its card and completes while the run screen reads (a race with the job)", async () => {
+    const { agent, userId, run } = await owner({ key: true });
+    const id = await analyzeRunQueue.enqueueAnalyzeRun({ userId, activityId: run.id });
+    await getBoss().fetch(analyzeRunQueue.name);
+    const boss = getBoss();
+    const findJobs = boss.findJobs.bind(boss);
+    // The job finishes just as getInsight reads the job's state.
+    vi.spyOn(boss, "findJobs").mockImplementationOnce(async (...args) => {
+      await storeCard(userId, run.id);
+      await boss.complete(analyzeRunQueue.name, id!);
+      return findJobs(...args);
+    });
+
+    const response = await agent.get(insightPath(run.id));
+
+    expect(response.body).toMatchObject({ state: "ready", insight: { fallbackReason: null } });
   });
 
   it("answers ready with the fallback card when no job is live", async () => {

@@ -20,8 +20,9 @@ import {
 import type { RunInsight } from "./schema";
 
 // The card shown when there is no usable model output: no key, a refusal, max_tokens, invalid JSON, a
-// timeout, Claude being down or a rejected key. Built from the run's numbers and the next planned
-// session alone, in the same shape as the model's. The reason is the shared enum the API stores.
+// timeout, Claude being down, a rejected key or a request Claude turned down (no credit left). Built
+// from the run's numbers and the next planned session alone, in the same shape as the model's. The
+// reason is the shared enum the API stores.
 
 export type RunInsightFallbackReason = CoachFallbackReason;
 
@@ -34,7 +35,9 @@ type _EveryFailureIsAFallbackReason = Assert<
 
 const WHY: Record<RunInsightFallbackReason, string> = {
   missing_key: "No coach review: add your Claude API key in Settings to get one after each run.",
-  key_invalid: "No coach review: Claude rejected your API key. Update it in Settings.",
+  key_invalid: "No coach review: Claude rejected your API key. Replace it in Settings.",
+  request_rejected:
+    "No coach review: Claude turned the request down, often because the account has no credit left. Check billing in the Claude Console, then tap Try again.",
   refusal: "No coach review this time. These are the run's numbers only.",
   max_tokens: "No coach review this time. These are the run's numbers only.",
   invalid_output: "No coach review this time. These are the run's numbers only.",

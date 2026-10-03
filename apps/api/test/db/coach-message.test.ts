@@ -7,6 +7,7 @@ import { createLongRun, createUser } from "../seed";
 
 // 0004_create_coach_message: what the coach wrote, tied to its user and (for insights) its run.
 // 0013_add_coach_fallback_reason: why a card is the fallback, and at most one insight per run.
+// 0014_add_request_rejected_fallback_reason: the CHECK takes Claude turning the request down for good.
 
 const content = {
   headline: "18.0 km in 1:42:00 at 5:40 /km.",
@@ -97,6 +98,25 @@ describe("coach_message", () => {
         db.insert(coachMessage).values({ ...base, fallbackReason: "busy" as never }),
       ),
     ).toBe("23514");
+  });
+
+  it("stores a request_rejected card (Claude turned the request down: no credit, no model access)", async () => {
+    const userId = await createUser();
+    const run = await createLongRun(userId);
+
+    const [row] = await db
+      .insert(coachMessage)
+      .values({
+        userId,
+        kind: "insight",
+        activityId: run.id,
+        promptVersion: "run-insight/v1",
+        content,
+        fallbackReason: "request_rejected",
+      })
+      .returning();
+
+    expect(row).toMatchObject({ model: null, fallbackReason: "request_rejected" });
   });
 
   it("reads a card written before 0013 as the model's, with no fallback reason", async () => {

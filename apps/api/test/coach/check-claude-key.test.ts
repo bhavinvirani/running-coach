@@ -42,6 +42,13 @@ describe("checkClaudeKey", () => {
     expect(await modelRequests(key)).toHaveLength(1);
   });
 
+  it("says unavailable, not key_invalid, when Claude turns the free models list down with another 4xx", async () => {
+    const key = claudeKey("request-rejected");
+
+    expect(await checkClaudeKey(key)).toBe("unavailable");
+    expect(await modelRequests(key)).toHaveLength(1);
+  });
+
   it("says timeout when Claude answers slower than the check waits", async () => {
     expect(await checkClaudeKey(claudeKey("timeout"))).toBe("timeout");
   });

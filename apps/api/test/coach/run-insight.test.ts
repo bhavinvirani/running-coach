@@ -67,6 +67,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Noon UTC on the plan tests' run day, Wednesday 7 October 2026: today is the run's date. */
+const RUN_DAY_NOON = new Date("2026-10-07T12:00:00Z");
+
 describe("analyzeRun", () => {
   it("stores the coach's card with prompt_version, model and usage", async () => {
     const { outcome, run, requests } = await analyze("valid");
@@ -128,7 +131,7 @@ describe("analyzeRun", () => {
     },
   );
 
-  it("stores the update-key card at once, without retrying, when Claude rejects the key (invalid or expired key)", async () => {
+  it("stores the replace-key card at once, without retrying, when Claude rejects the key (invalid or expired key)", async () => {
     const { outcome, requests } = await analyze("key-invalid", { lastAttempt: false });
 
     expect(requests).toHaveLength(1);
@@ -136,9 +139,49 @@ describe("analyzeRun", () => {
     const card = await onlyCard();
     expect(card).toMatchObject({ model: null, usage: null, fallbackReason: "key_invalid" });
     expect((card.content as { whatItMeans: string }).whatItMeans).toContain(
-      "Update it in Settings",
+      "Replace it in Settings",
     );
   });
+
+  it("stores the request_rejected card on the first attempt with one Claude call, without throwing, when Claude turns the request down for lack of credit (Claude quota or timeout)", async () => {
+    const { outcome, requests } = await analyze("request-rejected", { lastAttempt: false });
+
+    expect(requests).toHaveLength(1);
+    expect(outcome).toMatchObject({ status: "stored", fallbackReason: "request_rejected" });
+    const card = await onlyCard();
+    expect(card).toMatchObject({ model: null, usage: null, fallbackReason: "request_rejected" });
+    expect((card.content as { whatItMeans: string }).whatItMeans).toContain(
+      "Check billing in the Claude Console, then tap Try again.",
+    );
+  });
+
+  it.each([
+    [400, "invalid_request_error", "request_rejected", 1],
+    [404, "not_found_error", "request_rejected", 1],
+    [413, "request_too_large", "request_rejected", 1],
+    [408, "timeout_error", "unavailable", 2],
+    [409, "conflict_error", "unavailable", 2],
+  ] as const)(
+    "turns a %i from Claude into %s and retries only a transient status, on the fallback model",
+    async (status, type, reason, calls) => {
+      const { userId } = await userWithKey("valid");
+      const run = await createLongRun(userId);
+      const claude = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ type: "error", error: { type, message: "refused" } }), {
+            status,
+            headers: { "content-type": "application/json", "request-id": "req_fake_status" },
+          }),
+        ),
+      );
+
+      const outcome = await analyzeRun(userId, run.id, { lastAttempt: true });
+
+      expect(outcome).toMatchObject({ status: "stored", fallbackReason: reason });
+      expect(claude).toHaveBeenCalledTimes(calls);
+      expect(await onlyCard()).toMatchObject({ model: null, fallbackReason: reason });
+    },
+  );
 
   it.each([
     ["timeout", 1],
@@ -324,7 +367,7 @@ describe("analyzeRun", () => {
     });
     await createSession(userId, active.id, { date: "2026-10-08", type: "long" });
 
-    await analyzeRun(userId, run.id, { lastAttempt: false });
+    await analyzeRun(userId, run.id, { lastAttempt: false, now: RUN_DAY_NOON });
 
     const message = await sentMessage(key!);
     expect(message).toMatch(/^Planned that day: Tempo \(tempo\)[^;\n]*$/m);
@@ -355,7 +398,7 @@ describe("analyzeRun", () => {
       status: "moved",
     });
 
-    await analyzeRun(userId, run.id, { lastAttempt: false });
+    await analyzeRun(userId, run.id, { lastAttempt: false, now: RUN_DAY_NOON });
 
     const message = await sentMessage(key!);
     expect(message).toMatch(
@@ -374,11 +417,49 @@ describe("analyzeRun", () => {
       startLocal: "2026-10-07 08:00:00",
     });
 
-    await analyzeRun(userId, run.id, { lastAttempt: false });
+    await analyzeRun(userId, run.id, { lastAttempt: false, now: RUN_DAY_NOON });
 
     const message = await sentMessage(key!);
     expect(message).toContain("Planned that day: nothing");
     expect(message).toContain("Next planned session: none");
+  });
+
+  it("names the next session from the user's today, not a past session still marked planned (missed or moved sessions, time zones)", async () => {
+    const { userId, key } = await userWithKey("valid");
+    await setSettings(userId, { timezone: "Pacific/Auckland" });
+    const active = await createPlan(userId);
+    const run = await createRun(userId, {
+      startUtc: new Date("2026-10-07T06:00:00Z"),
+      startLocal: "2026-10-07 08:00:00",
+    });
+    await createSession(userId, active.id, { date: "2026-10-08", type: "tempo" });
+    await createSession(userId, active.id, { date: "2026-10-09", type: "long" });
+    await createSession(userId, active.id, { date: "2026-10-10", type: "intervals" });
+
+    // 13:00 UTC on Friday 9 October is 02:00 on Saturday 10 October in Auckland (NZDT, UTC+13).
+    await analyzeRun(userId, run.id, {
+      lastAttempt: false,
+      now: new Date("2026-10-09T13:00:00Z"),
+    });
+
+    expect(await sentMessage(key!)).toMatch(
+      /^Next planned session: Saturday 10 October 2026, Intervals \(intervals\)/m,
+    );
+  });
+
+  it("tells the coach Plan: none for a run from before the active plan started", async () => {
+    const { userId, key } = await userWithKey("valid");
+    const active = await createPlan(userId, { startDate: "2026-09-28" });
+    const run = await createLongRun(userId);
+    await createSession(userId, null, { date: "2026-09-27", title: "Hill sprints" });
+    await createSession(userId, active.id, { date: "2026-09-29", type: "tempo" });
+
+    await analyzeRun(userId, run.id, { lastAttempt: false, now: new Date("2026-09-27T12:00:00Z") });
+
+    const message = await sentMessage(key!);
+    expect(message).toContain("Plan: none");
+    expect(message).not.toContain("Planned that day");
+    expect(message).not.toContain("Next planned session");
   });
 });
 
