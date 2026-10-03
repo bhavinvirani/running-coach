@@ -232,6 +232,33 @@ describe("analyzeRun", () => {
     });
   });
 
+  it("throws claude_unavailable and stores nothing when the fallback model is missing (404) after an overloaded primary, so the job retries instead of storing the billing card", async () => {
+    const { userId, key } = await userWithKey("fallback-model-missing");
+    const run = await createLongRun(userId);
+
+    await expect(analyzeRun(userId, run.id, { lastAttempt: false })).rejects.toMatchObject({
+      code: ErrorCode.claudeUnavailable,
+      status: 502,
+    });
+
+    expect(await cards()).toEqual([]);
+    expect((await claudeRequests(key!)).map((request) => request.body.model)).toEqual([
+      config.COACH_MODEL,
+      config.COACH_FALLBACK_MODEL,
+    ]);
+  });
+
+  it("stores the unavailable card, not request_rejected, at the last attempt when the fallback model is missing after an overloaded primary", async () => {
+    const { outcome } = await analyze("fallback-model-missing", { lastAttempt: true });
+
+    expect(outcome).toMatchObject({ status: "stored", fallbackReason: "unavailable" });
+    expect(await onlyCard()).toMatchObject({
+      model: null,
+      usage: null,
+      fallbackReason: "unavailable",
+    });
+  });
+
   it("makes no call and stores nothing when the key was removed after the job was queued", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const userId = await createUser();

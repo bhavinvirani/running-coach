@@ -60,11 +60,17 @@ describe("buildRunInsightFallback", () => {
     expect(runInsightSchema.parse(card).nextStep).toContain(title);
   });
 
-  it.each([
-    ["the user has no plan", null],
-    ["the plan has nothing after this run", { planned: [], next: null }],
-  ])("keeps the generic next step when %s", (_, plan) => {
-    const card = buildRunInsightFallback(run, km, "max_tokens", plan);
+  it("tells a user with no plan to run easy or rest, not to follow a plan, and keeps the safety sentence", () => {
+    const card = buildRunInsightFallback(run, km, "max_tokens", null);
+
+    expect(card.nextStep).toBe(
+      "Keep your next run easy, or take a rest day. Rest or run easy if anything hurts or you feel unwell.",
+    );
+    expect(card.nextStep).not.toContain("plan");
+  });
+
+  it("keeps the follow-the-plan next step when the plan has nothing after this run", () => {
+    const card = buildRunInsightFallback(run, km, "max_tokens", { planned: [], next: null });
 
     expect(card.nextStep).toBe(
       "Follow the plan for your next session. Rest or run easy if anything hurts or you feel unwell.",

@@ -53,7 +53,9 @@ export const RUN_INSIGHT_FALLBACK_REASONS: readonly RunInsightFallbackReason[] =
 const SAFETY = "Rest or run easy if anything hurts or you feel unwell.";
 
 function nextStepOf(plan: InsightPlan | null, settings: InsightSettings): string {
-  if (!plan?.next) return `Follow the plan for your next session. ${SAFETY}`;
+  // No active plan: there is nothing to follow, so the safe default is an easy run or a rest day.
+  if (!plan) return `Keep your next run easy, or take a rest day. ${SAFETY}`;
+  if (!plan.next) return `Follow the plan for your next session. ${SAFETY}`;
   const session = describeSession(plan.next, settings.units);
   return `Next planned session: ${formatLocalDate(plan.next.date)}, ${session}. Run it as written. ${SAFETY}`;
 }

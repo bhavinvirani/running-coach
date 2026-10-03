@@ -1,0 +1,24 @@
+{
+  "responses": [
+    {
+      "status": 529,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "overloaded_error",
+          "message": "Overloaded"
+        }
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "not_found_error",
+          "message": "model: claude-retired-model"
+        }
+      }
+    }
+  ]
+}

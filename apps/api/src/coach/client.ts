@@ -153,7 +153,8 @@ function parseOutput<T extends z.ZodType>(
  * Calls Claude once with COACH_MODEL at low effort. On 408, 409, 429, 5xx (529 included) or a dropped
  * connection it waits with jitter and tries once more, on COACH_FALLBACK_MODEL: the primary is likely
  * still overloaded and the fallback has its own rate limits. A timeout is not retried, the 60 s already
- * spent is the budget; nor is a rejected key or any other 4xx, which would get the same answer.
+ * spent is the budget; nor is a rejected key or any other 4xx, which would get the same answer. A 4xx
+ * from the fallback model after a transient failure comes back as unavailable (see below).
  */
 export async function callCoach<T extends z.ZodType>(
   call: CoachCall<T>,
@@ -225,6 +226,16 @@ export async function callCoach<T extends z.ZodType>(
         log.warn({ promptVersion, model, status, claudeRequestId }, "coach call failed; retrying");
         await sleep(RETRY_BASE_DELAY_MS + Math.random() * RETRY_BASE_DELAY_MS);
         continue;
+      }
+      // Only a transient failure of the primary reaches the fallback model, so its 4xx most likely means a
+      // misconfigured or retired COACH_FALLBACK_MODEL (404), not this request or the account: unavailable
+      // lets the job retry with backoff on the primary instead of storing a card that blames billing.
+      if (failure === "request_rejected" && attempt > 0) {
+        log.error(
+          { promptVersion, model, status, claudeRequestId },
+          "coach fallback model rejected the request; check COACH_FALLBACK_MODEL",
+        );
+        return { ok: false, failure: "unavailable", usage: null, requestId: claudeRequestId };
       }
       log.warn({ promptVersion, model, status, claudeRequestId, failure }, "coach call failed");
       return { ok: false, failure, usage: null, requestId: claudeRequestId };
