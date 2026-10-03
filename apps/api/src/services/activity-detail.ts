@@ -59,6 +59,14 @@ async function readDetail(activityId: string): Promise<ActivityDetail | null> {
   };
 }
 
+async function runExists(userId: string, activityId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: activity.id })
+    .from(activity)
+    .where(and(eq(activity.id, activityId), eq(activity.userId, userId)));
+  return row !== undefined;
+}
+
 async function hasDetail(activityId: string): Promise<boolean> {
   const [row] = await db
     .select({ id: activityStream.id })
@@ -113,7 +121,8 @@ async function saveDetail(
  * them and answers like getActivity. A stored detail is answered without calling Garmin, so a second tap
  * or a concurrent request costs no login. The call runs inside the per-user lock behind the same gates as
  * a sync (not connected, expired, the hour after a 429), and a bundle Garmin rotated is written back. A
- * run deleted on Garmin Connect is a 404 and stores nothing.
+ * run deleted on Garmin Connect is a 404 and stores nothing, and so is one a sync removed while this request
+ * waited for the lock.
  */
 export async function fetchActivityDetail(userId: string, id: string): Promise<ActivityResponse> {
   const [run] = await db
@@ -125,7 +134,9 @@ export async function fetchActivityDetail(userId: string, id: string): Promise<A
   // Without the lock first, so a stored detail never waits behind a running sync.
   if (!(await hasDetail(id))) {
     await withUserLock(userId, async () => {
-      // Again under the lock: a request ahead of this one may have stored it meanwhile.
+      // Again under the lock: a sync ahead of this request may have removed the run (Garmin no longer lists
+      // it), and storing its detail would then fail on the foreign key; a request ahead may have stored it.
+      if (!(await runExists(userId, id))) throw runNotFound();
       if (await hasDetail(id)) return;
       const account = await openGarminAccount(userId);
       let response: GarminActivityDetailResponse;

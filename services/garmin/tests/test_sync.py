@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
-from garminconnect import GarminConnectTooManyRequestsError
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
+from garmin_service.fake_client import FAKE_DELETED_ACTIVITY_ID
 from tests.conftest import AppFactory
 from tests.helpers import (
     BASE_BUNDLE,
@@ -21,10 +27,25 @@ from tests.helpers import (
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
 # The 10.2 km run the runner tagged as a race in Garmin Connect.
 RACE = 10_000_000_002
+# What the API asks for on its last chunk (RECENT_RUNS_CHECKED in packages/shared).
+RECENT_LIMIT = 100
+# The fake account: 49 items newest first, 46 runs, the oldest of 2023-09-17.
+ACCOUNT_ITEMS = 49
+ACCOUNT_RUNS = 46
+OLDEST_RUN_START = "2023-09-17T07:00:00Z"
+OLDEST_RUN_START_LOCAL = "2023-09-17T09:00:00"
 
 
-def sync_body(**overrides: str) -> dict[str, str]:
-    return {"tokenBundle": bundle(), **FULL_RANGE, **overrides}
+def outage() -> Exception:
+    """What garminconnect raises for a 503 once its retries ran out."""
+    error = GarminConnectConnectionError("API call HTTP error")
+    error.__cause__ = GarminConnectConnectionError("API Error 503")
+    return error
+
+
+def sync_body(**overrides: Any) -> dict[str, Any]:
+    """A chunk before the last: the API asks for the newest runs on its last chunk only."""
+    return {"tokenBundle": bundle(), **FULL_RANGE, "recentLimit": 0, **overrides}
 
 
 def test_returns_every_fixture_run_newest_first_with_the_unchanged_bundle(
@@ -391,3 +412,276 @@ def test_returns_the_rotated_bundle_with_a_502_when_garmin_changes_the_item_shap
 
     assert response.status_code == 502
     assert response.json()["tokenBundle"] == new_bundle
+
+
+def test_answers_the_newest_runs_ids_oldest_start_and_listed_count_when_asked(
+    make_client: AppFactory,
+) -> None:
+    response = make_client().post("/sync", json=sync_body(recentLimit=RECENT_LIMIT))
+
+    assert response.status_code == 200
+    recent = response.json()["recent"]
+    assert len(recent["garminActivityIds"]) == ACCOUNT_RUNS
+    assert recent["garminActivityIds"][:3] == [10_000_000_007, 10_000_000_006, 10_000_000_005]
+    assert recent["oldestStartUtc"] == OLDEST_RUN_START
+    assert recent["oldestStartLocal"] == OLDEST_RUN_START_LOCAL
+    # Fewer than asked for: the list reached the account's first run.
+    assert recent["listed"] == ACCOUNT_ITEMS
+    assert len(response.json()["activities"]) == len(read_fixture("sync.json"))
+
+
+def test_lists_the_newest_runs_with_one_more_call_under_the_same_login(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run()])
+
+    make_client(connect=garmin.connect()).post("/sync", json=sync_body(recentLimit=RECENT_LIMIT))
+
+    assert garmin.calls == [
+        "login",
+        "get_activities_by_date:2026-08-31:2026-09-27:running",
+        "get_activities:0:100:running",
+    ]
+
+
+def test_skips_the_newest_runs_call_and_answers_recent_null_when_recent_limit_is_0(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run()])
+
+    response = make_client(connect=garmin.connect()).post("/sync", json=sync_body(recentLimit=0))
+
+    assert response.status_code == 200
+    assert response.json()["recent"] is None
+    assert not any(call.startswith("get_activities:") for call in garmin.calls)
+
+
+def test_answers_only_the_newest_items_up_to_the_limit(make_client: AppFactory) -> None:
+    response = make_client().post("/sync", json=sync_body(recentLimit=3))
+
+    recent = response.json()["recent"]
+    assert recent["garminActivityIds"] == [10_000_000_007, 10_000_000_006, 10_000_000_005]
+    assert recent["oldestStartUtc"] == "2026-09-20T05:45:00Z"
+    assert recent["oldestStartLocal"] == "2026-09-20T07:45:00"
+    assert recent["listed"] == 3
+
+
+def test_answers_the_earliest_local_and_utc_starts_each_on_its_own_clock_when_their_orders_differ(
+    make_client: AppFactory,
+) -> None:
+    """Time zones and DST: a run in Tokyo (UTC+9), a flight over the date line, a run in Honolulu
+    (UTC-10). Garmin lists newest first by local start, so the last item holds the earliest local
+    start but not the earliest UTC one."""
+    garmin = ScriptedGarmin(
+        activities=[raw_run()],
+        list_answer=[
+            raw_run(
+                activityId=43,
+                startTimeLocal="2026-09-20 07:00:00",
+                startTimeGMT="2026-09-20 17:00:00",
+            ),
+            raw_run(
+                activityId=42,
+                startTimeLocal="2026-09-19 20:00:00",
+                startTimeGMT="2026-09-19 11:00:00",
+            ),
+            raw_run(
+                activityId=41,
+                startTimeLocal="2026-09-19 12:00:00",
+                startTimeGMT="2026-09-19 22:00:00",
+            ),
+        ],
+    )
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    recent = response.json()["recent"]
+    assert recent["garminActivityIds"] == [43, 42, 41]
+    assert recent["oldestStartLocal"] == "2026-09-19T12:00:00"
+    assert recent["oldestStartUtc"] == "2026-09-19T11:00:00Z"
+
+
+def test_leaves_a_run_whose_type_changed_away_from_running_out_of_the_newest_runs_but_counts_it(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin(
+        activities=[
+            raw_run(),
+            raw_run(),
+            raw_run(activityId=42, activityType={"typeKey": "walking"}),
+            raw_run(activityId=43, activityType={"typeKey": "trail_running"}),
+        ]
+    )
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    recent = response.json()["recent"]
+    # The same filter as the by-date list: runs only, each id once.
+    assert recent["garminActivityIds"] == [10_000_000_007, 43]
+    assert recent["garminActivityIds"] == [
+        a["garminActivityId"] for a in response.json()["activities"]
+    ]
+    assert recent["listed"] == 4
+
+
+def test_answers_a_null_oldest_start_when_the_newest_items_hold_no_run(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run(activityType={"typeKey": "cycling"})])
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    assert response.json()["recent"] == {
+        "garminActivityIds": [],
+        "oldestStartUtc": None,
+        "oldestStartLocal": None,
+        "listed": 1,
+    }
+
+
+def test_leaves_the_run_deleted_on_garmin_out_of_both_lists_with_the_deleted_run_bundle(
+    make_client: AppFactory,
+) -> None:
+    response = make_client().post(
+        "/sync",
+        json=sync_body(tokenBundle=bundle(fixture="deleted_run"), recentLimit=RECENT_LIMIT),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert FAKE_DELETED_ACTIVITY_ID not in [a["garminActivityId"] for a in body["activities"]]
+    assert len(body["activities"]) == len(read_fixture("sync.json")) - 1
+    assert FAKE_DELETED_ACTIVITY_ID not in body["recent"]["garminActivityIds"]
+    assert len(body["recent"]["garminActivityIds"]) == ACCOUNT_RUNS - 1
+    assert body["recent"]["listed"] == ACCOUNT_ITEMS - 1
+
+
+def test_answers_recent_null_with_the_activities_intact_when_the_newest_runs_call_fails(
+    make_client: AppFactory, capsys: pytest.CaptureFixture[str]
+) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run()], recent_error=outage())
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["recent"] is None
+    assert [a["garminActivityId"] for a in body["activities"]] == [10_000_000_007]
+    assert "could not list the newest runs" in capsys.readouterr().out
+
+
+def test_answers_recent_null_with_the_activities_intact_when_the_newest_runs_are_not_a_list(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run()], list_answer={"activities": []})
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["recent"] is None
+    assert len(response.json()["activities"]) == 1
+
+
+def test_answers_recent_null_when_an_older_item_in_the_newest_runs_has_an_unreadable_shape(
+    make_client: AppFactory,
+) -> None:
+    broken = raw_run(activityId=42, startTimeLocal="2026-08-01 07:00:00")
+    del broken["startTimeGMT"]
+    garmin = ScriptedGarmin(activities=[raw_run()], list_answer=[raw_run(), broken])
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["recent"] is None
+    assert [a["garminActivityId"] for a in response.json()["activities"]] == [10_000_000_007]
+
+
+def test_returns_429_with_the_rotated_bundle_when_the_newest_runs_call_is_rate_limited(
+    make_client: AppFactory,
+) -> None:
+    new_bundle = rotated(bundle())
+    garmin = ScriptedGarmin(
+        activities=[raw_run()],
+        rotate_to=new_bundle,
+        recent_error=GarminConnectTooManyRequestsError("Rate limit exceeded: API Error 429"),
+    )
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    # Every later call would be limited too: the API must start its hour, not sync on.
+    assert response.status_code == 429
+    assert response.json()["code"] == "garmin_rate_limited"
+    assert response.json()["tokenBundle"] == new_bundle
+
+
+def test_returns_401_when_the_login_dies_before_the_newest_runs_call(
+    make_client: AppFactory,
+) -> None:
+    error = GarminConnectAuthenticationError("Unauthorized")
+    error.__cause__ = GarminConnectConnectionError("API Error 401")
+    garmin = ScriptedGarmin(activities=[raw_run()], recent_error=error)
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "garmin_auth_expired"
+
+
+def test_returns_500_when_the_newest_runs_call_fails_with_a_bug(make_client: AppFactory) -> None:
+    garmin = ScriptedGarmin(activities=[raw_run()], recent_error=RuntimeError("boom"))
+
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json=sync_body(recentLimit=RECENT_LIMIT)
+    )
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal"
+
+
+def test_returns_the_rotated_bundle_with_the_activities_and_the_newest_runs(
+    make_client: AppFactory,
+) -> None:
+    response = make_client().post(
+        "/sync", json=sync_body(tokenBundle=bundle(fixture="rotate"), recentLimit=RECENT_LIMIT)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert json.loads(body["tokenBundle"]) == {**BASE_BUNDLE, "fixture": "rotated"}
+    assert len(body["recent"]["garminActivityIds"]) == ACCOUNT_RUNS
+
+
+@pytest.mark.parametrize("recent_limit", [-1, 201, "100", None])
+def test_returns_400_validation_for_a_bad_recent_limit(
+    make_client: AppFactory, recent_limit: object
+) -> None:
+    response = make_client().post("/sync", json=sync_body(recentLimit=recent_limit))
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "validation"
+
+
+def test_returns_400_validation_without_a_recent_limit(make_client: AppFactory) -> None:
+    body = sync_body()
+    del body["recentLimit"]
+
+    response = make_client().post("/sync", json=body)
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "validation"

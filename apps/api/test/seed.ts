@@ -42,7 +42,8 @@ export function garminBundle(
     | "rotate_then_unavailable"
     | "workout_outage"
     | "workout_schedule_outage"
-    | "workout_rate_limited",
+    | "workout_rate_limited"
+    | "deleted_run",
 ): string {
   return JSON.stringify({
     di_token: "fixture-token",

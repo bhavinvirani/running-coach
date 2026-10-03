@@ -1,6 +1,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import type { GarminActivitySummary, SyncResponse } from "@running-coach/shared";
-import { type Column, eq, sql } from "drizzle-orm";
+import {
+  type GarminActivitySummary,
+  type GarminRecentRuns,
+  RECENT_RUNS_CHECKED,
+  type SyncResponse,
+} from "@running-coach/shared";
+import { type Column, and, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
 import { activity, garminConnection } from "../db/schema";
 import { garminClient } from "../garmin/client";
@@ -19,6 +24,11 @@ export const FIRST_SYNC_DAYS = 30;
 const OVERLAP_DAYS = 1;
 // About 1 s between Garmin calls (SPEC); the fixture service has no Garmin behind it.
 const CHUNK_GAP_MS = config.GARMIN_FIXTURES ? 0 : 1000;
+/**
+ * At most this many stored runs go in one sync because Garmin no longer lists them. More at once is a
+ * Garmin glitch (a short or wrong answer), not a runner deleting runs, so then none go.
+ */
+export const MAX_RUNS_REMOVED_PER_SYNC = 10;
 
 export interface SyncGarminInput {
   userId: string;
@@ -39,6 +49,8 @@ export interface SyncGarminResult {
   activitiesSeen: number;
   /** Rows inserted or changed; 0 when everything was already stored. */
   activitiesWritten: number;
+  /** Stored runs removed because Garmin no longer lists them (removeRunsDeletedOnGarmin). */
+  activitiesRemoved: number;
 }
 
 const excluded = (column: Column) => sql`excluded.${sql.identifier(column.name)}`;
@@ -134,19 +146,98 @@ export function syncStartDate(lastSyncAt: Date | null, timeZone: string, today: 
   return daysBetween(start, today) < 0 ? today : start;
 }
 
-/** Saves one finished chunk: runs, then the cursor, together. */
+/**
+ * Deletes the user's stored runs that Garmin's newest runs should hold but do not: deleted on Garmin, or
+ * changed there to another sport, which the running list leaves out too. The checked range is every run
+ * that started after the oldest listed one on both clocks, local and UTC, or the whole history when Garmin
+ * listed fewer items than the RECENT_RUNS_CHECKED the sync asks for, since the list then reached the first
+ * run; a run deleted further back is not seen. Both clocks because Garmin orders the list by local start,
+ * which UTC order can contradict (a flight over the date line, DST, a watch on the wrong zone): a run newer
+ * in UTC but older on the clock may sit past the list's end, and the range holds whichever order Garmin
+ * uses. Removes nothing when the list holds no run, or when more than
+ * MAX_RUNS_REMOVED_PER_SYNC would go: a mass disappearance is a Garmin glitch, not the runner, and is
+ * logged instead. Each run's laps, streams, best efforts and coach messages go with it (on delete
+ * cascade), so personal bests come from the remaining runs; a plan session keeps its date and status and
+ * loses the link. Returns the number removed.
+ */
+export async function removeRunsDeletedOnGarmin(
+  userId: string,
+  recent: GarminRecentRuns,
+  executor: Db | DbTransaction = db,
+): Promise<number> {
+  const listedAll = recent.listed < RECENT_RUNS_CHECKED;
+  // Strictly after the oldest listed run: one that started at the same instant may be the next item. The
+  // oldest starts are null only when no run is listed (the contract), and then nothing is removed below.
+  const inRange =
+    listedAll || recent.oldestStartUtc === null || recent.oldestStartLocal === null
+      ? undefined
+      : and(
+          gt(activity.startUtc, new Date(recent.oldestStartUtc)),
+          gt(activity.startLocal, recent.oldestStartLocal),
+        );
+  const listed = recent.garminActivityIds;
+  const missing = await executor
+    .select({ id: activity.id, garminActivityId: activity.garminActivityId })
+    .from(activity)
+    .where(
+      and(
+        eq(activity.userId, userId),
+        inRange,
+        listed.length > 0 ? notInArray(activity.garminActivityId, listed) : undefined,
+      ),
+    );
+  if (missing.length === 0) return 0;
+  if (listed.length === 0) {
+    log.warn(
+      { userId, stored: missing.length, listedItems: recent.listed },
+      "Garmin listed no runs while runs are stored: removed none",
+    );
+    return 0;
+  }
+  if (missing.length > MAX_RUNS_REMOVED_PER_SYNC) {
+    log.warn(
+      { userId, missing: missing.length, max: MAX_RUNS_REMOVED_PER_SYNC },
+      "too many stored runs missing from Garmin's newest runs: removed none",
+    );
+    return 0;
+  }
+  await executor.delete(activity).where(
+    inArray(
+      activity.id,
+      missing.map((run) => run.id),
+    ),
+  );
+  log.info(
+    {
+      userId,
+      removed: missing.length,
+      garminActivityIds: missing.map((run) => run.garminActivityId),
+    },
+    "removed runs Garmin no longer lists",
+  );
+  return missing.length;
+}
+
+/**
+ * Saves one finished chunk: runs, then on the last chunk the removal of runs deleted on Garmin, then the
+ * cursor, together.
+ */
 async function saveChunk(
   userId: string,
-  activities: GarminActivitySummary[],
+  response: { activities: GarminActivitySummary[]; recent: GarminRecentRuns | null },
   cursor: Date,
-): Promise<number> {
+): Promise<{ written: number; removed: number }> {
   return db.transaction(async (tx) => {
-    const written = await upsertActivities(userId, activities, tx);
+    const written = await upsertActivities(userId, response.activities, tx);
+    // Null when not asked for (an earlier chunk) or when Garmin would not list them: nothing is checked.
+    const removed = response.recent
+      ? await removeRunsDeletedOnGarmin(userId, response.recent, tx)
+      : 0;
     // Never move the cursor back: an older job finishing late must not re-open synced days.
     await recordGarminSuccess(tx, userId, {
       lastSyncAt: sql`greatest(${garminConnection.lastSyncAt}, ${cursor.toISOString()}::timestamptz)`,
     });
-    return written;
+    return { written, removed };
   });
 }
 
@@ -155,7 +246,9 @@ const inFlight = new Map<string, Promise<SyncGarminResult>>();
 
 /**
  * Pulls the user's runs from Garmin into `activity`, from the last sync (minus a day) or 30 days back, up
- * to the user's local date today, in 7-day chunks oldest first.
+ * to the user's local date today, in 7-day chunks oldest first. The last chunk also lists Garmin's newest
+ * RECENT_RUNS_CHECKED runs under the same login and removes stored runs Garmin no longer lists
+ * (removeRunsDeletedOnGarmin).
  *
  * Single-flight per user: a call while the user's sync runs in this process returns that sync's promise
  * and shares its result or error, instead of waiting behind the lock to log in to Garmin a second time for
@@ -193,24 +286,32 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
     const chunks = dateChunks(startDate, today, SYNC_CHUNK_DAYS);
     let activitiesSeen = 0;
     let activitiesWritten = 0;
+    let activitiesRemoved = 0;
 
     for (const [index, chunk] of chunks.entries()) {
       signal?.throwIfAborted();
       if (index > 0 && CHUNK_GAP_MS > 0) await sleep(CHUNK_GAP_MS, undefined, { signal });
 
+      const isLast = index === chunks.length - 1;
+      // Once per sync: one more paced call under the chunk's login, never another login.
+      const recentLimit = isLast ? RECENT_RUNS_CHECKED : 0;
       const response = await account.call((tokenBundle, options) =>
-        garminClient.sync({ tokenBundle, startDate: chunk.start, endDate: chunk.end }, options),
+        garminClient.sync(
+          { tokenBundle, startDate: chunk.start, endDate: chunk.end, recentLimit },
+          options,
+        ),
       );
 
       // The last chunk ends today: the cursor is now. Earlier chunks end on a past day (and so does a
       // pinned `now` in the past): noon UTC of it, whose local date is that day or the next, so the one-day
       // overlap re-reads it either way.
-      const isLast = index === chunks.length - 1;
       const finishedAt = new Date();
       const cursor =
         isLast && localDateOf(finishedAt, timeZone) === today ? finishedAt : noonUtc(chunk.end);
       activitiesSeen += response.activities.length;
-      activitiesWritten += await saveChunk(userId, response.activities, cursor);
+      const saved = await saveChunk(userId, response, cursor);
+      activitiesWritten += saved.written;
+      activitiesRemoved += saved.removed;
     }
 
     const result = {
@@ -219,6 +320,7 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
       chunks: chunks.length,
       activitiesSeen,
       activitiesWritten,
+      activitiesRemoved,
     };
     log.info({ userId, ...result }, "garmin sync finished");
     return result;
@@ -236,12 +338,12 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
  * during a running sync joins it (syncGarmin) and answers with its outcome.
  */
 export async function syncNow({ userId }: { userId: string }): Promise<SyncResponse> {
-  const { activitiesWritten } = await syncGarmin({ userId });
+  const { activitiesWritten, activitiesRemoved } = await syncGarmin({ userId });
   const [row] = await db
     .select({ lastSyncAt: garminConnection.lastSyncAt })
     .from(garminConnection)
     .where(eq(garminConnection.userId, userId));
   // Every finished chunk moves the cursor, and a sync that returns finished at least one.
   if (!row?.lastSyncAt) throw new Error("The sync finished without saving its cursor");
-  return { lastSyncAt: row.lastSyncAt.toISOString(), activitiesWritten };
+  return { lastSyncAt: row.lastSyncAt.toISOString(), activitiesWritten, activitiesRemoved };
 }

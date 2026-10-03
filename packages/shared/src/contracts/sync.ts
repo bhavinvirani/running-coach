@@ -10,6 +10,8 @@ export const syncResponseSchema = z
     lastSyncAt: z.iso.datetime(),
     /** Runs inserted or changed; 0 when everything was already stored. */
     activitiesWritten: z.number().int().nonnegative(),
+    /** Stored runs removed because Garmin no longer lists them (deleted there); usually 0. */
+    activitiesRemoved: z.number().int().nonnegative(),
   })
   .strict();
 export type SyncResponse = z.infer<typeof syncResponseSchema>;

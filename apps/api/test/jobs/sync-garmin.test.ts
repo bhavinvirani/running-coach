@@ -577,6 +577,7 @@ describe("sync-garmin job", () => {
     expect(response).toEqual({
       lastSyncAt: noonUtc(TODAY).toISOString(),
       activitiesWritten: FIXTURE_RUNS,
+      activitiesRemoved: 0,
     });
     expect(calls).toHaveLength(5);
     expect(await runs(userId)).toHaveLength(FIXTURE_RUNS);

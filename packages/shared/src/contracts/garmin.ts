@@ -40,12 +40,22 @@ export const garminProfileResponseSchema = z
   .strict();
 export type GarminProfileResponse = z.infer<typeof garminProfileResponseSchema>;
 
-/** POST /sync: running activities whose local start date is between startDate and endDate, inclusive. */
+/**
+ * The newest runs a sync lists to find runs deleted on Garmin: one more paced call under the sync's login,
+ * on its last chunk only. A run deleted further back is not seen.
+ */
+export const RECENT_RUNS_CHECKED = 100;
+
+/**
+ * POST /sync: running activities whose local start date is between startDate and endDate, inclusive, and,
+ * when recentLimit is above 0, the newest recentLimit items of Garmin's running list (0 skips that call).
+ */
 export const garminSyncRequestSchema = z
   .object({
     tokenBundle: garminTokenBundleSchema,
     startDate: z.iso.date(),
     endDate: z.iso.date(),
+    recentLimit: z.number().int().min(0).max(200),
   })
   .strict();
 export type GarminSyncRequest = z.infer<typeof garminSyncRequestSchema>;
@@ -76,10 +86,41 @@ export const garminActivitySummarySchema = z
   .strict();
 export type GarminActivitySummary = z.infer<typeof garminActivitySummarySchema>;
 
+/**
+ * The newest runs on Garmin, for finding runs deleted there: the ids of the runs among the newest
+ * `recentLimit` items of Garmin's running list, filtered as the by-date list is (runs only, each id once).
+ * Garmin orders the list by local start, which can disagree with UTC order (a flight, DST, a watch on the
+ * wrong zone), so both oldest starts are sent and a stored run counts as inside the list only when it is
+ * newer on both.
+ */
+export const garminRecentRunsSchema = z
+  .object({
+    garminActivityIds: z.array(z.number().int().positive()),
+    /** The earliest UTC start among the listed runs; null when the list holds no run. */
+    oldestStartUtc: z.iso.datetime().nullable(),
+    /** The earliest wall-clock start among the listed runs, without an offset; null when it holds no run. */
+    oldestStartLocal: z.iso.datetime({ local: true }).nullable(),
+    /** Items Garmin listed before filtering. Fewer than recentLimit means the list reached the first run. */
+    listed: z.number().int().nonnegative(),
+  })
+  .strict()
+  .refine(
+    (recent) =>
+      (recent.oldestStartUtc === null) === (recent.garminActivityIds.length === 0) &&
+      (recent.oldestStartLocal === null) === (recent.garminActivityIds.length === 0),
+    { message: "the oldest starts are null exactly when no run is listed" },
+  );
+export type GarminRecentRuns = z.infer<typeof garminRecentRunsSchema>;
+
 export const garminSyncResponseSchema = z
   .object({
     tokenBundle: garminTokenBundleSchema,
     activities: z.array(garminActivitySummarySchema),
+    /**
+     * The newest runs on Garmin, for finding runs deleted there; null when recentLimit was 0, or when that
+     * call failed or answered a shape the service cannot read, which never fails the sync.
+     */
+    recent: garminRecentRunsSchema.nullable(),
   })
   .strict();
 export type GarminSyncResponse = z.infer<typeof garminSyncResponseSchema>;

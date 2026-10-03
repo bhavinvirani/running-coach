@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   GARMIN_WORKOUT_NAME_MAX,
+  RECENT_RUNS_CHECKED,
   garminHistoryRequestSchema,
   garminHistoryResponseSchema,
   garminProblemSchema,
+  garminSyncRequestSchema,
+  garminSyncResponseSchema,
   garminWorkoutName,
   garminWorkoutSchema,
   garminWorkoutSyncRequestSchema,
@@ -62,6 +65,79 @@ describe("garminHistoryResponseSchema", () => {
     expect(
       garminHistoryResponseSchema.safeParse({ tokenBundle: rotated, activities: [] }).success,
     ).toBe(false);
+  });
+});
+
+describe("garminSyncRequestSchema", () => {
+  const request = { tokenBundle: rotated, startDate: "2026-09-21", endDate: "2026-09-27" };
+
+  it("accepts 0, which skips the recent runs, and the newest runs a sync checks", () => {
+    expect(garminSyncRequestSchema.safeParse({ ...request, recentLimit: 0 }).success).toBe(true);
+    expect(
+      garminSyncRequestSchema.safeParse({ ...request, recentLimit: RECENT_RUNS_CHECKED }).success,
+    ).toBe(true);
+  });
+
+  it("requires recentLimit and rejects one above 200 or below 0", () => {
+    expect(garminSyncRequestSchema.safeParse(request).success).toBe(false);
+    expect(garminSyncRequestSchema.safeParse({ ...request, recentLimit: 201 }).success).toBe(false);
+    expect(garminSyncRequestSchema.safeParse({ ...request, recentLimit: -1 }).success).toBe(false);
+  });
+});
+
+describe("garminSyncResponseSchema", () => {
+  const response = { tokenBundle: rotated, activities: [] };
+
+  it("accepts the recent runs, or null when they were not asked for or could not be read", () => {
+    const recent = {
+      garminActivityIds: [10_000_000_007],
+      oldestStartUtc: "2026-09-27T06:00:00Z",
+      oldestStartLocal: "2026-09-27T08:00:00",
+      listed: 1,
+    };
+    expect(garminSyncResponseSchema.safeParse({ ...response, recent }).success).toBe(true);
+    expect(garminSyncResponseSchema.safeParse({ ...response, recent: null }).success).toBe(true);
+    expect(
+      garminSyncResponseSchema.safeParse({
+        ...response,
+        recent: { garminActivityIds: [], oldestStartUtc: null, oldestStartLocal: null, listed: 0 },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("requires the oldest local start beside the UTC one, without an offset (time zones and DST)", () => {
+    const recent = {
+      garminActivityIds: [10_000_000_007],
+      oldestStartUtc: "2026-09-27T06:00:00Z",
+      listed: 1,
+    };
+    expect(garminSyncResponseSchema.safeParse({ ...response, recent }).success).toBe(false);
+    expect(
+      garminSyncResponseSchema.safeParse({
+        ...response,
+        recent: { ...recent, oldestStartLocal: "2026-09-27T08:00:00+02:00" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects oldest starts that are null while runs are listed, or set while none are", () => {
+    const listed = {
+      garminActivityIds: [10_000_000_007],
+      oldestStartUtc: "2026-09-27T06:00:00Z",
+      oldestStartLocal: "2026-09-27T08:00:00",
+      listed: 1,
+    };
+    for (const recent of [
+      { ...listed, oldestStartLocal: null },
+      { ...listed, oldestStartUtc: null },
+      { ...listed, garminActivityIds: [] },
+    ]) {
+      expect(garminSyncResponseSchema.safeParse({ ...response, recent }).success).toBe(false);
+    }
+  });
+
+  it("requires the recent runs key, so the API never mistakes a missing list for an empty one", () => {
+    expect(garminSyncResponseSchema.safeParse(response).success).toBe(false);
   });
 });
 

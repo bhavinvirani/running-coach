@@ -93,7 +93,11 @@ function fakeTodayApi({
       const answer = sync(syncs, store);
       if (answer !== "stored") return answer;
       store();
-      return json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 1 });
+      return json({
+        lastSyncAt: "2026-09-28T07:40:00Z",
+        activitiesWritten: 1,
+        activitiesRemoved: 0,
+      });
     }
     return notFound();
   });
@@ -587,7 +591,7 @@ describe("TodayScreen", () => {
     fakeTodayApi({
       sync: (attempt) =>
         attempt === 1
-          ? json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0 })
+          ? json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0, activitiesRemoved: 0 })
           : never(),
     });
     renderToday();
@@ -606,10 +610,41 @@ describe("TodayScreen", () => {
     expect(screen.queryByText(noNewRuns)).not.toBeInTheDocument();
   });
 
+  it("says how many runs the sync removed because Garmin no longer lists them, and shows the run before them (deleted activity)", async () => {
+    const olderRun = activityFixture({
+      id: "0b2c3d4e-5f60-4a71-8b92-a3b4c5d6e7f8",
+      startUtc: "2026-09-24T16:30:00Z",
+      startLocal: "2026-09-24T18:30:00",
+    });
+    fakeTodayApi({
+      latest: newerRun,
+      synced: olderRun,
+      sync: (attempt, store) => {
+        store();
+        return attempt === 1
+          ? json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0, activitiesRemoved: 1 })
+          : never();
+      },
+    });
+    renderToday();
+    expect(await screen.findByText("Mon 28 Sep, 06:30")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sync now" }));
+
+    const line = await screen.findByRole("status");
+    expect(line).toHaveTextContent(/^Removed 1 run Garmin no longer lists\.$/);
+    expect(line).toHaveClass("text-caption", "text-ink-2");
+    expect(await screen.findByText("Thu 24 Sep, 18:30")).toBeInTheDocument();
+    expect(screen.queryByText("Mon 28 Sep, 06:30")).not.toBeInTheDocument();
+    expect(screen.queryByText(noNewRuns)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("says there are no new runs from the empty state too, under the sentence (nothing new)", async () => {
     fakeTodayApi({
       latest: null,
-      sync: () => json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0 }),
+      sync: () =>
+        json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0, activitiesRemoved: 0 }),
     });
     renderToday();
 

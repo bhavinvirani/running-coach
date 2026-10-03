@@ -424,6 +424,34 @@ describe("importHistoryPage", () => {
     expect(await runs(userId)).toHaveLength(FIXTURE_ACCOUNT.runs);
     expect((await connection(userId)).lastSyncAt).not.toBeNull();
   });
+
+  it("keeps every imported run on the next sync, whose newest runs reach the account's first (runs deleted on Garmin)", async () => {
+    const userId = await connectedUser();
+    await seedImport(userId);
+    await importPages(userId);
+
+    const synced = await syncGarmin({ userId, now: new Date("2026-09-28T10:00:00Z") });
+
+    expect(synced.activitiesRemoved).toBe(0);
+    expect(await runs(userId)).toHaveLength(FIXTURE_ACCOUNT.runs);
+  });
+
+  it("removes on the next sync a run deleted on Garmin after the import, and an import again leaves it out (deleted activity)", async () => {
+    const userId = await connectedUser();
+    await seedImport(userId);
+    await importPages(userId);
+    await setGarminBundle(userId, garminBundle("deleted_run"));
+
+    const synced = await syncGarmin({ userId, now: new Date("2026-09-28T10:00:00Z") });
+    await seedImport(userId);
+    const pages = await importPages(userId);
+
+    expect(synced.activitiesRemoved).toBe(1);
+    expect(pages.at(-1)?.status).toBe("done");
+    const stored = await runs(userId);
+    expect(stored).toHaveLength(FIXTURE_ACCOUNT.runs - 1);
+    expect(stored.map((row) => row.garminActivityId)).not.toContain(10_000_000_007);
+  });
 });
 
 describe("getImportProgress", () => {
