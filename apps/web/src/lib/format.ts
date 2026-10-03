@@ -14,6 +14,11 @@ function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
 
+/** A minutes or seconds figure the way a clock shows it, for a time picker's options: 5 → "05". */
+export function formatTwoDigits(value: number): string {
+  return isFiniteNumber(value) && value >= 0 ? pad2(Math.floor(value)) : MISSING;
+}
+
 /** "/km" or "/mi". */
 export function paceUnitLabel(unit: Units): string {
   return unit === "km" ? "/km" : "/mi";

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ZERO_DURATION } from "@/lib/duration-parts";
 import { errorMessages } from "@/lib/errors";
 import { goalFixture } from "@/test/fixtures";
 import { goalForm, goalInput, type GoalForm } from "./goal-form";
@@ -7,37 +8,47 @@ const race: GoalForm = {
   kind: "race",
   distanceKey: "half",
   raceDate: "2027-03-14",
-  targetTime: "",
+  noTargetTime: true,
+  targetTime: ZERO_DURATION,
   daysPerWeek: 4,
   longRunDay: "sun",
   showRecentTime: false,
   recentDistanceKey: "5k",
-  recentTime: "",
+  recentTime: ZERO_DURATION,
 };
 
 describe("goalForm", () => {
-  it("starts a first goal as a race with nothing picked or typed", () => {
+  it("starts a first goal as a race with No target and nothing picked", () => {
     expect(goalForm(null)).toEqual({ ...race, distanceKey: null, raceDate: "" });
   });
 
-  it("starts from the current goal, its times as the runner would type them", () => {
+  it("starts from the current goal, its times split for the pickers", () => {
     expect(goalForm(goalFixture({ recentTime: { distanceKey: "half", timeS: 6972 } }))).toEqual({
       kind: "race",
       distanceKey: "10k",
       raceDate: "2026-10-25",
-      targetTime: "49:00",
+      noTargetTime: false,
+      targetTime: { hours: 0, minutes: 49, seconds: 0 },
       daysPerWeek: 4,
       longRunDay: "sun",
       showRecentTime: true,
       recentDistanceKey: "half",
-      recentTime: "1:56:12",
+      recentTime: { hours: 1, minutes: 56, seconds: 12 },
+    });
+  });
+
+  it("ticks No target for a goal saved without one (no target)", () => {
+    expect(goalForm(goalFixture({ targetTimeS: null }))).toMatchObject({
+      noTargetTime: true,
+      targetTime: ZERO_DURATION,
     });
   });
 });
 
 describe("goalInput", () => {
-  it("sends null for an empty target time and an unopened recent time", () => {
-    expect(goalInput({ ...race, recentTime: "25:00" })).toEqual({
+  it("sends null for No target and an unopened recent time (no target)", () => {
+    const picked = { hours: 0, minutes: 25, seconds: 0 };
+    expect(goalInput({ ...race, targetTime: picked, recentTime: picked })).toEqual({
       ok: true,
       goal: {
         kind: "race",
@@ -51,13 +62,14 @@ describe("goalInput", () => {
     });
   });
 
-  it("parses the target and recent times into seconds", () => {
+  it("adds the picked target and recent times up to seconds", () => {
     const result = goalInput({
       ...race,
-      targetTime: " 1:45:00 ",
+      noTargetTime: false,
+      targetTime: { hours: 1, minutes: 45, seconds: 0 },
       showRecentTime: true,
       recentDistanceKey: "1mi",
-      recentTime: "6:40",
+      recentTime: { hours: 0, minutes: 6, seconds: 40 },
     });
     expect(result).toMatchObject({
       ok: true,
@@ -66,25 +78,34 @@ describe("goalInput", () => {
   });
 
   it("never sends a race date or target time with a fitness goal", () => {
-    const result = goalInput({ ...race, kind: "fitness", distanceKey: null, targetTime: "49:00" });
+    const result = goalInput({
+      ...race,
+      kind: "fitness",
+      distanceKey: null,
+      noTargetTime: false,
+      targetTime: { hours: 0, minutes: 49, seconds: 0 },
+    });
     expect(result).toMatchObject({
       ok: true,
       goal: { kind: "fitness", distanceKey: null, raceDate: null, targetTimeS: null },
     });
   });
 
-  it("ignores an unreadable target time on a fitness goal, which does not send one", () => {
-    expect(goalInput({ ...race, kind: "fitness", targetTime: "soon" }).ok).toBe(true);
+  it("ignores a target of 0:00:00 on a fitness goal, which does not send one", () => {
+    expect(goalInput({ ...race, kind: "fitness", noTargetTime: false }).ok).toBe(true);
   });
 
-  it("says which time it cannot read", () => {
-    expect(goalInput({ ...race, targetTime: "1h45" })).toEqual({
+  it("asks for a target time when No target is unticked and the pickers read 0:00:00", () => {
+    expect(goalInput({ ...race, noTargetTime: false })).toEqual({
       ok: false,
-      message: "Enter the target time as h:mm:ss or mm:ss, or leave it empty.",
+      message: "Pick a target time, or tick No target.",
     });
-    expect(goalInput({ ...race, showRecentTime: true, recentTime: "25" })).toEqual({
-      ok: false,
-      message: "Enter the recent race time as h:mm:ss or mm:ss, or leave it empty.",
+  });
+
+  it("sends no recent time for 0:00:00, which keeps it optional", () => {
+    expect(goalInput({ ...race, showRecentTime: true })).toMatchObject({
+      ok: true,
+      goal: { recentTime: null },
     });
   });
 

@@ -1,12 +1,15 @@
 import {
+  DISTANCE_METERS,
   distanceInUnits,
   type Goal,
   type PaceZone,
+  type PlanPaces,
   type PlanWarning,
   type Units,
 } from "@running-coach/shared";
 import { distanceLabel } from "@/lib/distance-labels";
 import { formatCount, formatDistance, formatLocalDate, formatRecordTime } from "@/lib/format";
+import { bandFinishTimeS, formatPlanPace } from "@/lib/pace-band";
 
 /** Every sentence and label on Plan, so the wording is read and changed in one place. */
 export const planCopy = {
@@ -45,22 +48,42 @@ export function goalHeadline(goal: Goal): string {
 }
 
 /**
- * The facts under the goal's figure: race day and target time, or the distance a fitness plan is shaped
- * around, then the plan's length and the runs a week.
+ * The facts under the goal's figure: race day, or the distance a fitness plan is shaped around, then the
+ * plan's length and the runs a week.
  */
 export function goalFacts(goal: Goal, weeks: number): string[] {
-  const goalFacts =
+  const goalFact =
     goal.kind === "race"
-      ? [
-          goal.raceDate === null ? null : `Race on ${formatLocalDate(goal.raceDate)}`,
-          goal.targetTimeS === null ? null : `Target ${formatRecordTime(goal.targetTimeS)}`,
-        ]
-      : [goal.distanceKey === null ? null : `${distanceLabel(goal.distanceKey)} focus`];
+      ? goal.raceDate === null
+        ? null
+        : `Race on ${formatLocalDate(goal.raceDate)}`
+      : goal.distanceKey === null
+        ? null
+        : `${distanceLabel(goal.distanceKey)} focus`;
   return [
-    ...goalFacts,
+    goalFact,
     formatCount(weeks, "week", "weeks"),
     formatCount(goal.daysPerWeek, "run a week", "runs a week"),
   ].filter((fact) => fact !== null);
+}
+
+/**
+ * The goal's speed, the line under its facts: the target the runner set, then the race pace the plan
+ * trains at and the finish time that pace means over the goal's distance (a fitness plan's shape, 10K
+ * when it has none). The paces come from the runner's recent times, not the target, so a target far ahead
+ * of them shows next to the time the plan actually builds to: "Target 1:43:00 · Race pace 5:30-5:36 /km,
+ * about 1:57:05".
+ */
+export function goalPaceFacts(goal: Goal, paces: PlanPaces, units: Units): string[] {
+  const distanceM = DISTANCE_METERS[goal.distanceKey ?? "10k"];
+  const finish = formatRecordTime(bandFinishTimeS(paces.race, distanceM));
+  const target =
+    goal.kind === "race" && goal.targetTimeS !== null
+      ? `Target ${formatRecordTime(goal.targetTimeS)}`
+      : null;
+  return [target, `Race pace ${formatPlanPace(paces.race, units)}, about ${finish}`].filter(
+    (fact) => fact !== null,
+  );
 }
 
 function distance(meters: number, units: Units): string {

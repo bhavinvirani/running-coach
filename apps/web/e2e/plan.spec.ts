@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { addDays, daysBetween, nextMonday } from "@running-coach/engine";
 import {
   ErrorCode,
@@ -9,17 +9,23 @@ import {
   type PlanWeek,
   type Problem,
 } from "@running-coach/shared";
+import {
+  DURATION_PART_LABELS,
+  durationSeconds,
+  type DurationParts,
+} from "../src/lib/duration-parts";
 import { errorMessages } from "../src/lib/errors";
 import {
   formatDistance,
   formatDistanceValue,
   formatLocalDate,
   formatLocalDay,
+  formatTwoDigits,
 } from "../src/lib/format";
 import { phaseName, weekTitle } from "../src/lib/plan-week";
 import { sessionTypeName } from "../src/lib/session-type";
-import { conflictSentence, goalCopy } from "../src/screens/goal/goal-copy";
-import { planCopy } from "../src/screens/plan/plan-copy";
+import { conflictSentence, goalCopy, timePace } from "../src/screens/goal/goal-copy";
+import { goalPaceFacts, planCopy } from "../src/screens/plan/plan-copy";
 import { planWeekCopy } from "../src/screens/plan-week/plan-week-copy";
 import { expect, test } from "./fixtures/login";
 import { seedPlan } from "./fixtures/seed";
@@ -33,18 +39,37 @@ type GoalEntry = {
   /** The distance's label on the form: "Half", "Marathon". */
   distance: string;
   raceDate: string;
+  /** Left out, No target stays ticked. */
+  targetTime?: DurationParts;
   /** Runs a week as the form labels them: "3" to "6". */
   days: string;
   longRunDay: string;
-  recent: { distance: string; time: string };
+  recent: { distance: string; time: DurationParts };
 };
+
+/** Picks a time on a time field's three wheels by the figures they show: "1", "43", "00". */
+async function pickTime(field: Locator, time: DurationParts): Promise<void> {
+  const shown = {
+    hours: String(time.hours),
+    minutes: formatTwoDigits(time.minutes),
+    seconds: formatTwoDigits(time.seconds),
+  };
+  for (const part of ["hours", "minutes", "seconds"] as const) {
+    const picker = field.getByLabel(DURATION_PART_LABELS[part], { exact: true });
+    await picker.selectOption({ label: shown[part] });
+    await expect(picker).toHaveValue(String(time[part]));
+  }
+}
 
 /** A distance as the plan screens print it in the default unit: 22000 → "22.0 km". */
 function km(meters: number): string {
   return formatDistance(distanceInUnits(meters, "km"), "km");
 }
 
-/** Fills the goal form as a thumb would: taps on the segment labels, typing in the text fields. */
+/**
+ * Fills the goal form as a thumb would: taps on the segment labels and the No target box, a date typed in
+ * the date field, and times picked on the wheels.
+ */
 async function fillGoal(page: Page, entry: GoalEntry): Promise<void> {
   const target = page.getByRole("region", { name: goalCopy.target });
   const kind = target.getByRole("group", { name: goalCopy.trainingFor });
@@ -55,6 +80,13 @@ async function fillGoal(page: Page, entry: GoalEntry): Promise<void> {
   await distance.getByText(entry.distance, { exact: true }).click();
   await expect(distance.getByRole("radio", { name: entry.distance, exact: true })).toBeChecked();
   await target.getByLabel(goalCopy.raceDate, { exact: true }).fill(entry.raceDate);
+  const targetTime = target.getByRole("group", { name: goalCopy.targetTime, exact: true });
+  const noTarget = targetTime.getByRole("checkbox", { name: goalCopy.noTarget });
+  await expect(noTarget).toBeChecked();
+  if (entry.targetTime) {
+    await noTarget.uncheck();
+    await pickTime(targetTime, entry.targetTime);
+  }
 
   const week = page.getByRole("region", { name: goalCopy.week });
   const days = week.getByRole("group", { name: goalCopy.daysPerWeek });
@@ -73,7 +105,10 @@ async function fillGoal(page: Page, entry: GoalEntry): Promise<void> {
   await expect(
     recentDistance.getByRole("radio", { name: entry.recent.distance, exact: true }),
   ).toBeChecked();
-  await recent.getByLabel(goalCopy.time, { exact: true }).fill(entry.recent.time);
+  await pickTime(
+    recent.getByRole("group", { name: goalCopy.time, exact: true }),
+    entry.recent.time,
+  );
 }
 
 /** Taps Save goal and returns the API's answer to it. */
@@ -124,13 +159,23 @@ test("sets a goal and sees the plan", async ({ page }) => {
   await expect(page).toHaveURL(/\/plan\/goal$/);
   await expect(page.getByRole("heading", { name: goalCopy.title, level: 1 })).toBeVisible();
 
+  // The owner's case: a target well ahead of what the recent 10K predicts.
+  const targetTime = { hours: 1, minutes: 43, seconds: 0 };
   await fillGoal(page, {
     distance: "Half",
     raceDate,
+    targetTime,
     days: "4",
     longRunDay: "Sun",
-    recent: { distance: "10K", time: "54:41" },
+    recent: { distance: "10K", time: { hours: 0, minutes: 54, seconds: 41 } },
   });
+  // Under each time, the pace it means over its distance: 1:43:00 over a half is 4:53 /km.
+  await expect(
+    page.getByRole("group", { name: goalCopy.targetTime, exact: true }),
+  ).toHaveAccessibleDescription(timePace("half", durationSeconds(targetTime), "km") ?? "");
+  await expect(
+    page.getByRole("group", { name: goalCopy.time, exact: true }),
+  ).toHaveAccessibleDescription(timePace("10k", 54 * 60 + 41, "km") ?? "");
   const saved = await saveGoal(page);
   expect(saved.ok).toBe(true);
 
@@ -151,12 +196,20 @@ test("sets a goal and sees the plan", async ({ page }) => {
     raceDate,
     daysPerWeek: 4,
     longRunDay: "sun",
+    targetTimeS: durationSeconds(targetTime),
     recentTime: { distanceKey: "10k", timeS: 54 * 60 + 41 },
   });
   expect(plan?.startDate).toBe(startDate);
   expect(plan?.endDate).toBe(raceDate);
   expect(plan?.weeks).toHaveLength(weekCount);
   if (!plan) throw new Error("The saved goal has no plan");
+  if (!storedGoal) throw new Error("The plan has no goal");
+
+  // The target beside the race pace the plan trains at and the finish time it means.
+  for (const fact of goalPaceFacts(storedGoal, plan.paces, "km")) {
+    await expect(goal).toContainText(fact);
+  }
+  await expect(goal).toContainText("Target 1:43:00");
 
   // Every card shows its week's total; the figure is drawn apart from its unit, the name says both.
   for (const week of plan.weeks) {
@@ -189,7 +242,7 @@ test("reports a conflict and saves nothing", async ({ page }) => {
     raceDate: addDays(todayUtc(), 20 * 7),
     days: "3",
     longRunDay: "Sun",
-    recent: { distance: "10K", time: "54:41" },
+    recent: { distance: "10K", time: { hours: 0, minutes: 54, seconds: 41 } },
   });
   const answer = await saveGoal(page);
   expect(answer.ok).toBe(false);

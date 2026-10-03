@@ -12,13 +12,15 @@ import {
 } from "@running-coach/shared";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { BackLink } from "@/components/back-link";
+import { DurationField } from "@/components/duration-field";
 import { RetryAlert } from "@/components/retry-alert";
 import { SegmentedField, type SegmentOption } from "@/components/segmented-field";
 import { Button } from "@/components/ui/button";
 import { distanceLabel } from "@/lib/distance-labels";
+import { durationSeconds } from "@/lib/duration-parts";
 import { errorMessage } from "@/lib/errors";
 import { weekdayName } from "@/lib/plan-week";
-import { conflictSentence, goalCopy } from "./goal-copy";
+import { conflictSentence, goalCopy, timePace } from "./goal-copy";
 import { RECENT_DISTANCE_KEYS, goalForm, goalInput, type GoalForm } from "./goal-form";
 import { FormSection } from "./parts/form-section";
 import { TextField } from "./parts/text-field";
@@ -184,13 +186,16 @@ function GoalFormView({ goal, units, saving, saveError, conflict, onSave }: Goal
               value={form.raceDate}
               onChange={(event) => update({ raceDate: event.target.value })}
             />
-            <TextField
+            <DurationField
               label={goalCopy.targetTime}
-              name="targetTime"
-              autoComplete="off"
               value={form.targetTime}
-              onChange={(event) => update({ targetTime: event.target.value })}
-              description={goalCopy.targetTimeHelp}
+              onChange={(targetTime) => update({ targetTime })}
+              none={{
+                label: goalCopy.noTarget,
+                checked: form.noTargetTime,
+                onChange: (noTargetTime) => update({ noTargetTime }),
+              }}
+              description={timePace(form.distanceKey, durationSeconds(form.targetTime), units)}
             />
           </>
         ) : null}
@@ -221,13 +226,11 @@ function GoalFormView({ goal, units, saving, saveError, conflict, onSave }: Goal
             onChange={(recentDistanceKey) => update({ recentDistanceKey })}
             description={goalCopy.recentRaceHelp}
           />
-          <TextField
+          <DurationField
             label={goalCopy.time}
-            name="recentTime"
-            autoComplete="off"
             value={form.recentTime}
-            onChange={(event) => update({ recentTime: event.target.value })}
-            description={goalCopy.timeHelp}
+            onChange={(recentTime) => update({ recentTime })}
+            description={timePace(form.recentDistanceKey, durationSeconds(form.recentTime), units)}
           />
         </FormSection>
       ) : (

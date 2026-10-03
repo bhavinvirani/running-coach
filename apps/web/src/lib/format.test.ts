@@ -30,6 +30,7 @@ import {
   formatStepDistance,
   formatStepDuration,
   formatTime,
+  formatTwoDigits,
   formatWeekRange,
   recordSeconds,
 } from "./format";
@@ -543,5 +544,18 @@ describe("formatStepDuration", () => {
     expect(formatStepDuration(null)).toBe(MISSING);
     expect(formatStepDuration(0)).toBe(MISSING);
     expect(formatStepDuration(-60)).toBe(MISSING);
+  });
+});
+
+describe("formatTwoDigits", () => {
+  it("pads a minute or second to two digits like a clock", () => {
+    expect(formatTwoDigits(0)).toBe("00");
+    expect(formatTwoDigits(5)).toBe("05");
+    expect(formatTwoDigits(59)).toBe("59");
+  });
+
+  it("shows the missing mark for a negative or non-finite figure", () => {
+    expect(formatTwoDigits(-1)).toBe(MISSING);
+    expect(formatTwoDigits(Number.NaN)).toBe(MISSING);
   });
 });

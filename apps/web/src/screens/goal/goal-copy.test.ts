@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflictSentence } from "./goal-copy";
+import { conflictSentence, timePace } from "./goal-copy";
 
 describe("conflictSentence", () => {
   it("says a marathon on 3 days would break the long-run cap, and what to change (long run cap)", () => {
@@ -60,5 +60,23 @@ describe("conflictSentence", () => {
     expect(conflictSentence({ code: "no_recent_time" }, "km")).toBe(
       "There is no recent race or best effort to set your paces from. Enter a recent race time below.",
     );
+  });
+});
+
+describe("timePace", () => {
+  it("divides a target time by the race distance: 1:43:00 over a half is 4:53 /km", () => {
+    expect(timePace("half", 6180, "km")).toBe("Pace 4:53 /km");
+    expect(timePace("10k", 2940, "km")).toBe("Pace 4:54 /km");
+  });
+
+  it("gives the pace per mile for a runner in miles (unit conversion)", () => {
+    // 6180 s over 13.11 mi is 471.4 s/mi.
+    expect(timePace("half", 6180, "mi")).toBe("Pace 7:51 /mi");
+    expect(timePace("1mi", 400, "mi")).toBe("Pace 6:40 /mi");
+  });
+
+  it("says nothing until there is a distance and a time", () => {
+    expect(timePace(null, 6180, "km")).toBeNull();
+    expect(timePace("5k", 0, "km")).toBeNull();
   });
 });

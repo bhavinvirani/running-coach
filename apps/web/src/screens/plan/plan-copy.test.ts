@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { goalFixture } from "@/test/fixtures";
-import { goalFacts, goalHeadline, paceZoneName, warningSentence } from "./plan-copy";
+import { goalFixture, planFixture } from "@/test/fixtures";
+import { goalFacts, goalHeadline, goalPaceFacts, paceZoneName, warningSentence } from "./plan-copy";
 
 describe("goalHeadline", () => {
   it("names a race by its distance and a fitness goal as Fitness", () => {
@@ -13,24 +13,13 @@ describe("goalHeadline", () => {
 });
 
 describe("goalFacts", () => {
-  it("lists a race's day and target, then the plan's length and the runs a week", () => {
+  it("lists a race's day, then the plan's length and the runs a week", () => {
     expect(goalFacts(goalFixture(), 3)).toEqual([
       "Race on 25 Oct 2026",
-      "Target 49:00",
       "3 weeks",
       "4 runs a week",
     ]);
-  });
-
-  it("leaves out a target time the runner did not set and shows hours past the hour", () => {
-    expect(goalFacts(goalFixture({ targetTimeS: null }), 1)).toEqual([
-      "Race on 25 Oct 2026",
-      "1 week",
-      "4 runs a week",
-    ]);
-    expect(goalFacts(goalFixture({ distanceKey: "half", targetTimeS: 6300 }), 12)[1]).toBe(
-      "Target 1:45:00",
-    );
+    expect(goalFacts(goalFixture(), 1)[1]).toBe("1 week");
   });
 
   it("names a fitness goal's focus distance, or nothing for any distance", () => {
@@ -42,6 +31,52 @@ describe("goalFacts", () => {
     });
     expect(goalFacts(fitness, 12)).toEqual(["10K focus", "12 weeks", "3 runs a week"]);
     expect(goalFacts({ ...fitness, distanceKey: null }, 12)).toEqual(["12 weeks", "3 runs a week"]);
+  });
+});
+
+describe("goalPaceFacts", () => {
+  const paces = planFixture().paces;
+
+  it("puts the target beside the race pace and the finish time it means over the race", () => {
+    // The race band is 4:54-4:58 /km: 4:56 over 10 km is 49:20.
+    expect(goalPaceFacts(goalFixture(), paces, "km")).toEqual([
+      "Target 49:00",
+      "Race pace 4:54-4:58 /km, about 49:20",
+    ]);
+  });
+
+  it("shows the time the paces predict next to a target well ahead of it (target time ambitious)", () => {
+    const half = goalFixture({ distanceKey: "half", targetTimeS: 6180 });
+    const race = { fastSPerKm: 330, slowSPerKm: 336 };
+    // 5:33 /km over 21.0975 km is 7025.5 s.
+    expect(goalPaceFacts(half, { ...paces, race }, "km")).toEqual([
+      "Target 1:43:00",
+      "Race pace 5:30-5:36 /km, about 1:57:05",
+    ]);
+  });
+
+  it("shows only the race pace without a target (no target)", () => {
+    expect(goalPaceFacts(goalFixture({ targetTimeS: null }), paces, "km")).toEqual([
+      "Race pace 4:54-4:58 /km, about 49:20",
+    ]);
+  });
+
+  it("times a fitness plan over its shape's distance, 10K when it has none", () => {
+    const fitness = goalFixture({ kind: "fitness", raceDate: null, targetTimeS: null });
+    expect(goalPaceFacts({ ...fitness, distanceKey: null }, paces, "km")).toEqual([
+      "Race pace 4:54-4:58 /km, about 49:20",
+    ]);
+    // 4:56 /km over 21.0975 km is 6244.9 s.
+    expect(goalPaceFacts({ ...fitness, distanceKey: "half" }, paces, "km")).toEqual([
+      "Race pace 4:54-4:58 /km, about 1:44:05",
+    ]);
+  });
+
+  it("gives the race pace per mile and the same finish time (unit conversion)", () => {
+    expect(goalPaceFacts(goalFixture(), paces, "mi")).toEqual([
+      "Target 49:00",
+      "Race pace 7:53-8:00 /mi, about 49:20",
+    ]);
   });
 });
 

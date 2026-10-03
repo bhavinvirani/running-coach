@@ -120,15 +120,18 @@ describe("PlanScreen", () => {
     expect(router.state.location.pathname).toBe("/plan/goal");
   });
 
-  it("shows the goal's distance as the figure, its race day, target, length and runs a week", async () => {
+  it("shows the goal's distance as the figure, its race day, length and runs a week, then its target beside the race pace", async () => {
     fakePlanApi();
     renderPlan();
 
     const goal = await screen.findByRole("region", { name: "Goal" });
     expect(within(goal).getByText("10K")).toHaveClass("text-figure");
     expect(within(goal).getByText("Race on 25 Oct 2026").closest("p")).toHaveTextContent(
-      /^Race on 25 Oct 2026·Target 49:00·3 weeks·4 runs a week$/,
+      /^Race on 25 Oct 2026·3 weeks·4 runs a week$/,
     );
+    const paceLine = within(goal).getByText("Target 49:00").closest("p");
+    expect(paceLine).toHaveTextContent(/^Target 49:00·Race pace 4:54-4:58 \/km, about 49:20$/);
+    expect(paceLine).toHaveClass("text-caption", "text-ink-2");
     expect(within(goal).getByRole("link", { name: "Change goal" })).toHaveAttribute(
       "href",
       "/plan/goal",
@@ -148,6 +151,7 @@ describe("PlanScreen", () => {
     expect(within(goal).getByText("10K focus").closest("p")).toHaveTextContent(
       /^10K focus·3 weeks·4 runs a week$/,
     );
+    expect(within(goal).getByText("Race pace 4:54-4:58 /km, about 49:20")).toBeInTheDocument();
   });
 
   it("shows the paces as tiles, easy first, in km", async () => {
@@ -295,6 +299,12 @@ describe("PlanScreen", () => {
     // 345 and 380 s/km are 555.2 and 611.6 s/mi; 285 and 292 are 458.7 and 469.9.
     expect(within(paces).getByText("9:15-10:12 /mi")).toBeInTheDocument();
     expect(within(paces).getByText("7:39-7:50 /mi")).toBeInTheDocument();
+    // The goal card's race pace too; the finish time it means is the same in either unit.
+    expect(
+      within(screen.getByRole("region", { name: "Goal" })).getByText(
+        "Race pace 7:53-8:00 /mi, about 49:20",
+      ),
+    ).toBeInTheDocument();
     const [first] = await weekLinks();
     // 38,030 m is 23.6 mi.
     expect(within(first!).getByText("23.6")).toHaveClass("text-figure");

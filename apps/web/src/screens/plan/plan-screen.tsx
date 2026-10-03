@@ -66,7 +66,7 @@ export function PlanScreen() {
   return (
     <PlanLayout>
       {refetchFailed}
-      <GoalCard goal={goal} weeks={plan.weeks.length} />
+      <GoalCard goal={goal} paces={plan.paces} weeks={plan.weeks.length} units={units} />
       <PaceRow paces={plan.paces} units={units} />
       {plan.warnings.length > 0 ? (
         <ul aria-label={planCopy.notes} className="flex flex-col gap-2">

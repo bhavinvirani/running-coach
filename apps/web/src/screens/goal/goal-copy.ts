@@ -1,10 +1,13 @@
 import {
+  DISTANCE_METERS,
   distanceInUnits,
+  paceSecondsPerUnit,
+  type DistanceKey,
   type PlanConflict,
   type RaceDistanceKey,
   type Units,
 } from "@running-coach/shared";
-import { formatCount, formatDistance, formatLocalDate } from "@/lib/format";
+import { formatCount, formatDistance, formatLocalDate, formatPace } from "@/lib/format";
 
 /** Every sentence and label on the goal form, so the wording is read and changed in one place. */
 export const goalCopy = {
@@ -19,7 +22,7 @@ export const goalCopy = {
   fitnessDistanceHelp: "The distance the sessions are shaped around.",
   raceDate: "Race date",
   targetTime: "Target time",
-  targetTimeHelp: "Optional. h:mm:ss or mm:ss.",
+  noTarget: "No target",
   week: "Training week",
   daysPerWeek: "Runs a week",
   longRunDay: "Long run day",
@@ -27,14 +30,25 @@ export const goalCopy = {
   recentRaceHelp: "A race or time trial from the last few months. It sets your paces.",
   addRecentRace: "Add a recent race time",
   time: "Time",
-  timeHelp: "h:mm:ss or mm:ss.",
   save: "Save goal",
   saving: "Saving…",
   pickDistance: "Pick a race distance.",
   pickRaceDate: "Pick a race date.",
-  badTargetTime: "Enter the target time as h:mm:ss or mm:ss, or leave it empty.",
-  badRecentTime: "Enter the recent race time as h:mm:ss or mm:ss, or leave it empty.",
+  pickTargetTime: "Pick a target time, or tick No target.",
 } as const;
+
+/**
+ * The caption under a time picker: the pace the time means over its distance, in the runner's unit,
+ * "Pace 4:53 /km" for a 1:43:00 half. Null until there is a distance and a time to divide.
+ */
+export function timePace(
+  distanceKey: DistanceKey | null,
+  timeS: number,
+  units: Units,
+): string | null {
+  if (distanceKey === null || timeS <= 0) return null;
+  return `Pace ${formatPace(paceSecondsPerUnit(DISTANCE_METERS[distanceKey], timeS, units), units)}`;
+}
 
 /** A race distance inside a sentence: "a marathon plan", "a half marathon plan", "a 10K plan". */
 const RACE_IN_SENTENCE: Readonly<Record<RaceDistanceKey, string>> = {

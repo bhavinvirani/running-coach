@@ -54,6 +54,35 @@ function conflict(body: Extract<SaveGoalResponse, { ok: false }>["conflict"]) {
 
 const save = () => screen.getByRole("button", { name: "Save goal" });
 
+/** A time field's group by its label: "Target time", or the recent race's "Time". */
+function timeField(name: string) {
+  return screen.getByRole("group", { name });
+}
+
+/** A time field's hours, minutes and seconds pickers, as their values. */
+function pickedTime(name: string): string[] {
+  return within(timeField(name))
+    .getAllByRole("combobox")
+    .map((select) => (select as HTMLSelectElement).value);
+}
+
+/** Picks each part given, as a thumb would on the native wheels. */
+async function pickTime(
+  name: string,
+  parts: { hours?: string; minutes?: string; seconds?: string },
+): Promise<void> {
+  const field = timeField(name);
+  if (parts.hours) {
+    await userEvent.selectOptions(within(field).getByLabelText("Hours"), parts.hours);
+  }
+  if (parts.minutes) {
+    await userEvent.selectOptions(within(field).getByLabelText("Minutes"), parts.minutes);
+  }
+  if (parts.seconds) {
+    await userEvent.selectOptions(within(field).getByLabelText("Seconds"), parts.seconds);
+  }
+}
+
 describe("GoalScreen", () => {
   it("shows a skeleton in the final layout while loading", () => {
     stubFetch(never);
@@ -91,10 +120,9 @@ describe("GoalScreen", () => {
       expect(within(target).getByRole("radio", { name })).not.toBeChecked();
     }
     expect(within(target).getByLabelText("Race date")).toHaveValue("");
-    expect(within(target).getByLabelText("Target time")).toHaveValue("");
-    expect(within(target).getByLabelText("Target time")).toHaveAccessibleDescription(
-      "Optional. h:mm:ss or mm:ss.",
-    );
+    const targetTime = within(target).getByRole("group", { name: "Target time" });
+    expect(within(targetTime).getByRole("checkbox", { name: "No target" })).toBeChecked();
+    expect(within(targetTime).queryByRole("combobox")).not.toBeInTheDocument();
     const week = section("Training week");
     expect(within(week).getByRole("radio", { name: "4" })).toBeChecked();
     expect(within(week).getByRole("radio", { name: "Sun" })).toBeChecked();
@@ -114,11 +142,14 @@ describe("GoalScreen", () => {
     const target = await screen.findByRole("region", { name: "Target" });
     expect(within(target).getByRole("radio", { name: "10K" })).toBeChecked();
     expect(within(target).getByLabelText("Race date")).toHaveValue("2026-10-25");
-    expect(within(target).getByLabelText("Target time")).toHaveValue("49:00");
+    expect(within(target).getByRole("checkbox", { name: "No target" })).not.toBeChecked();
+    expect(pickedTime("Target time")).toEqual(["0", "49", "0"]);
+    expect(timeField("Target time")).toHaveAccessibleDescription("Pace 4:54 /km");
     expect(within(section("Training week")).getByRole("radio", { name: "Sat" })).toBeChecked();
     const recent = section("Recent race");
     expect(within(recent).getByRole("radio", { name: "5K" })).toBeChecked();
-    expect(within(recent).getByLabelText("Time")).toHaveValue("24:30");
+    expect(pickedTime("Time")).toEqual(["0", "24", "30"]);
+    expect(timeField("Time")).toHaveAccessibleDescription("Pace 4:54 /km");
   });
 
   it("saves the goal with the parsed body, puts the new plan in the cache and opens it", async () => {
@@ -128,7 +159,8 @@ describe("GoalScreen", () => {
     const target = await screen.findByRole("region", { name: "Target" });
     await userEvent.click(within(target).getByRole("radio", { name: "Half" }));
     await userEvent.type(within(target).getByLabelText("Race date"), "2027-03-14");
-    await userEvent.type(within(target).getByLabelText("Target time"), "1:45:00");
+    await userEvent.click(within(target).getByRole("checkbox", { name: "No target" }));
+    await pickTime("Target time", { hours: "1", minutes: "45" });
     await userEvent.click(within(section("Training week")).getByRole("radio", { name: "5" }));
     await userEvent.click(within(section("Training week")).getByRole("radio", { name: "Sat" }));
     await userEvent.click(save());
@@ -163,7 +195,7 @@ describe("GoalScreen", () => {
     await userEvent.click(within(target).getByRole("radio", { name: "Fitness" }));
 
     expect(within(target).queryByLabelText("Race date")).not.toBeInTheDocument();
-    expect(within(target).queryByLabelText("Target time")).not.toBeInTheDocument();
+    expect(within(target).queryByRole("group", { name: "Target time" })).not.toBeInTheDocument();
     expect(within(target).getByRole("radio", { name: "10K" })).toBeChecked();
     await userEvent.click(within(target).getByRole("radio", { name: "Any" }));
     await userEvent.click(save());
@@ -269,7 +301,7 @@ describe("GoalScreen", () => {
     const recent = section("Recent race");
     expect(within(recent).getByRole("radio", { name: "5K" })).toBeChecked();
     await userEvent.click(within(recent).getByRole("radio", { name: "10K" }));
-    await userEvent.type(within(recent).getByLabelText("Time"), "50:00");
+    await pickTime("Time", { minutes: "50" });
     await userEvent.click(save());
 
     expect(await screen.findByText("Route not under test")).toBeInTheDocument();
@@ -357,21 +389,82 @@ describe("GoalScreen", () => {
     expect(calls.some((call) => call.method === "PUT")).toBe(false);
   });
 
-  it("asks for a target time it can read before sending, and forgets the sentence once the field changes", async () => {
-    const calls = fakeGoalApi({ plan: planResponseFixture() });
+  it("asks for a target time when No target is unticked at 0:00:00, and forgets the sentence once a time is picked", async () => {
+    const calls = fakeGoalApi({
+      plan: planResponseFixture({ goal: goalFixture({ targetTimeS: null }) }),
+    });
     renderGoal();
 
-    const targetTime = await screen.findByLabelText("Target time");
-    await userEvent.clear(targetTime);
-    await userEvent.type(targetTime, "49.30");
+    await userEvent.click(await screen.findByRole("checkbox", { name: "No target" }));
+    expect(pickedTime("Target time")).toEqual(["0", "0", "0"]);
     await userEvent.click(save());
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Enter the target time as h:mm:ss or mm:ss, or leave it empty.",
+      "Pick a target time, or tick No target.",
     );
     expect(calls.some((call) => call.method === "PUT")).toBe(false);
 
-    await userEvent.clear(targetTime);
+    await pickTime("Target time", { minutes: "48" });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("sends null once No target is ticked again, whatever time the pickers hold (no target)", async () => {
+    const calls = fakeGoalApi({ plan: planResponseFixture() });
+    renderGoal();
+
+    await userEvent.click(await screen.findByRole("checkbox", { name: "No target" }));
+    expect(within(timeField("Target time")).queryByRole("combobox")).not.toBeInTheDocument();
+    await userEvent.click(save());
+
+    await screen.findByText("Route not under test");
+    expect(calls.find((call) => call.method === "PUT")?.body).toMatchObject({ targetTimeS: null });
+  });
+
+  it("shows the pace a target time means for the race distance, live as the pickers and distance change", async () => {
+    fakeGoalApi({ plan: planResponseFixture({ goal: goalFixture({ targetTimeS: null }) }) });
+    renderGoal();
+
+    const target = await screen.findByRole("region", { name: "Target" });
+    await userEvent.click(within(target).getByRole("radio", { name: "Half" }));
+    await userEvent.click(within(target).getByRole("checkbox", { name: "No target" }));
+    expect(timeField("Target time")).not.toHaveAccessibleDescription();
+
+    await pickTime("Target time", { hours: "1", minutes: "43" });
+    const caption = within(timeField("Target time")).getByText("Pace 4:53 /km");
+    expect(caption).toHaveClass("text-caption", "text-ink-2");
+
+    await pickTime("Target time", { seconds: "30" });
+    expect(timeField("Target time")).toHaveAccessibleDescription("Pace 4:54 /km");
+    await userEvent.click(within(target).getByRole("radio", { name: "Marathon" }));
+    expect(timeField("Target time")).toHaveAccessibleDescription("Pace 2:27 /km");
+  });
+
+  it("shows the target and recent paces per mile for a runner in miles (unit conversion)", async () => {
+    fakeGoalApi({
+      me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }),
+      plan: planResponseFixture({
+        goal: goalFixture({ recentTime: { distanceKey: "1mi", timeS: 400 } }),
+      }),
+    });
+    renderGoal();
+
+    await screen.findByRole("region", { name: "Recent race" });
+    // 49:00 over 6.21 mi is 473.3 s/mi.
+    expect(timeField("Target time")).toHaveAccessibleDescription("Pace 7:53 /mi");
+    expect(timeField("Time")).toHaveAccessibleDescription("Pace 6:40 /mi");
+  });
+
+  it("shows the recent time's pace for the recent distance, and none at 0:00:00", async () => {
+    fakeGoalApi({ plan: planResponseFixture() });
+    renderGoal();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add a recent race time" }));
+    expect(pickedTime("Time")).toEqual(["0", "0", "0"]);
+    expect(timeField("Time")).not.toHaveAccessibleDescription();
+
+    await pickTime("Time", { minutes: "54", seconds: "41" });
+    expect(timeField("Time")).toHaveAccessibleDescription("Pace 10:56 /km");
+    await userEvent.click(within(section("Recent race")).getByRole("radio", { name: "10K" }));
+    expect(timeField("Time")).toHaveAccessibleDescription("Pace 5:28 /km");
   });
 });
