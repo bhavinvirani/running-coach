@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "headline": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "whatHappened": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "whatItMeans": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "nextStep": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "caution": {
+      "type": "string",
+      "enum": [
+        "none",
+        "easy_next",
+        "rest_and_check"
+      ]
+    }
+  },
+  "required": [
+    "headline",
+    "whatHappened",
+    "whatItMeans",
+    "nextStep",
+    "caution"
+  ],
+  "additionalProperties": false
+}
