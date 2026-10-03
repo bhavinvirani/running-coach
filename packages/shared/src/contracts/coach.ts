@@ -25,6 +25,7 @@ export type RunInsight = z.infer<typeof runInsightSchema>;
  * Why a card was built without the model. missing_key is never stored, because no key queues no job, but
  * its card exists for callers without a key. timeout and unavailable are worth another try later;
  * request_rejected is Claude turning the request down for good (no credit left, no access to the model).
+ * plan_auth_failed: Claude rejected the owner's plan token on the coach service (expired or revoked).
  */
 export const coachFallbackReasonSchema = z.enum([
   "missing_key",
@@ -35,6 +36,7 @@ export const coachFallbackReasonSchema = z.enum([
   "timeout",
   "unavailable",
   "request_rejected",
+  "plan_auth_failed",
 ]);
 export type CoachFallbackReason = z.infer<typeof coachFallbackReasonSchema>;
 

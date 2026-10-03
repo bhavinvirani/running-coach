@@ -15,6 +15,17 @@ export const timeZoneSchema = z.string().min(1).refine(isIanaTimeZone, "Unknown 
 export const coachDetailSchema = z.enum(["short", "standard", "detailed"]);
 export type CoachDetail = z.infer<typeof coachDetailSchema>;
 
+/**
+ * What runs the coach. key: the user's own Claude API key (PUT /api/me/claude-key). plan: the owner's
+ * Claude plan, through the coach service, whose token is a server secret and never a user's.
+ */
+export const coachCredentialChoiceSchema = z.enum(["key", "plan"]);
+export type CoachCredentialChoice = z.infer<typeof coachCredentialChoiceSchema>;
+
+/** The credential the coach uses now; none when the choice is key and no key is saved. */
+export const coachCredentialSchema = z.enum(["key", "plan", "none"]);
+export type CoachCredential = z.infer<typeof coachCredentialSchema>;
+
 export const garminStatusSchema = z.enum(["not_connected", "ok", "expired"]);
 export type GarminStatus = z.infer<typeof garminStatusSchema>;
 
@@ -24,6 +35,9 @@ export const settingsSchema = z
     timezone: timeZoneSchema,
     coachDetail: coachDetailSchema,
     hasClaudeKey: z.boolean(),
+    coachCredential: coachCredentialSchema,
+    /** True only for the owner, when the server has the coach service set up: Settings offers the plan. */
+    claudePlanAvailable: z.boolean(),
   })
   .strict();
 export type Settings = z.infer<typeof settingsSchema>;
@@ -46,6 +60,8 @@ export const updateSettingsRequestSchema = z
     units: unitsSchema.optional(),
     timezone: timeZoneSchema.optional(),
     coachDetail: coachDetailSchema.optional(),
+    /** plan answers 409 claude_plan_unavailable unless claudePlanAvailable. */
+    coachCredential: coachCredentialChoiceSchema.optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, "Send at least one setting");

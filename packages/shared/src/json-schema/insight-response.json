@@ -69,7 +69,8 @@
                     "invalid_output",
                     "timeout",
                     "unavailable",
-                    "request_rejected"
+                    "request_rejected",
+                    "plan_auth_failed"
                   ]
                 },
                 {

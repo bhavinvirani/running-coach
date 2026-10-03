@@ -50,13 +50,26 @@
         },
         "hasClaudeKey": {
           "type": "boolean"
+        },
+        "coachCredential": {
+          "type": "string",
+          "enum": [
+            "key",
+            "plan",
+            "none"
+          ]
+        },
+        "claudePlanAvailable": {
+          "type": "boolean"
         }
       },
       "required": [
         "units",
         "timezone",
         "coachDetail",
-        "hasClaudeKey"
+        "hasClaudeKey",
+        "coachCredential",
+        "claudePlanAvailable"
       ],
       "additionalProperties": false
     },

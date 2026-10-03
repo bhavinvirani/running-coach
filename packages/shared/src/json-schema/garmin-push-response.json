@@ -46,6 +46,8 @@
                 "claude_key_missing",
                 "claude_key_invalid",
                 "claude_unavailable",
+                "claude_plan_unavailable",
+                "claude_plan_limited",
                 "plan_missing",
                 "session_locked"
               ]
