@@ -1,19 +1,24 @@
 import { ChevronLeft } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router";
 
+type BackLinkProps = {
+  /** Where Back goes when the screen was opened from a link or bookmark: the list the screen belongs to. */
+  to: string;
+};
+
 /**
- * Back, top left. A run opened from inside the app returns where it came from, Progress or Today, with its
- * scroll and loaded weeks; a run opened from a link or bookmark has no earlier entry in the app (React
- * Router keys only that first entry "default"), so Back goes to Progress, where every run is listed.
+ * Back, top left of a detail screen. A screen opened from inside the app returns where it came from, with
+ * its scroll and loaded data; one opened from a link or bookmark has no earlier entry in the app (React
+ * Router keys only that first entry "default"), so Back goes to `to`: Progress for a run, Plan for a week.
  */
-export function BackLink() {
+export function BackLink({ to }: BackLinkProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const canGoBack = location.key !== "default";
 
   return (
     <Link
-      to="/progress"
+      to={to}
       onClick={(event) => {
         if (!canGoBack) return;
         event.preventDefault();

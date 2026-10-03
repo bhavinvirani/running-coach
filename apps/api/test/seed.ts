@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
+import { BEST_EFFORTS_VERSION } from "@running-coach/engine";
+import type { DistanceKey } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { inject, vi } from "vitest";
 import { auth } from "../src/auth/auth";
 import { db } from "../src/db/client";
 import {
   activity,
+  bestEffort,
   garminConnection,
   type ImportProgressRow,
   importProgress,
@@ -221,4 +224,51 @@ export async function createLongRun(userId: string, garminActivityId = 10_000_00
     .returning();
   if (!row) throw new Error("insert returned nothing");
   return row;
+}
+
+let lastGarminActivityId = 0;
+
+/** A Garmin activity id no other run seeded in the test file has; the fixture account's ids are far above. */
+export function nextGarminActivityId(): number {
+  lastGarminActivityId += 1;
+  return lastGarminActivityId;
+}
+
+/**
+ * A run on a local date, 08:00 there, with its own Garmin id. Its UTC start reads the wall clock as UTC:
+ * every reader of a run's date uses start_local.
+ */
+export async function createRunOn(
+  userId: string,
+  date: string,
+  values: Partial<Omit<typeof activity.$inferInsert, "userId">> = {},
+) {
+  return createRun(userId, {
+    garminActivityId: nextGarminActivityId(),
+    startUtc: new Date(`${date}T08:00:00Z`),
+    startLocal: `${date} 08:00:00`,
+    ...values,
+  });
+}
+
+/** A run whose best efforts are stored at the current rule: one row per distance with the times given. */
+export async function createComputedRun(
+  userId: string,
+  efforts: Partial<Record<DistanceKey, number>>,
+  values: Partial<Omit<typeof activity.$inferInsert, "userId">> = {},
+) {
+  const run = await createRun(userId, {
+    garminActivityId: nextGarminActivityId(),
+    bestEffortsVersion: BEST_EFFORTS_VERSION,
+    ...values,
+  });
+  const rows = Object.entries(efforts).map(([distanceKey, timeS]) => ({
+    userId,
+    activityId: run.id,
+    distanceKey: distanceKey as DistanceKey,
+    timeS,
+    startS: 12.5,
+  }));
+  if (rows.length > 0) await db.insert(bestEffort).values(rows);
+  return run;
 }

@@ -20,6 +20,12 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((toUtcMidnight(b) - toUtcMidnight(a)) / DAY_MS);
 }
 
+/** The Monday that starts the date's Monday-to-Sunday week: the date itself on a Monday. */
+export function mondayOf(date: string): string {
+  // getUTCDay is 0 for Sunday; shift so Monday is 0.
+  return addDays(date, -((new Date(toUtcMidnight(date)).getUTCDay() + 6) % 7));
+}
+
 /** The calendar date an instant falls on in an IANA time zone. */
 export function localDateOf(instant: Date, timeZone: string): string {
   // en-CA formats as YYYY-MM-DD.

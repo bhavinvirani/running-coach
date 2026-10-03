@@ -5,6 +5,7 @@ import {
   formatCadence,
   formatCalories,
   formatCount,
+  formatCountValue,
   formatDate,
   formatDateTime,
   formatDistance,
@@ -19,13 +20,18 @@ import {
   formatLocalDate,
   formatLocalDay,
   formatLocalTime,
+  formatMeters,
   formatMonthYear,
   formatPace,
+  formatPaceBand,
   formatPaceDelta,
   formatPaceValue,
   formatPercent,
   formatRecordTime,
+  formatStepDistance,
+  formatStepDuration,
   formatTime,
+  formatTwoDigits,
   formatWeekRange,
   recordSeconds,
 } from "./format";
@@ -328,6 +334,19 @@ describe("formatWeekRange", () => {
   });
 });
 
+describe("formatCountValue", () => {
+  it("gives the count alone, thousands grouped", () => {
+    expect(formatCountValue(4)).toBe("4");
+    expect(formatCountValue(0)).toBe("0");
+    expect(formatCountValue(1240)).toBe("1,240");
+  });
+
+  it("shows the missing mark for negative and non-finite counts", () => {
+    expect(formatCountValue(-1)).toBe(MISSING);
+    expect(formatCountValue(Number.POSITIVE_INFINITY)).toBe(MISSING);
+  });
+});
+
 describe("formatCount", () => {
   it("uses the singular for one and the plural otherwise", () => {
     expect(formatCount(1, "run", "runs")).toBe("1 run");
@@ -473,5 +492,84 @@ describe("formatLocalDate", () => {
     expect(formatLocalDate(null)).toBe(MISSING);
     expect(formatLocalDate("27/09/2026")).toBe(MISSING);
     expect(formatLocalDate("2026-02-30T07:12:00")).toBe(MISSING);
+  });
+});
+
+describe("formatPaceBand", () => {
+  it("shows the fast end, then the slow end, then the unit", () => {
+    expect(formatPaceBand(285, 292, "km")).toBe("4:45-4:52 /km");
+    expect(formatPaceBand(458.7, 469.9, "mi")).toBe("7:39-7:50 /mi");
+  });
+
+  it("shows one pace when both ends round to the same second", () => {
+    expect(formatPaceBand(285, 285.3, "km")).toBe("4:45 /km");
+  });
+
+  it("shows the missing mark when either end is missing", () => {
+    expect(formatPaceBand(null, 292, "km")).toBe(MISSING);
+    expect(formatPaceBand(285, 0, "km")).toBe(MISSING);
+  });
+});
+
+describe("formatMeters", () => {
+  it("shows whole meters without grouping", () => {
+    expect(formatMeters(400)).toBe("400 m");
+    expect(formatMeters(1000)).toBe("1000 m");
+    expect(formatMeters(199.6)).toBe("200 m");
+  });
+
+  it("shows the missing mark for null, negative and non-finite values", () => {
+    expect(formatMeters(null)).toBe(MISSING);
+    expect(formatMeters(-1)).toBe(MISSING);
+    expect(formatMeters(Number.NaN)).toBe(MISSING);
+  });
+});
+
+describe("formatStepDistance", () => {
+  it("drops the decimal of a whole distance and keeps one otherwise", () => {
+    expect(formatStepDistance(1, "km")).toBe("1 km");
+    expect(formatStepDistance(14, "km")).toBe("14 km");
+    expect(formatStepDistance(1.5, "km")).toBe("1.5 km");
+    expect(formatStepDistance(2.485, "mi")).toBe("2.5 mi");
+  });
+
+  it("drops the decimal when the distance rounds to a whole one (unit conversion)", () => {
+    // A 1609 m step is a mile, not "1.0 mi".
+    expect(formatStepDistance(1609 / 1609.344, "mi")).toBe("1 mi");
+    expect(formatStepDistance(2.98, "km")).toBe("3 km");
+  });
+
+  it("shows the missing mark for null and negative values", () => {
+    expect(formatStepDistance(null, "km")).toBe(MISSING);
+    expect(formatStepDistance(-1, "km")).toBe(MISSING);
+  });
+});
+
+describe("formatStepDuration", () => {
+  it("says seconds, minutes and hours in words, leaving out the zero parts", () => {
+    expect(formatStepDuration(45)).toBe("45 s");
+    expect(formatStepDuration(900)).toBe("15 min");
+    expect(formatStepDuration(150)).toBe("2 min 30 s");
+    expect(formatStepDuration(5400)).toBe("1 h 30 min");
+    expect(formatStepDuration(7200)).toBe("2 h");
+  });
+
+  it("shows the missing mark for null, zero and negative values", () => {
+    expect(formatStepDuration(null)).toBe(MISSING);
+    expect(formatStepDuration(0)).toBe(MISSING);
+    expect(formatStepDuration(-60)).toBe(MISSING);
+  });
+});
+
+describe("formatTwoDigits", () => {
+  it("pads a minute or second to two digits like a clock", () => {
+    expect(formatTwoDigits(0)).toBe("00");
+    expect(formatTwoDigits(5)).toBe("05");
+    expect(formatTwoDigits(59)).toBe("59");
+  });
+
+  it("shows the missing mark for a negative or non-finite figure", () => {
+    expect(formatTwoDigits(-1)).toBe(MISSING);
+    expect(formatTwoDigits(Number.NaN)).toBe(MISSING);
   });
 });

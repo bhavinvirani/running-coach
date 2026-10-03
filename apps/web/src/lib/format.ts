@@ -14,6 +14,11 @@ function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
 
+/** A minutes or seconds figure the way a clock shows it, for a time picker's options: 5 → "05". */
+export function formatTwoDigits(value: number): string {
+  return isFiniteNumber(value) && value >= 0 ? pad2(Math.floor(value)) : MISSING;
+}
+
 /** "/km" or "/mi". */
 export function paceUnitLabel(unit: Units): string {
   return unit === "km" ? "/km" : "/mi";
@@ -256,10 +261,19 @@ export function formatWeekRange(
 
 const COUNT = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
 
+/**
+ * A count on its own, for a figure that draws its noun apart or a number inside a phrase: 4 → "4",
+ * 1240 → "1,240".
+ */
+export function formatCountValue(count: number): string {
+  if (!isFiniteNumber(count) || count < 0) return MISSING;
+  return COUNT.format(count);
+}
+
 /** A count with its noun: 1, "run", "runs" → "1 run"; 1240 → "1,240 runs". */
 export function formatCount(count: number, singular: string, plural: string): string {
-  if (!isFiniteNumber(count) || count < 0) return MISSING;
-  return `${COUNT.format(count)} ${count === 1 ? singular : plural}`;
+  const value = formatCountValue(count);
+  return value === MISSING ? MISSING : `${value} ${count === 1 ? singular : plural}`;
 }
 
 /** "m" with km, "ft" with mi: elevation follows the distance unit, like elevationInUnits in shared. */
@@ -306,4 +320,56 @@ export function formatLocalTime(local: string | null | undefined): string {
   if (!local || !calendarDay(local)) return MISSING;
   const time = LOCAL_TIME.exec(local);
   return time ? `${time[1] ?? ""}:${time[2] ?? ""}` : MISSING;
+}
+
+/**
+ * A pace band already converted to the user's unit, fast end first: 285, 292, "km" → "4:45-4:52 /km".
+ * One pace when both ends round to the same second: "4:45 /km".
+ */
+export function formatPaceBand(
+  fastSecondsPerUnit: number | null | undefined,
+  slowSecondsPerUnit: number | null | undefined,
+  unit: Units,
+): string {
+  const fast = formatPaceValue(fastSecondsPerUnit);
+  const slow = formatPaceValue(slowSecondsPerUnit);
+  if (fast === MISSING || slow === MISSING) return MISSING;
+  return fast === slow
+    ? `${fast} ${paceUnitLabel(unit)}`
+    : `${fast}-${slow} ${paceUnitLabel(unit)}`;
+}
+
+/** Whole meters, for a short step of a workout: 400 → "400 m". */
+export function formatMeters(meters: number | null | undefined): string {
+  if (!isFiniteNumber(meters) || meters < 0) return MISSING;
+  return `${Math.round(meters)} m`;
+}
+
+/**
+ * A workout step's distance already converted to the user's unit. A step is a prescription, not a
+ * measurement, so a whole number drops its decimal: 1 → "1 km", 1.5 → "1.5 km", 1.609 → "1.6 mi".
+ */
+export function formatStepDistance(distanceInUnit: number | null | undefined, unit: Units): string {
+  if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
+  const tenths = Math.round(distanceInUnit * 10);
+  const value = tenths % 10 === 0 ? (tenths / 10).toFixed(0) : (tenths / 10).toFixed(1);
+  return `${value} ${unit}`;
+}
+
+/**
+ * A workout step's duration in words, as a coach says it: 45 → "45 s", 900 → "15 min", 150 → "2 min 30 s",
+ * 5400 → "1 h 30 min", 7200 → "2 h".
+ */
+export function formatStepDuration(seconds: number | null | undefined): string {
+  if (!isFiniteNumber(seconds) || seconds <= 0) return MISSING;
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  const parts = [
+    hours > 0 ? `${hours} h` : null,
+    minutes > 0 ? `${minutes} min` : null,
+    rest > 0 ? `${rest} s` : null,
+  ];
+  return parts.filter((part) => part !== null).join(" ");
 }

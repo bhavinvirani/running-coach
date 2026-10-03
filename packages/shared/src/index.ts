@@ -10,3 +10,5 @@ export * from "./contracts/sync";
 export * from "./contracts/garmin-connection";
 export * from "./contracts/import";
 export * from "./contracts/personal-bests";
+export * from "./contracts/goal";
+export * from "./contracts/plan";

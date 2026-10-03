@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { addDays, dateChunks, daysBetween, localDateOf, noonUtc } from "../../src/lib/local-date";
+import {
+  addDays,
+  dateChunks,
+  daysBetween,
+  localDateOf,
+  mondayOf,
+  noonUtc,
+} from "../../src/lib/local-date";
 import { syncStartDate } from "../../src/services/garmin-sync";
 
 describe("local dates", () => {
@@ -24,6 +31,14 @@ describe("local dates", () => {
     expect(dateChunks("2026-09-28", "2026-09-28", 7)).toEqual([
       { start: "2026-09-28", end: "2026-09-28" },
     ]);
+  });
+
+  it("gives the Monday that starts a date's week, the date itself on a Monday, across months and years", () => {
+    expect(mondayOf("2026-10-05")).toBe("2026-10-05");
+    expect(mondayOf("2026-10-07")).toBe("2026-10-05");
+    expect(mondayOf("2026-10-11")).toBe("2026-10-05");
+    expect(mondayOf("2026-10-01")).toBe("2026-09-28");
+    expect(mondayOf("2027-01-02")).toBe("2026-12-28");
   });
 
   it("rejects anything but YYYY-MM-DD", () => {

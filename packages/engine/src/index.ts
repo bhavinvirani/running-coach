@@ -1,10 +1,79 @@
+export * from "./constants";
+export { addDays, daysBetween, nextMonday, weekdayIndex, weekdayOf } from "./dates";
+export { generatePlan, planStartVolume } from "./plan/generate";
 export {
-  BEST_EFFORTS_VERSION,
-  ENGINE_VERSION,
-  GLITCH_WINDOW_S,
-  WEEKLY_VOLUME_MAX_INCREASE,
-} from "./constants";
+  baselineReEntryFactor,
+  recentVolumeM,
+  reEnteredVolumeM,
+  startVolume,
+  trailingEmptyWeeks,
+} from "./rules/baseline";
+export type { StartVolumeInput, StartVolumeResult } from "./rules/baseline";
 export { bestEfforts } from "./rules/best-efforts";
 export type { BestEffort, BestEffortsInput } from "./rules/best-efforts";
+export { hardShareHolds, hardTimeS } from "./rules/easy-share";
+export { isSpacedFromHardDay, weekLayout } from "./rules/hard-days";
+export type { WeekLayout, WeekLayoutInput } from "./rules/hard-days";
+export {
+  longestInWindowM,
+  longestRunSeedM,
+  longRunDaysConflict,
+  longRunFloorM,
+  longRunGivingWayM,
+  longRunHoldsQuality,
+  longRunM,
+  longRunRoomM,
+  longRunShare,
+  longRunWarning,
+  maxRunM,
+  requiredLongRunM,
+} from "./rules/long-run";
+export type {
+  LongestInWindowInput,
+  LongRunFloorInput,
+  LongRunInput,
+  LongRunRoomInput,
+} from "./rules/long-run";
+export { neededWeeklyM } from "./rules/needed-volume";
+export type { NeededWeekInput } from "./rules/needed-volume";
+export { planLength } from "./rules/plan-length";
+export type { PlanLengthInput, PlanLengthResult } from "./rules/plan-length";
+export { predictTimeS, racePace } from "./rules/prediction";
+export type { PredictionInput, RacePaceInput, RacePaceResult } from "./rules/prediction";
+export {
+  dropRep,
+  QUALITY_SESSION_TYPE,
+  qualityCount,
+  qualitySteps,
+  qualityWork,
+  qualityZones,
+  workCapM,
+} from "./rules/quality";
+export type { QualityStepsInput, Work, WorkZone } from "./rules/quality";
+export { raceWeekDays, taperPracticeDate } from "./rules/race-week";
+export type { RaceWeekDays, RaceWeekDaysInput, TaperPracticeInput } from "./rules/race-week";
+export { reEntryFactor } from "./rules/re-entry";
+export {
+  bandMidpointSPerKm,
+  distanceForDurationM,
+  flattenSteps,
+  sessionTarget,
+  stepDistanceM,
+  stepDurationS,
+} from "./rules/session-target";
+export { taperBlocks, taperPeakM, taperStartDate, taperVolumesM } from "./rules/taper";
+export type {
+  TaperBlock,
+  TaperBlocksInput,
+  TaperDatesInput,
+  TaperPeakInput,
+  TaperVolumesInput,
+} from "./rules/taper";
+export { paceAtShareSPerKm, pacesFromVdot, roundVdot, vdotFromPerformance } from "./rules/vdot";
+export type { Performance, TrainingPaces } from "./rules/vdot";
+export { baseCurveM, downWeekM, isDownWeek, weekTargetM } from "./rules/volume-curve";
+export type { BaseCurveInput, WeekTargetInput } from "./rules/volume-curve";
+export { fillWeek, minRunDistanceM } from "./rules/week-fill";
+export type { FillWeekInput, FillWeekResult } from "./rules/week-fill";
 export { clampWeeklyVolume, maxWeeklyVolumeM } from "./rules/weekly-volume";
 export type { WeeklyVolumeInput, WeeklyVolumeResult } from "./rules/weekly-volume";

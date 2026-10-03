@@ -1,5 +1,5 @@
 import type { CoachDetail } from "@running-coach/shared";
-import { SegmentedField, type SegmentOption } from "./segmented-field";
+import { SegmentedField, type SegmentOption } from "@/components/segmented-field";
 
 const options: readonly SegmentOption<CoachDetail>[] = [
   { value: "short", label: "Short" },

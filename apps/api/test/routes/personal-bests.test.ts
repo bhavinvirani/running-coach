@@ -1,21 +1,23 @@
 import { BEST_EFFORTS_VERSION } from "@running-coach/engine";
-import {
-  type DistanceKey,
-  ErrorCode,
-  type GarminRecord,
-  personalBestsResponseSchema,
-} from "@running-coach/shared";
+import { ErrorCode, type GarminRecord, personalBestsResponseSchema } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
-import { activity, bestEffort, garminConnection } from "../../src/db/schema";
+import { activity, garminConnection } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
 import * as bestEffortsQueue from "../../src/jobs/best-efforts-queue";
 import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
 import { BEST_EFFORTS_MAX_ATTEMPTS } from "../../src/services/best-efforts";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
-import { connectGarmin, createRun, createUser, garminBundle } from "../seed";
+import {
+  connectGarmin,
+  createComputedRun,
+  createRun,
+  createUser,
+  garminBundle,
+  nextGarminActivityId,
+} from "../seed";
 
 // GET /api/personal-bests on the real Postgres. pg-boss runs with the best-efforts queue but no worker, so
 // a queued batch waits until a test fetches and completes it.
@@ -35,30 +37,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-let nextGarminId = 1;
-
-/** A run whose best efforts are stored: one row per distance with the times given. */
-async function computedRun(
-  userId: string,
-  efforts: Partial<Record<DistanceKey, number>>,
-  values: Parameters<typeof createRun>[1] = {},
-) {
-  const run = await createRun(userId, {
-    garminActivityId: nextGarminId++,
-    bestEffortsVersion: BEST_EFFORTS_VERSION,
-    ...values,
-  });
-  const rows = Object.entries(efforts).map(([distanceKey, timeS]) => ({
-    userId,
-    activityId: run.id,
-    distanceKey: distanceKey as DistanceKey,
-    timeS,
-    startS: 12.5,
-  }));
-  if (rows.length > 0) await db.insert(bestEffort).values(rows);
-  return run;
-}
-
 async function personalBests(agent: Awaited<ReturnType<typeof signedInAgent>>) {
   const response = await agent.get("/api/personal-bests");
   expect(response.status).toBe(200);
@@ -69,12 +47,12 @@ describe("GET /api/personal-bests", () => {
   it("returns the fastest effort per distance, shortest first, with the run it came from", async () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
-    const older = await computedRun(
+    const older = await createComputedRun(
       userId,
       { "10k": 3290.5, "5k": 1625.25, "1k": 301 },
       { startUtc: new Date("2026-08-02T05:00:00Z"), startLocal: "2026-08-02 07:00:00" },
     );
-    const newer = await computedRun(
+    const newer = await createComputedRun(
       userId,
       { "5k": 1601.75, "1k": 305, half: 7012.125 },
       { startUtc: new Date("2026-09-20T22:30:00Z"), startLocal: "2026-09-21 00:30:00" },
@@ -118,12 +96,12 @@ describe("GET /api/personal-bests", () => {
   it("gives an exact tie to the earlier run (duplicate activities)", async () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
-    await computedRun(
+    await createComputedRun(
       userId,
       { "5k": 1600 },
       { startUtc: new Date("2026-09-20T06:00:00Z"), startLocal: "2026-09-20 08:00:00" },
     );
-    const earlier = await computedRun(
+    const earlier = await createComputedRun(
       userId,
       { "5k": 1600 },
       { startUtc: new Date("2026-09-10T06:00:00Z"), startLocal: "2026-09-10 08:00:00" },
@@ -138,10 +116,10 @@ describe("GET /api/personal-bests", () => {
   it("leaves out treadmill, indoor and manual runs, even with stored efforts (treadmill and manual runs)", async () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
-    const outdoor = await computedRun(userId, { "5k": 1700 });
-    await computedRun(userId, { "5k": 1500 }, { type: "treadmill_running", isIndoor: true });
-    await computedRun(userId, { "5k": 1510 }, { type: "virtual_run", isIndoor: true });
-    await computedRun(userId, { "5k": 1520 }, { isManual: true });
+    const outdoor = await createComputedRun(userId, { "5k": 1700 });
+    await createComputedRun(userId, { "5k": 1500 }, { type: "treadmill_running", isIndoor: true });
+    await createComputedRun(userId, { "5k": 1510 }, { type: "virtual_run", isIndoor: true });
+    await createComputedRun(userId, { "5k": 1520 }, { isManual: true });
 
     const body = await personalBests(agent);
 
@@ -153,8 +131,8 @@ describe("GET /api/personal-bests", () => {
   it("hides a run edited since its efforts were computed and counts it as pending (edited activity)", async () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
-    const kept = await computedRun(userId, { "5k": 1700 });
-    const edited = await computedRun(userId, { "5k": 1500 });
+    const kept = await createComputedRun(userId, { "5k": 1700 });
+    const edited = await createComputedRun(userId, { "5k": 1500 });
     // What the sync's upsert does when Garmin changes the run's distance or time.
     await db.update(activity).set({ bestEffortsVersion: null }).where(eq(activity.id, edited.id));
 
@@ -167,7 +145,7 @@ describe("GET /api/personal-bests", () => {
   it("keeps showing efforts from an older rule version while they wait to be recomputed", async () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
-    const run = await computedRun(
+    const run = await createComputedRun(
       userId,
       { "1k": 290 },
       { bestEffortsVersion: BEST_EFFORTS_VERSION - 1 },
@@ -182,12 +160,12 @@ describe("GET /api/personal-bests", () => {
   it("counts only outdoor runs of 1 km or more still waiting as pending (partial backfill)", async () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
-    await computedRun(userId, { "1k": 300 });
-    await createRun(userId, { garminActivityId: nextGarminId++ });
-    await createRun(userId, { garminActivityId: nextGarminId++ });
-    await createRun(userId, { garminActivityId: nextGarminId++, isIndoor: true });
-    await createRun(userId, { garminActivityId: nextGarminId++, isManual: true });
-    await createRun(userId, { garminActivityId: nextGarminId++, distanceM: 900 });
+    await createComputedRun(userId, { "1k": 300 });
+    await createRun(userId, { garminActivityId: nextGarminActivityId() });
+    await createRun(userId, { garminActivityId: nextGarminActivityId() });
+    await createRun(userId, { garminActivityId: nextGarminActivityId(), isIndoor: true });
+    await createRun(userId, { garminActivityId: nextGarminActivityId(), isManual: true });
+    await createRun(userId, { garminActivityId: nextGarminActivityId(), distanceM: 900 });
 
     const body = await personalBests(agent);
 
@@ -233,11 +211,11 @@ describe("GET /api/personal-bests", () => {
     const userId = await ownerId();
     await connectGarmin(userId);
     await createRun(userId, {
-      garminActivityId: nextGarminId++,
+      garminActivityId: nextGarminActivityId(),
       bestEffortsAttempts: BEST_EFFORTS_MAX_ATTEMPTS,
     });
     await createRun(userId, {
-      garminActivityId: nextGarminId++,
+      garminActivityId: nextGarminActivityId(),
       bestEffortsAttempts: BEST_EFFORTS_MAX_ATTEMPTS - 1,
     });
 
@@ -247,7 +225,7 @@ describe("GET /api/personal-bests", () => {
   it("never shows another runner's efforts", async () => {
     const agent = await signedInAgent(app);
     const other = await createUser("other@example.com");
-    await computedRun(other, { "5k": 1400 });
+    await createComputedRun(other, { "5k": 1400 });
 
     expect((await personalBests(agent)).bests).toEqual([]);
   });
@@ -266,7 +244,7 @@ describe("GET /api/personal-bests checking and errorCode", () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
     if (connection !== "none") await connectGarmin(userId, garminBundle(), connection);
-    await createRun(userId, { garminActivityId: nextGarminId++ });
+    await createRun(userId, { garminActivityId: nextGarminActivityId() });
     return { agent, userId };
   }
 
@@ -355,7 +333,7 @@ describe("GET /api/personal-bests checking and errorCode", () => {
     const userId = await ownerId();
     await connectGarmin(userId);
     await createRun(userId, {
-      garminActivityId: nextGarminId++,
+      garminActivityId: nextGarminActivityId(),
       bestEffortsAttempts: 1,
       bestEffortsFailedAt: new Date(),
     });
@@ -419,7 +397,7 @@ describe("GET /api/personal-bests checking and errorCode", () => {
     const userId = await ownerId();
     await connectGarmin(userId, garminBundle(), { status: "expired" });
     await createRun(userId, {
-      garminActivityId: nextGarminId++,
+      garminActivityId: nextGarminActivityId(),
       bestEffortsVersion: BEST_EFFORTS_VERSION,
     });
 

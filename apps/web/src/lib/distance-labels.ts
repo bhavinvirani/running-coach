@@ -1,4 +1,4 @@
-import { distanceKeySchema, type DistanceKey } from "@running-coach/shared";
+import { distanceKeySchema, type DistanceKey, type RaceDistanceKey } from "@running-coach/shared";
 
 /** Every distance the app knows, shortest first, as the contract orders them. */
 export const DISTANCE_KEYS: readonly DistanceKey[] = distanceKeySchema.options;
@@ -23,6 +23,18 @@ export const DISTANCE_LABELS: Readonly<Record<DistanceKey, string>> = {
 
 export function distanceLabel(key: DistanceKey): string {
   return DISTANCE_LABELS[key];
+}
+
+/** A goal's race in full, where there is room for the name a runner says: "Half marathon", "10K". */
+const RACE_NAMES: Readonly<Record<RaceDistanceKey, string>> = {
+  "5k": "5K",
+  "10k": "10K",
+  half: "Half marathon",
+  marathon: "Marathon",
+};
+
+export function raceName(key: RaceDistanceKey): string {
+  return RACE_NAMES[key];
 }
 
 /** Most distances a PB chip names; past this it counts them, so it fits beside a run's date at 390 px. */

@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext } from "@playwright/test";
+import { generatePlan } from "@running-coach/engine";
 import {
   ErrorCode,
   RACE_EVENT_TYPE,
@@ -7,7 +8,10 @@ import {
   personalBestsResponseSchema,
   syncResponseSchema,
   type DistanceKey,
+  type GeneratedPlan,
   type MeResponse,
+  type PlanGenerationInput,
+  type RecentTime,
   type SyncResponse,
   type UpdateSettingsRequest,
 } from "@running-coach/shared";
@@ -108,14 +112,19 @@ async function clearBestEffortsBatches(db: pg.Client): Promise<void> {
 }
 
 /**
- * Every test starts from "no runs, no history import, Garmin not connected, default settings": the
- * runner's runs, import progress and Garmin connection are deleted first, then the settings go back to the
- * defaults through the API, the way the app changes them, so the MeResponse returned already shows the
- * reset state. An import page job left queued by an earlier test finds no progress row and does nothing;
+ * Every test starts from "no goal or plan, no runs, no history import, Garmin not connected, default
+ * settings": the runner's plan sessions, plans, goal, runs, import progress and Garmin connection are
+ * deleted first, then the settings go back to the defaults through the API, the way the app changes them,
+ * so the MeResponse returned already shows the reset state. An import page job left queued by an earlier test finds no progress row and does nothing;
  * a best-efforts batch left waiting is deleted (clearBestEffortsBatches).
  */
 export async function resetRunner(request: APIRequestContext): Promise<MeResponse> {
   await withDatabase(async (db) => {
+    // Sessions before their plans, plans before their goal: each would go with its parent (on delete
+    // cascade), but each table is emptied by its own user_id so none is left behind if that ever changes.
+    await db.query(`delete from plan_session where user_id = ${runnerId}`, [runner.email]);
+    await db.query(`delete from plan where user_id = ${runnerId}`, [runner.email]);
+    await db.query(`delete from goal where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from activity where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from import_progress where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from garmin_connection where user_id = ${runnerId}`, [runner.email]);
@@ -898,4 +907,128 @@ export async function seedBestEfforts(runs: readonly SeededEfforts[]): Promise<v
       [runner.email, BEST_EFFORTS_VERSION, runs.map((run) => run.garminActivityId)],
     );
   });
+}
+
+/** The recent race seedPlan's goal carries: a 10K in 54:41, typed in. */
+const seededRecentTime = { distanceKey: "10k", timeS: 3281 } as const satisfies RecentTime;
+
+/**
+ * The goal and plan seedPlan stores, as if saved on Fri 2 Oct 2026: a half marathon on Sun 21 Feb 2027,
+ * 4 runs a week with the long run on Sunday, paces from a typed-in 10K of 54:41, after four weeks of 22 to
+ * 30 km. The plan runs 20 weeks from Mon 5 Oct 2026, the first Monday after that Friday.
+ */
+export const seededPlanInput: PlanGenerationInput = {
+  goal: {
+    kind: "race",
+    distanceKey: "half",
+    raceDate: "2027-02-21",
+    targetTimeS: null,
+    daysPerWeek: 4,
+    longRunDay: "sun",
+    recentTime: seededRecentTime,
+  },
+  startDate: "2026-10-05",
+  baseline: {
+    weeklyVolumesM: [25_000, 28_000, 22_000, 30_000],
+    longestRunM: 15_000,
+    daysSinceLastRun: 2,
+  },
+  vdotSource: {
+    origin: "entered",
+    distanceM: 10_000,
+    timeS: seededRecentTime.timeS,
+    activityId: null,
+    date: null,
+  },
+};
+
+/** When seedPlan's goal and plan were saved; nothing on screen shows it, but every row reads the same. */
+const planSavedAt = "2026-10-02T09:00:00Z";
+
+/**
+ * The instant specs that show seedPlan's weeks pin the browser clock to (page.clock.setFixedTime): Wed 14
+ * Oct 2026, in week 2 (12–18 Oct), so that week's card is the current one whatever the date.
+ */
+export const planWeekTwoAt = new Date("2026-10-14T09:00:00Z");
+
+/**
+ * Stores seededPlanInput's goal with the plan the engine makes from it, as PUT /api/goal saves them
+ * (apps/api/src/services/plan.ts): the goal row, version 1 of its plan, active, and one plan_session per
+ * session with its week's phase. Written directly with the engine's own output, so the plan is what the API
+ * would make from these inputs on 2 Oct 2026 whatever today is; a change to the engine's rules changes the
+ * seeded plan with it. Returns the plan for tests that assert on its numbers.
+ */
+export async function seedPlan(): Promise<GeneratedPlan> {
+  const result = generatePlan(seededPlanInput);
+  if (!result.ok) {
+    throw new Error(`The engine answered the seeded goal with a conflict: ${result.conflict.code}`);
+  }
+  const generated = result.plan;
+  const { goal, vdotSource } = seededPlanInput;
+  const sessions = generated.weeks.flatMap((week) =>
+    week.sessions.map((session) => ({ ...session, phase: week.phase })),
+  );
+
+  await withDatabase(async (db) => {
+    await db.query("begin");
+    try {
+      const goalRows = await db.query<{ id: string }>(
+        `insert into goal (user_id, kind, distance_key, race_date, target_time_s, days_per_week,
+           long_run_day, recent_distance_key, recent_time_s, created_at, updated_at)
+         values (${runnerId}, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+         returning id`,
+        [
+          runner.email,
+          goal.kind,
+          goal.distanceKey,
+          goal.raceDate,
+          goal.targetTimeS,
+          goal.daysPerWeek,
+          goal.longRunDay,
+          seededRecentTime.distanceKey,
+          seededRecentTime.timeS,
+          planSavedAt,
+        ],
+      );
+      const goalId = goalRows.rows[0]?.id;
+      if (goalId === undefined) throw new Error("The goal insert returned nothing");
+
+      const planRows = await db.query<{ id: string; user_id: string }>(
+        `insert into plan (goal_id, user_id, version, engine_version, status, start_date, end_date, vdot,
+           vdot_source, paces, inputs, warnings, created_at, updated_at)
+         values ($2, ${runnerId}, 1, $3, 'active', $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
+           $11, $11)
+         returning id, user_id`,
+        [
+          runner.email,
+          goalId,
+          generated.engineVersion,
+          generated.startDate,
+          generated.endDate,
+          generated.vdot,
+          JSON.stringify(vdotSource),
+          JSON.stringify(generated.paces),
+          JSON.stringify(seededPlanInput),
+          JSON.stringify(generated.warnings),
+          planSavedAt,
+        ],
+      );
+      const planRow = planRows.rows[0];
+      if (planRow === undefined) throw new Error("The plan insert returned nothing");
+
+      await db.query(
+        `insert into plan_session (plan_id, user_id, date, type, phase, target, steps, created_at,
+           updated_at)
+         select $1, $2, session.date, session.type, session.phase, session.target, session.steps, $4, $4
+         from jsonb_to_recordset($3::jsonb)
+           as session(date date, type text, phase text, target jsonb, steps jsonb)`,
+        [planRow.id, planRow.user_id, JSON.stringify(sessions), planSavedAt],
+      );
+      await db.query("commit");
+    } catch (error) {
+      await db.query("rollback");
+      throw error;
+    }
+  });
+  return generated;
 }

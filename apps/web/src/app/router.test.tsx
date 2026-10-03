@@ -13,6 +13,7 @@ import {
   activityResponseFixture,
   importProgressFixture,
   meFixture,
+  planResponseFixture,
   weekFixture,
 } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
@@ -31,8 +32,8 @@ function renderApp(path: string) {
 }
 
 /**
- * The API for a signed-in runner with one stored run and a finished import, who synced a moment ago, so
- * opening the app sends no sync: that has its own test below.
+ * The API for a signed-in runner with one stored run, a finished import and a plan, who synced a moment
+ * ago, so opening the app sends no sync: that has its own test below.
  */
 function signedIn({ path }: FakeRequest): Response {
   if (path === "/api/me") {
@@ -45,6 +46,7 @@ function signedIn({ path }: FakeRequest): Response {
   if (path === "/api/activities") {
     return json({ weeks: [weekFixture("2026-09-21", [activityFixture()])], nextBefore: null });
   }
+  if (path === "/api/plan") return json(planResponseFixture());
   if (path === "/api/import") {
     return json(
       importProgressFixture({ status: "done", runsStored: 1, finishedAt: "2026-09-27T06:20:00Z" }),
@@ -79,11 +81,53 @@ describe("app routes", () => {
     expect(router.state.location.pathname).toBe("/");
 
     const tabs = within(screen.getByRole("navigation", { name: "Tabs" })).getAllByRole("link");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Today", "Progress", "Settings"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Today", "Plan", "Progress", "Settings"]);
     expect(tabs[0]).toHaveAttribute("aria-current", "page");
     expect(tabs[0]).toHaveClass("text-accent");
-    expect(tabs[1]).not.toHaveAttribute("aria-current");
-    expect(tabs[2]).not.toHaveAttribute("aria-current");
+    for (const tab of tabs.slice(1)) expect(tab).not.toHaveAttribute("aria-current");
+  });
+
+  it("opens Plan on /plan inside the tab shell, between Today and Progress, and selects only its tab", async () => {
+    stubFetch(signedIn);
+    renderApp("/plan");
+    expect(await screen.findByRole("heading", { name: "Plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Goal" })).toBeInTheDocument();
+    const plan = screen.getByRole("link", { name: "Plan" });
+    expect(plan).toHaveAttribute("href", "/plan");
+    expect(plan).toHaveAttribute("aria-current", "page");
+    for (const name of ["Today", "Progress", "Settings"]) {
+      expect(screen.getByRole("link", { name })).not.toHaveAttribute("aria-current");
+    }
+  });
+
+  it("opens a week from its Plan card inside the tab shell, with Plan still selected, and Back returns", async () => {
+    stubFetch(signedIn);
+    const router = renderApp("/plan");
+    const weeks = await screen.findByRole("region", { name: "Weeks" });
+
+    await userEvent.click(within(weeks).getAllByRole("link")[1]!);
+
+    expect(await screen.findByRole("heading", { name: "Week 2" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/plan/weeks/2");
+    expect(screen.getByRole("link", { name: "Plan" })).toHaveAttribute("aria-current", "page");
+
+    await userEvent.click(screen.getByRole("link", { name: "Back" }));
+
+    expect(await screen.findByRole("heading", { name: "Plan" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/plan");
+  });
+
+  it("opens the goal form from Change goal, inside the tab shell", async () => {
+    stubFetch(signedIn);
+    const router = renderApp("/plan");
+
+    await userEvent.click(await screen.findByRole("link", { name: "Change goal" }));
+
+    // Level 1: the Plan screen's goal card has a "Goal" heading of its own.
+    expect(await screen.findByRole("heading", { name: "Goal", level: 1 })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/plan/goal");
+    expect(await screen.findByRole("button", { name: "Save goal" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Tabs" })).toBeInTheDocument();
   });
 
   it("opens Progress on /progress inside the tab shell and selects only its tab", async () => {
@@ -93,6 +137,7 @@ describe("app routes", () => {
     expect(await screen.findByRole("region", { name: "21–27 Sep" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Progress" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Today" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Plan" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
   });
 
@@ -113,6 +158,7 @@ describe("app routes", () => {
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Today" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Plan" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "Progress" })).not.toHaveAttribute("aria-current");
   });
 

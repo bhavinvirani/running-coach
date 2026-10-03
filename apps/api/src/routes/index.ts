@@ -4,10 +4,12 @@ import { notFoundHandler } from "../lib/errors";
 import { activitiesRouter } from "./activities";
 import { cronRouter } from "./cron";
 import { garminRouter } from "./garmin";
+import { goalRouter } from "./goal";
 import { healthRouter } from "./health";
 import { importRouter } from "./import";
 import { meRouter } from "./me";
 import { personalBestsRouter } from "./personal-bests";
+import { planRouter } from "./plan";
 import { syncRouter } from "./sync";
 
 /**
@@ -27,6 +29,8 @@ export function registerRoutes(app: Express): void {
   api.use(activitiesRouter);
   api.use(importRouter);
   api.use(personalBestsRouter);
+  api.use(goalRouter);
+  api.use(planRouter);
   api.use(notFoundHandler);
   app.use("/api", api);
 }

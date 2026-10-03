@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "easy": {
+      "type": "object",
+      "properties": {
+        "fastSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "slowSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "fastSPerKm",
+        "slowSPerKm"
+      ],
+      "additionalProperties": false
+    },
+    "marathon": {
+      "type": "object",
+      "properties": {
+        "fastSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "slowSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "fastSPerKm",
+        "slowSPerKm"
+      ],
+      "additionalProperties": false
+    },
+    "threshold": {
+      "type": "object",
+      "properties": {
+        "fastSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "slowSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "fastSPerKm",
+        "slowSPerKm"
+      ],
+      "additionalProperties": false
+    },
+    "interval": {
+      "type": "object",
+      "properties": {
+        "fastSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "slowSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "fastSPerKm",
+        "slowSPerKm"
+      ],
+      "additionalProperties": false
+    },
+    "repetition": {
+      "type": "object",
+      "properties": {
+        "fastSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "slowSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "fastSPerKm",
+        "slowSPerKm"
+      ],
+      "additionalProperties": false
+    },
+    "race": {
+      "type": "object",
+      "properties": {
+        "fastSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "slowSPerKm": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "fastSPerKm",
+        "slowSPerKm"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "easy",
+    "marathon",
+    "threshold",
+    "interval",
+    "repetition",
+    "race"
+  ],
+  "additionalProperties": false
+}

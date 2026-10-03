@@ -1,4 +1,4 @@
-import { ChartNoAxesColumn, House, Settings2, type LucideIcon } from "lucide-react";
+import { CalendarDays, ChartNoAxesColumn, House, Settings2, type LucideIcon } from "lucide-react";
 import { NavLink, Outlet } from "react-router";
 import { useForgetSyncOutcomeOnReconnect } from "@/api/sync";
 import { useSyncOnOpen } from "@/api/sync-on-open";
@@ -6,9 +6,9 @@ import { cn } from "@/lib/cn";
 
 type Tab = { to: string; label: string; icon: LucideIcon };
 
-// Only the tabs that exist. Plan joins between Today and Progress when its slice lands.
 const tabs: readonly Tab[] = [
   { to: "/", label: "Today", icon: House },
+  { to: "/plan", label: "Plan", icon: CalendarDays },
   { to: "/progress", label: "Progress", icon: ChartNoAxesColumn },
   { to: "/settings", label: "Settings", icon: Settings2 },
 ];
