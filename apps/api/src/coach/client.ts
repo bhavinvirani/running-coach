@@ -118,11 +118,32 @@ function failureOf(error: unknown): ThrownFailure | undefined {
 }
 
 /** The status and Claude's request id of a failed call, for the log. */
-function errorContext(error: unknown): { status: number | null; claudeRequestId: string | null } {
-  if (!(error instanceof Anthropic.APIError)) return { status: null, claudeRequestId: null };
+/** Longest stretch of Claude's error message a log line keeps. */
+const ERROR_MESSAGE_MAX = 300;
+
+interface ErrorContext {
+  status: number | null;
+  claudeRequestId: string | null;
+  /** Claude's error.type, e.g. "invalid_request_error". */
+  errorType: string | null;
+  /**
+   * Claude's own words, e.g. "Your credit balance is too low...", so a rejected request says why in the
+   * log. Claude's text about the request, never the key or the prompt; it never reaches a response.
+   */
+  errorMessage: string | null;
+}
+
+function errorContext(error: unknown): ErrorContext {
+  if (!(error instanceof Anthropic.APIError)) {
+    return { status: null, claudeRequestId: null, errorType: null, errorMessage: null };
+  }
+  const body = error.error as { error?: { message?: unknown } } | undefined;
+  const message = body?.error?.message;
   return {
     status: typeof error.status === "number" ? error.status : null,
     claudeRequestId: error.requestID ?? null,
+    errorType: error.type ?? null,
+    errorMessage: typeof message === "string" ? message.slice(0, ERROR_MESSAGE_MAX) : null,
   };
 }
 
@@ -219,7 +240,8 @@ export async function callCoach<T extends z.ZodType>(
         requestId: context.claudeRequestId,
       };
     } catch (error) {
-      const { status, claudeRequestId } = errorContext(error);
+      const context = errorContext(error);
+      const { status, claudeRequestId } = context;
       const failure = failureOf(error);
       if (!failure) throw error;
       if (failure === "unavailable" && attempt < models.length - 1) {
@@ -232,12 +254,12 @@ export async function callCoach<T extends z.ZodType>(
       // lets the job retry with backoff on the primary instead of storing a card that blames billing.
       if (failure === "request_rejected" && attempt > 0) {
         log.error(
-          { promptVersion, model, status, claudeRequestId },
+          { promptVersion, model, ...context },
           "coach fallback model rejected the request; check COACH_FALLBACK_MODEL",
         );
         return { ok: false, failure: "unavailable", usage: null, requestId: claudeRequestId };
       }
-      log.warn({ promptVersion, model, status, claudeRequestId, failure }, "coach call failed");
+      log.warn({ promptVersion, model, ...context, failure }, "coach call failed");
       return { ok: false, failure, usage: null, requestId: claudeRequestId };
     }
   }

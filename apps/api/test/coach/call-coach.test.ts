@@ -39,13 +39,38 @@ describe("callCoach", () => {
     });
     expect(coachLog.error).toHaveBeenCalledTimes(1);
     const [fields, message] = coachLog.error.mock.calls[0] as [Record<string, unknown>, string];
-    expect(fields).toEqual({
+    expect(fields).toMatchObject({
       promptVersion: "run-insight/v1",
       model: config.COACH_FALLBACK_MODEL,
       status: 404,
       claudeRequestId: "req_fake_2",
+      errorType: "not_found_error",
     });
     expect(message).toContain("COACH_FALLBACK_MODEL");
     expect(JSON.stringify(coachLog.error.mock.calls)).not.toContain(apiKey);
+  });
+
+  it("logs Claude's error type and message when it rejects the request, so a credit problem says why", async () => {
+    const apiKey = claudeKey("request-rejected");
+    coachLog.warn.mockClear();
+
+    const result = await callCoach({
+      apiKey,
+      prompt: "run-insight",
+      version: "v1",
+      input: "Run: 5.0 km",
+      schema: runInsightSchema,
+      maxTokens: INSIGHT_MAX_TOKENS,
+    });
+
+    expect(result).toMatchObject({ ok: false, failure: "request_rejected" });
+    const failed = coachLog.warn.mock.calls.find((call) => call[1] === "coach call failed");
+    expect(failed?.[0]).toMatchObject({
+      status: 400,
+      errorType: "invalid_request_error",
+      errorMessage: expect.stringContaining("credit balance is too low") as unknown,
+      failure: "request_rejected",
+    });
+    expect(JSON.stringify(coachLog.warn.mock.calls)).not.toContain(apiKey);
   });
 });
