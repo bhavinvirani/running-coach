@@ -37,6 +37,17 @@ describe("coachRunResponseSchema", () => {
     expect(coachRunResponseSchema.safeParse(limited).success).toBe(true);
   });
 
+  it("rejects a reset further out than the plan's longest window", () => {
+    const limited = {
+      ok: false,
+      failure: "plan_limited",
+      retryAfterSeconds: 9 * 24 * 60 * 60,
+      usage: null,
+      claudeRequestId: null,
+    };
+    expect(coachRunResponseSchema.safeParse(limited).success).toBe(false);
+  });
+
   it("rejects a reset already passed", () => {
     const limited = {
       ok: false,

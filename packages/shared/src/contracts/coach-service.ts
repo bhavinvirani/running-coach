@@ -21,6 +21,9 @@ export const coachRunRequestSchema = z
   .strict();
 export type CoachRunRequest = z.infer<typeof coachRunRequestSchema>;
 
+/** The longest a plan_limited run waits: the plan's longest window (7 days) plus a day. */
+export const COACH_RUN_MAX_RETRY_AFTER_S = 8 * 24 * 60 * 60;
+
 /**
  * Why a run gave no usable output. plan_auth_failed: Claude rejected the plan token. plan_limited: the
  * plan's usage limit, with retryAfterSeconds until it resets. timeout: no answer within the service's
@@ -67,7 +70,7 @@ export const coachRunResponseSchema = z.discriminatedUnion("ok", [
       ok: z.literal(false),
       failure: coachRunFailureSchema,
       /** Seconds until the plan's limit resets; set with plan_limited only. */
-      retryAfterSeconds: z.number().int().min(1).optional(),
+      retryAfterSeconds: z.number().int().min(1).max(COACH_RUN_MAX_RETRY_AFTER_S).optional(),
       /** Set when a model answered, unusably. */
       usage: coachRunUsageSchema.nullable(),
       claudeRequestId: z.string().nullable(),

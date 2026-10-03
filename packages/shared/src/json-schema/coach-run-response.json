@@ -72,7 +72,7 @@
         "retryAfterSeconds": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9007199254740991
+          "maximum": 691200
         },
         "usage": {
           "anyOf": [

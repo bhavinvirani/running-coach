@@ -77,13 +77,14 @@ export type RunInsightCard = z.infer<typeof runInsightCardSchema>;
 /**
  * GET /api/activities/:id/insight, and POST (ask the coach) for a run with no card or a fallback card.
  * ready: a stored card, the model's or a fallback. pending: the coach is writing one. retrying: Claude
- * failed and the job will try again later. none: a key is set but this run has no card (an imported or
+ * failed and the job will try again later; resumesAt when the job waits for the Claude plan's usage limit
+ * to reset (POST pulls it forward). none: a key is set but this run has no card (an imported or
  * older run). no_key: no card and no Claude key.
  */
 export const insightResponseSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("ready"), insight: runInsightCardSchema }).strict(),
   z.object({ state: z.literal("pending") }).strict(),
-  z.object({ state: z.literal("retrying") }).strict(),
+  z.object({ state: z.literal("retrying"), resumesAt: z.iso.datetime().optional() }).strict(),
   z.object({ state: z.literal("none") }).strict(),
   z.object({ state: z.literal("no_key") }).strict(),
 ]);
