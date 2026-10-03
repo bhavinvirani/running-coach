@@ -43,12 +43,19 @@ export function useSyncNow() {
     // sync can also mark the Garmin login expired, which Settings should show without a reload. The bests
     // learn of the best-efforts job the sync queued, which starts their poll, and a run already checked
     // gets its PB chip. Returned, so the sync stays pending until the new run is on screen: no
-    // flash of the old one.
-    onSettled: () =>
+    // flash of the old one. A sync that removed runs deleted on Garmin also unlinked them from the plan's
+    // sessions, so the plan and each session are read again too.
+    onSettled: (result) =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: resourceKey("activities") }),
         queryClient.invalidateQueries({ queryKey: resourceKey("me") }),
         queryClient.invalidateQueries({ queryKey: resourceKey("personal-bests") }),
+        ...(result !== undefined && result.activitiesRemoved > 0
+          ? [
+              queryClient.invalidateQueries({ queryKey: resourceKey("plan") }),
+              queryClient.invalidateQueries({ queryKey: resourceKey("sessions") }),
+            ]
+          : []),
       ]),
   });
 }

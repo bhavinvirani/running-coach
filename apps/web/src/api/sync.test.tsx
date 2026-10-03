@@ -7,7 +7,9 @@ import { json, problem, stubFetch } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { meQueryOptions } from "./me";
-import { actionKey } from "./query-keys";
+import { planKey } from "./plan";
+import { actionKey, detailKey, listKey } from "./query-keys";
+import { sessionKey } from "./sessions";
 import { useForgetSyncOutcomeOnReconnect, useLatestSync, useSyncNow } from "./sync";
 import { settle } from "@/test/lifecycle";
 
@@ -21,8 +23,12 @@ function renderSyncHooks() {
   return { ...renderHook(useHooks, { wrapper }), queryClient };
 }
 
-function synced(activitiesWritten: number): Response {
-  return json({ lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten } satisfies SyncResponse);
+function synced(activitiesWritten: number, activitiesRemoved = 0): Response {
+  return json({
+    lastSyncAt: "2026-09-28T07:40:00Z",
+    activitiesWritten,
+    activitiesRemoved,
+  } satisfies SyncResponse);
 }
 
 /** Holds every POST /api/sync until the test answers it, in the order they were sent. */
@@ -54,7 +60,7 @@ describe("useSyncNow", () => {
     expect(result.current.latest).toEqual({
       syncing: false,
       error: null,
-      result: { lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0 },
+      result: { lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 0, activitiesRemoved: 0 },
     });
   });
 
@@ -73,6 +79,57 @@ describe("useSyncNow", () => {
 
     expect(syncs()).toHaveLength(1);
     expect(result.current.latest).toEqual({ syncing: true, error: null, result: undefined });
+  });
+});
+
+describe("useSyncNow refreshes", () => {
+  /** What the screens hold before the sync: the plan, one session and the latest run, all fresh. */
+  function cachedViews() {
+    const queryClient = testQueryClient();
+    const views = {
+      plan: planKey,
+      session: sessionKey("3c1d2e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"),
+      latest: detailKey("activities", "latest"),
+      bests: listKey("personal-bests"),
+    };
+    for (const key of Object.values(views)) queryClient.setQueryData(key, {});
+    const invalidated = () =>
+      Object.fromEntries(
+        Object.entries(views).map(([name, key]) => [
+          name,
+          queryClient.getQueryState(key)?.isInvalidated ?? false,
+        ]),
+      );
+    return { queryClient, invalidated };
+  }
+
+  async function syncWith(answer: Response) {
+    stubFetch(() => answer);
+    const { queryClient, invalidated } = cachedViews();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useSyncNow(), { wrapper });
+    await act(() => result.current.mutateAsync());
+    return invalidated();
+  }
+
+  it("the plan and its sessions as well as the runs and bests after a sync that removed runs deleted on Garmin (deleted activity)", async () => {
+    expect(await syncWith(synced(0, 1))).toEqual({
+      plan: true,
+      session: true,
+      latest: true,
+      bests: true,
+    });
+  });
+
+  it("the runs and bests but not the plan after a sync that removed none", async () => {
+    expect(await syncWith(synced(1))).toEqual({
+      plan: false,
+      session: false,
+      latest: true,
+      bests: true,
+    });
   });
 });
 
@@ -221,7 +278,7 @@ describe("useForgetSyncOutcomeOnReconnect", () => {
     expect(result.current.latest).toEqual({
       syncing: false,
       error: null,
-      result: { lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 1 },
+      result: { lastSyncAt: "2026-09-28T07:40:00Z", activitiesWritten: 1, activitiesRemoved: 0 },
     });
   });
 });

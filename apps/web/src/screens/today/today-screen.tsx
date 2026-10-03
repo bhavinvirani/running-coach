@@ -50,12 +50,13 @@ export function TodayScreen() {
   ) : (
     <SyncNowButton syncing={screen.syncing} onSync={screen.syncNow} />
   );
-  // A sync that found nothing new says so; otherwise "it worked" looks like "nothing happened".
+  // A sync that found nothing new says so, otherwise "it worked" looks like "nothing happened"; one that
+  // removed runs Garmin no longer lists says so, since they just vanish from the screen.
   const syncOutcome = screen.garminExpired ? null : screen.syncError ? (
     <RetryAlert error={screen.syncError} onRetry={screen.syncNow} />
-  ) : screen.nothingNew ? (
+  ) : screen.syncOutcome ? (
     <p role="status" className="text-caption text-ink-2">
-      No new runs on Garmin.
+      {screen.syncOutcome}
     </p>
   ) : null;
   const refetchFailed = screen.refetchError ? (

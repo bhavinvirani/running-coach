@@ -39,6 +39,9 @@ Add "fixture": "expired" (401 garmin_auth_expired), "rate_limited" (429), "unava
 "rotate_then_rate_limited" and "rotate_then_unavailable" rotate like "rotate" at login, then fail
 the next library call with a 429 or a 502 whose problem carries the rotated bundle (/profile makes
 no further call, so it succeeds; /workouts/sync answers 200 with the stop and the rotated bundle).
+"deleted_run" leaves FAKE_DELETED_ACTIVITY_ID, the newest run (sync.json's 18 km of 2026-09-27),
+out of the account, as when the runner deleted it in Garmin Connect: both list calls skip it and its
+detail calls answer 404.
 "workout_outage" fails the second upload of a request with a 503 before it uploads, so the first
 create completes; "workout_rate_limited" does the same with a 429; "workout_schedule_outage" fails
 every schedule with a 503, so a create uploads and stops halfway. Writes fail the way the library's
@@ -87,6 +90,8 @@ _schedule_ids = itertools.count(FAKE_FIRST_SCHEDULE_ID)
 FAKE_ROUTE_CENTER = (0.0, -30.0)
 FAKE_ROUTE_RADIUS_DEG = 0.02
 FAKE_ROUTE_POINTS = 120
+# The run the "deleted_run" bundle leaves out of the account: the newest, the 18 km long run.
+FAKE_DELETED_ACTIVITY_ID = 10_000_000_007
 # No activity of the account has these ids: Garmin down for these runs alone.
 FAKE_UNAVAILABLE_ACTIVITY_ID = 9_000_000_503
 FAKE_UNAVAILABLE_ACTIVITY_IDS = frozenset({FAKE_UNAVAILABLE_ACTIVITY_ID, 9_000_000_504})
@@ -365,12 +370,17 @@ class FakeGarmin:
 
     def _account(self) -> list[dict[str, Any]]:
         """Every activity of the fake account, newest first by startTimeLocal like Garmin."""
+        deleted = FAKE_DELETED_ACTIVITY_ID if self._behaviour == "deleted_run" else None
         items: list[dict[str, Any]] = []
         for name in ACTIVITY_FIXTURES:
             listed = self._read(name)
             if not isinstance(listed, list):
                 raise TypeError(f"{name} must hold a list")
-            items.extend(item for item in listed if isinstance(item, dict))
+            items.extend(
+                item
+                for item in listed
+                if isinstance(item, dict) and item.get("activityId") != deleted
+            )
         items.sort(key=lambda item: str(item["startTimeLocal"]), reverse=True)
         return items
 

@@ -7,6 +7,7 @@ import {
   GARMIN_SERIES_BATCH_MAX,
   GARMIN_WORKOUT_BATCH_MAX,
   type GarminWorkoutAction,
+  RECENT_RUNS_CHECKED,
 } from "@running-coach/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -23,7 +24,8 @@ import { EASY_STEPS, fixtureOf, fixturesSentTo, garminBundle, PACES } from "../s
 
 // Against the real Garmin service in fixture mode (global-setup.ts); the bundle picks the behaviour.
 
-const range = { startDate: "2026-09-01", endDate: "2026-09-30" };
+// A chunk before the last: the newest runs are asked for on a sync's last chunk only.
+const range = { startDate: "2026-09-01", endDate: "2026-09-30", recentLimit: 0 };
 
 /** Records every bundle the client hands over for writing back. */
 function writeBack(): GarminCallOptions & { saved: string[] } {
@@ -79,6 +81,21 @@ describe("garminClient", () => {
     const headers = new Headers(spy.mock.calls[0]?.[1]?.headers);
     expect(headers.get("x-request-id")).toBe("req-sync-1");
     expect(headers.get("x-garmin-secret")).toBe(config.GARMIN_SERVICE_SECRET);
+  });
+
+  it("returns the newest runs on Garmin when asked, and null when not (deleted on Garmin)", async () => {
+    const asked = await garminClient.sync(
+      { tokenBundle: garminBundle(), ...range, recentLimit: RECENT_RUNS_CHECKED },
+      writeBack(),
+    );
+    const notAsked = await garminClient.sync(
+      { tokenBundle: garminBundle(), ...range },
+      writeBack(),
+    );
+
+    expect(asked.recent?.garminActivityIds).toContain(10_000_000_007);
+    expect(asked.recent?.listed).toBeLessThan(RECENT_RUNS_CHECKED);
+    expect(notAsked.recent).toBeNull();
   });
 
   it("returns the rotated bundle when Garmin refreshed the tokens", async () => {
@@ -160,7 +177,7 @@ describe("garminClient", () => {
 
     await expect(
       garminClient.sync(
-        { tokenBundle: garminBundle(), startDate: "1 Sept", endDate: "2026-09-30" },
+        { tokenBundle: garminBundle(), startDate: "1 Sept", endDate: "2026-09-30", recentLimit: 0 },
         writeBack(),
       ),
     ).rejects.toThrow();

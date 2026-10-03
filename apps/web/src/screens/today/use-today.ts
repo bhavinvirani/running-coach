@@ -9,6 +9,7 @@ import { useLatestSync, useSyncNow } from "@/api/sync";
 import { addDays, today } from "@/lib/dates";
 import type { SendState } from "@/components/garmin-push-line";
 import type { UnscheduleState } from "./parts/other-garmin-workouts";
+import { syncOutcomeLine } from "./today-copy";
 
 /**
  * Everything Today reads and does: the latest run, the units to show it in, the bests it holds, Sync now,
@@ -54,7 +55,8 @@ export function useTodayScreen() {
     garminExpired: garmin.data?.status === "expired",
     syncing: sync.syncing,
     syncError: sync.error,
-    nothingNew: sync.result?.activitiesWritten === 0,
+    /** The line a sync that ended well leaves: runs it removed, or that it found nothing. */
+    syncOutcome: sync.result === undefined ? null : syncOutcomeLine(sync.result),
     syncNow: () => mutate(),
     /** The runner's local date; undefined until the settings are known. */
     today: day,

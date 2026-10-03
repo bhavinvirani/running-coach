@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from garminconnect import GarminConnectConnectionError
 
 from garmin_service.fake_client import (
     FAKE_GONE_SCHEDULE_ID,
@@ -32,7 +33,8 @@ from tests.helpers import (
 )
 from tests.helpers import workout_sync_body as sync_body
 
-FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27"}
+# A last chunk, which asks for the newest runs as the API does (RECENT_RUNS_CHECKED).
+FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27", "recentLimit": 100}
 # Both of the fake's unavailable runs, in a row: the series route stops after them.
 UNAVAILABLE_IN_A_ROW = sorted(FAKE_UNAVAILABLE_ACTIVITY_IDS)
 
@@ -49,17 +51,82 @@ def test_profile_responses_match_garmin_profile_response(
 
 
 @pytest.mark.parametrize(
-    "date_range", [FULL_RANGE, {"startDate": "2026-08-30", "endDate": "2026-08-30"}]
+    ("date_range", "behaviour"),
+    [
+        (FULL_RANGE, None),
+        ({**FULL_RANGE, "recentLimit": 0}, None),
+        ({**FULL_RANGE, "recentLimit": 200}, None),
+        ({"startDate": "2026-08-30", "endDate": "2026-08-30", "recentLimit": 0}, None),
+        (FULL_RANGE, "deleted_run"),
+        (FULL_RANGE, "rotate"),
+    ],
 )
 def test_sync_responses_match_garmin_sync_response(
-    client: TestClient, date_range: dict[str, str]
+    client: TestClient, date_range: dict[str, Any], behaviour: str | None
 ) -> None:
-    response = client.post("/sync", json={"tokenBundle": bundle(), **date_range})
+    request = {
+        "tokenBundle": bundle() if behaviour is None else bundle(fixture=behaviour),
+        **date_range,
+    }
+    assert_valid("garmin-sync-request", request)
+
+    response = client.post("/sync", json=request)
 
     assert response.status_code == 200
-    assert_valid("garmin-sync-response", response.json())
-    for activity in response.json()["activities"]:
+    assert_sync_response_valid(response.json())
+
+
+@pytest.mark.parametrize(
+    "garmin",
+    [
+        # The newest runs fail, are not a list, hold an unreadable item, or hold no run at all.
+        ScriptedGarmin(
+            activities=[raw_run()], recent_error=GarminConnectConnectionError("API Error 503")
+        ),
+        ScriptedGarmin(activities=[raw_run()], list_answer={"activityList": []}),
+        ScriptedGarmin(activities=[raw_run()], list_answer=[{"activityId": 1}]),
+        ScriptedGarmin(activities=[raw_run(activityType={"typeKey": "walking"})]),
+        # Local and UTC order disagree over the date line (time zones and DST).
+        ScriptedGarmin(
+            activities=[raw_run()],
+            list_answer=[
+                raw_run(
+                    activityId=42,
+                    startTimeLocal="2026-09-19 20:00:00",
+                    startTimeGMT="2026-09-19 11:00:00",
+                ),
+                raw_run(
+                    activityId=41,
+                    startTimeLocal="2026-09-19 12:00:00",
+                    startTimeGMT="2026-09-19 22:00:00",
+                ),
+            ],
+        ),
+    ],
+)
+def test_sync_responses_from_unexpected_newest_runs_match_garmin_sync_response(
+    make_client: AppFactory, garmin: ScriptedGarmin
+) -> None:
+    response = make_client(connect=garmin.connect()).post(
+        "/sync", json={"tokenBundle": bundle(), **FULL_RANGE}
+    )
+
+    assert response.status_code == 200
+    assert_sync_response_valid(response.json())
+
+
+def assert_sync_response_valid(body: dict[str, Any]) -> None:
+    assert_valid("garmin-sync-response", body)
+    for activity in body["activities"]:
         assert_valid("garmin-activity-summary", activity)
+    recent = body["recent"]
+    if recent is not None:
+        assert_valid("garmin-recent-runs", recent)
+        # The zod refine the JSON Schema cannot carry: both oldest starts are null exactly when no
+        # run is listed.
+        no_runs = recent["garminActivityIds"] == []
+        assert (recent["oldestStartUtc"] is None) == no_runs
+        assert (recent["oldestStartLocal"] is None) == no_runs
 
 
 @pytest.mark.parametrize(
@@ -342,6 +409,7 @@ def assert_workout_sync_response_valid(body: dict[str, Any]) -> None:
 
 def test_sync_requests_the_tests_send_match_garmin_sync_request() -> None:
     assert_valid("garmin-sync-request", {"tokenBundle": bundle(), **FULL_RANGE})
+    assert_valid("garmin-sync-request", {"tokenBundle": bundle(), **FULL_RANGE, "recentLimit": 0})
     assert_valid("garmin-profile-request", {"tokenBundle": bundle()})
 
 

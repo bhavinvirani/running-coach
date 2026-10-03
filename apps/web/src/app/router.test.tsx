@@ -267,7 +267,11 @@ describe("app routes", () => {
         return json(meFixture({ garmin: { status: "ok", lastSyncAt: anHourAgo } }));
       }
       if (request.method === "POST" && request.path === "/api/sync") {
-        return json({ lastSyncAt: new Date().toISOString(), activitiesWritten: 0 });
+        return json({
+          lastSyncAt: new Date().toISOString(),
+          activitiesWritten: 0,
+          activitiesRemoved: 0,
+        });
       }
       return signedIn(request);
     });

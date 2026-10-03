@@ -698,7 +698,11 @@ export const runHistory: readonly SeededRun[] = [
   { startLocal: "2026-07-22T18:30:00", distanceM: 4000, durationS: 1320 },
 ];
 
-/** Garmin ids grow over time; these sit far from the fixture account's, so a sync never touches them. */
+/**
+ * Garmin ids grow over time; these sit far from the fixture account's, so a sync never updates them. The
+ * fixture account does not list them either: a sync removes runs Garmin no longer lists, but none when more
+ * than 10 would go at once (MAX_RUNS_REMOVED_PER_SYNC in apps/api), so all 24 of runHistory stay.
+ */
 const firstHistoryGarminId = 20_000_000_001;
 
 /** The Garmin id seedRunHistory gives the run of runHistory that starts at `startLocal`. */

@@ -40,7 +40,7 @@ function fakeServer(initial: Server) {
     const lastSyncAt = new Date().toISOString();
     if (typeof server.me !== "function")
       server.me = { ...server.me, garmin: { status: "ok", lastSyncAt } };
-    return json({ lastSyncAt, activitiesWritten: 1 } satisfies SyncResponse);
+    return json({ lastSyncAt, activitiesWritten: 1, activitiesRemoved: 0 } satisfies SyncResponse);
   };
   const calls = stubFetch(({ method, path }) => {
     if (method === "GET" && path === "/api/me") {
@@ -279,7 +279,13 @@ describe("useSyncOnOpen", () => {
 
     // A sync started now would queue behind the running one and go out once it ends: none does.
     act(() =>
-      answerSync(json({ lastSyncAt: minutesAgo(0), activitiesWritten: 0 } satisfies SyncResponse)),
+      answerSync(
+        json({
+          lastSyncAt: minutesAgo(0),
+          activitiesWritten: 0,
+          activitiesRemoved: 0,
+        } satisfies SyncResponse),
+      ),
     );
     await waitFor(() => expect(second.result.current.latest.result).toBeDefined());
     await settle();

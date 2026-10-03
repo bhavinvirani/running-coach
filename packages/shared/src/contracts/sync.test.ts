@@ -2,12 +2,23 @@ import { describe, expect, it } from "vitest";
 import { cronSyncResponseSchema, syncResponseSchema } from "./sync";
 
 describe("syncResponseSchema", () => {
-  it("rejects a negative count", () => {
-    const parsed = syncResponseSchema.safeParse({
-      lastSyncAt: "2026-09-27T05:12:00Z",
-      activitiesWritten: -1,
+  const synced = { lastSyncAt: "2026-09-27T05:12:00Z", activitiesWritten: 1, activitiesRemoved: 0 };
+
+  it("accepts a sync that wrote and removed runs", () => {
+    expect(syncResponseSchema.parse({ ...synced, activitiesRemoved: 2 })).toEqual({
+      ...synced,
+      activitiesRemoved: 2,
     });
-    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects a negative count", () => {
+    expect(syncResponseSchema.safeParse({ ...synced, activitiesWritten: -1 }).success).toBe(false);
+    expect(syncResponseSchema.safeParse({ ...synced, activitiesRemoved: -1 }).success).toBe(false);
+  });
+
+  it("requires the removed count", () => {
+    const { activitiesRemoved: _, ...withoutRemoved } = synced;
+    expect(syncResponseSchema.safeParse(withoutRemoved).success).toBe(false);
   });
 });
 

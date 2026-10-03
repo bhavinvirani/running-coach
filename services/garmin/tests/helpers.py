@@ -126,7 +126,8 @@ class ScriptedGarmin:
         activities: list[dict[str, Any]] | None = None,
         login_error: BaseException | None = None,
         activities_error: BaseException | None = None,
-        list_answer: dict[str, Any] | None = None,
+        recent_error: BaseException | None = None,
+        list_answer: Any = None,
         splits: dict[str, Any] | None = None,
         details: dict[str, Any] | None = None,
         hr_zones: dict[str, Any] | list[Any] | None = None,
@@ -151,7 +152,11 @@ class ScriptedGarmin:
         # failed profile load); None keeps the bundle sent.
         self._rotate_to = rotate_to
         self._activities_error = activities_error
-        # An object where get_activities should answer a list; None answers `activities`.
+        # Raised by get_activities alone, after any activities_error: /sync's newest runs failing
+        # while its by-date list worked.
+        self._recent_error = recent_error
+        # get_activities' answer instead of `activities` (an object where Garmin should answer a
+        # list, or another list than get_activities_by_date's); None answers `activities`.
         self._list_answer = list_answer
         # The three detail answers; None serves the fixture files unchanged.
         self._splits = splits
@@ -224,8 +229,11 @@ class ScriptedGarmin:
         self.calls.append(f"get_activities:{start}:{limit}:{activitytype}")
         if self._activities_error is not None:
             raise self._activities_error
+        if self._recent_error is not None:
+            raise self._recent_error
         if self._list_answer is not None:
-            return self._list_answer
+            answer: dict[str, Any] | list[Any] = self._list_answer
+            return answer
         return self._activities
 
     def get_activity_splits(self, activity_id: str) -> dict[str, Any]:

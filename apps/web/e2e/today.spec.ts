@@ -142,6 +142,7 @@ test("says the Garmin login expired, keeps the run, and Retry syncs again", asyn
       body: JSON.stringify({
         lastSyncAt: "2026-09-27T12:00:00.000Z",
         activitiesWritten: 0,
+        activitiesRemoved: 0,
       } satisfies SyncResponse),
     },
   ];

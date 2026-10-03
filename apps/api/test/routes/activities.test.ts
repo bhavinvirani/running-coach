@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { BEST_EFFORTS_VERSION } from "@running-coach/engine";
 import {
   type ActivityResponse,
@@ -10,7 +11,8 @@ import {
   latestActivityResponseSchema,
   RACE_EVENT_TYPE,
 } from "@running-coach/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import pg from "pg";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
@@ -22,7 +24,9 @@ import {
   garminConnection,
   type NewActivity,
 } from "../../src/db/schema";
+import { config } from "../../src/lib/config";
 import { decrypt } from "../../src/lib/crypto";
+import { advisoryLockKey } from "../../src/lib/lock-key";
 import { activityDetailLimiter } from "../../src/routes/activities";
 import { upsertActivities } from "../../src/services/garmin-sync";
 import { importHistoryPage } from "../../src/services/history-import";
@@ -519,6 +523,18 @@ async function stored() {
   };
 }
 
+/** Resolves once a caller in this database waits in Postgres for an advisory lock another connection holds. */
+async function aCallerWaitsForTheLock(): Promise<void> {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
+    const result = await db.execute<{ count: string }>(
+      sql`select count(*) from pg_locks where locktype = 'advisory' and not granted and database = (select oid from pg_database where datname = current_database())`,
+    );
+    if (Number(result.rows[0]?.count) > 0) return;
+    await sleep(20);
+  }
+  throw new Error("no caller waited for the lock");
+}
+
 async function storedConnection(userId: string) {
   const [row] = await db.select().from(garminConnection).where(eq(garminConnection.userId, userId));
   if (!row) throw new Error("no connection stored");
@@ -925,6 +941,34 @@ describe("POST /api/activities/:id/detail", () => {
     expect(problem.detail).toBe("That run is no longer on Garmin Connect.");
     expect(await stored()).toEqual({ laps: [], streams: [] });
     expect(await storedConnection(userId)).toMatchObject({ status: "ok", lastError: null });
+  });
+
+  it("returns 404 not_found and calls no Garmin when a sync removes the run between the read and the lock (deleted on Garmin)", async () => {
+    const { agent, userId, run } = await ownerWithRun();
+    const sent = fixturesSentTo("/detail");
+    // A sync in another process holds the runner's lock and removes the run Garmin no longer lists.
+    const sync = new pg.Client({ connectionString: config.DATABASE_URL });
+    await sync.connect();
+    try {
+      await sync.query("begin");
+      await sync.query("select pg_advisory_xact_lock($1::bigint)", [
+        advisoryLockKey("user", userId),
+      ]);
+      // then() sends the request; it reads the run, then waits behind the sync's lock.
+      const pending = agent.post(detailPath(run.id)).then((response) => response);
+      await aCallerWaitsForTheLock();
+      await sync.query("delete from activity where id = $1", [run.id]);
+      await sync.query("commit");
+
+      const response = await pending;
+
+      const problem = expectProblem(response, 404, ErrorCode.notFound);
+      expect(problem.detail).toBe("That run does not exist.");
+      expect(sent()).toEqual([]);
+      expect(await stored()).toEqual({ laps: [], streams: [] });
+    } finally {
+      await sync.end();
+    }
   });
 
   it("returns 404 not_found for an unknown id or another user's run without calling Garmin", async () => {
