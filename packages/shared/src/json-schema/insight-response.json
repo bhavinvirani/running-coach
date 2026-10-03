@@ -68,7 +68,8 @@
                     "max_tokens",
                     "invalid_output",
                     "timeout",
-                    "unavailable"
+                    "unavailable",
+                    "request_rejected"
                   ]
                 },
                 {

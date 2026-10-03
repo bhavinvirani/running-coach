@@ -23,7 +23,8 @@ export type RunInsight = z.infer<typeof runInsightSchema>;
 
 /**
  * Why a card was built without the model. missing_key is never stored, because no key queues no job, but
- * its card exists for callers without a key.
+ * its card exists for callers without a key. timeout and unavailable are worth another try later;
+ * request_rejected is Claude turning the request down for good (no credit left, no access to the model).
  */
 export const coachFallbackReasonSchema = z.enum([
   "missing_key",
@@ -33,6 +34,7 @@ export const coachFallbackReasonSchema = z.enum([
   "invalid_output",
   "timeout",
   "unavailable",
+  "request_rejected",
 ]);
 export type CoachFallbackReason = z.infer<typeof coachFallbackReasonSchema>;
 
@@ -43,7 +45,18 @@ export type CoachFeedback = z.infer<typeof coachFeedbackSchema>;
  * PUT /api/me/claude-key: the API checks the key with Claude (a free call) and stores it encrypted, or
  * answers 422 claude_key_invalid and stores nothing; responds with meResponseSchema. DELETE removes it.
  */
-export const claudeKeyRequestSchema = z.object({ key: z.string().trim().min(1).max(512) }).strict();
+export const claudeKeyRequestSchema = z
+  .object({
+    // Visible ASCII only: a space, line break or NUL inside a key would make the HTTP client throw an
+    // error that quotes the header, key and all.
+    key: z
+      .string()
+      .trim()
+      .min(1)
+      .max(512)
+      .regex(/^[\x21-\x7E]+$/, "A Claude key has no spaces or line breaks"),
+  })
+  .strict();
 export type ClaudeKeyRequest = z.infer<typeof claudeKeyRequestSchema>;
 
 /** A stored insight card. */

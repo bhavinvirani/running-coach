@@ -36,6 +36,12 @@ describe("claudeKeyRequestSchema", () => {
   it("rejects a blank key", () => {
     expect(claudeKeyRequestSchema.safeParse({ key: "   " }).success).toBe(false);
   });
+
+  it("rejects a key with a line break, space or NUL inside", () => {
+    for (const key of ["sk-ant-a\nb", "sk-ant-a b", "sk-ant-a\u0000b"]) {
+      expect(claudeKeyRequestSchema.safeParse({ key }).success).toBe(false);
+    }
+  });
 });
 
 describe("insightResponseSchema", () => {
