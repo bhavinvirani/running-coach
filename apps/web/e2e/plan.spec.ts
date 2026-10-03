@@ -4,6 +4,7 @@ import {
   ErrorCode,
   distanceInUnits,
   planResponseSchema,
+  recentTimeSchema,
   saveGoalResponseSchema,
   type GeneratedWeek,
   type PlanWeek,
@@ -25,7 +26,7 @@ import {
 import { phaseName, weekTitle } from "../src/lib/plan-week";
 import { sessionTypeName } from "../src/lib/session-type";
 import { conflictSentence, goalCopy, timePace } from "../src/screens/goal/goal-copy";
-import { goalPaceFacts, planCopy } from "../src/screens/plan/plan-copy";
+import { goalPaceFacts, goalWeeks, planCopy } from "../src/screens/plan/plan-copy";
 import { planWeekCopy } from "../src/screens/plan-week/plan-week-copy";
 import { expect, test } from "./fixtures/login";
 import { seedPlan } from "./fixtures/seed";
@@ -183,7 +184,10 @@ test("sets a goal and sees the plan", async ({ page }) => {
   const goal = page.getByRole("region", { name: planCopy.goal });
   await expect(goal).toContainText("Half");
   await expect(goal).toContainText(`Race on ${formatLocalDate(raceDate)}`);
-  await expect(goal).toContainText(`${weekCount} weeks`);
+  // The figure is the weeks to the race, every one of them before the plan starts; its unit is drawn
+  // apart, so the two read as one string with no space between them: "20weeks".
+  const figure = goalWeeks(weekCount);
+  await expect(goal).toContainText(`${figure.value}${figure.unit}`);
   const weeks = page.getByRole("region", { name: planCopy.weeks });
   await expect(weeks.getByRole("link")).toHaveCount(weekCount);
 
@@ -259,6 +263,52 @@ test("reports a conflict and saves nothing", async ({ page }) => {
 
   const stored = planResponseSchema.parse(await (await page.request.get("/api/plan")).json());
   expect(stored).toEqual({ goal: null, plan: null });
+});
+
+test("refuses a recent time no run could take under its pickers and sends nothing", async ({
+  page,
+}) => {
+  // Every goal sent from here on, counted where the browser hands it to the network.
+  const sent: string[] = [];
+  await page.route("**/api/goal", (route) => {
+    sent.push(route.request().method());
+    return route.continue();
+  });
+  // The contract's own sentence for a 5K in 5:00, 1:00 /km: the form refuses it with the same words.
+  const refused = recentTimeSchema.safeParse({ distanceKey: "5k", timeS: 5 * 60 });
+  if (refused.success) throw new Error("The contract takes a 5K in 0:05:00");
+  const sentence = refused.error.issues[0]?.message ?? "";
+
+  await page.goto("/plan/goal");
+  await expect(page.getByRole("heading", { name: goalCopy.title, level: 1 })).toBeVisible();
+  await fillGoal(page, {
+    distance: "Half",
+    raceDate: addDays(todayUtc(), 20 * 7),
+    days: "4",
+    longRunDay: "Sun",
+    recent: { distance: "5K", time: { hours: 0, minutes: 5, seconds: 0 } },
+  });
+  await page.getByRole("button", { name: goalCopy.save }).click();
+
+  // Said under the time it is about, and nowhere else: the goal above Save goal has nothing to fix.
+  const time = page
+    .getByRole("region", { name: goalCopy.recentRace })
+    .getByRole("group", { name: goalCopy.time, exact: true });
+  await expect(time.getByRole("alert")).toHaveText(sentence);
+  await expect(page.getByRole("alert")).toHaveCount(1);
+  await expect(page).toHaveURL(/\/plan\/goal$/);
+  expect(sent).toEqual([]);
+  const stored = planResponseSchema.parse(await (await page.request.get("/api/plan")).json());
+  expect(stored).toEqual({ goal: null, plan: null });
+
+  // A time a runner could take clears the sentence, and the same Save goal now sends the goal.
+  await pickTime(time, { hours: 0, minutes: 25, seconds: 0 });
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  const saved = await saveGoal(page);
+  expect(saved.ok).toBe(true);
+  // One PUT in all, the second Save goal's: one sent by the first would have been routed before it.
+  expect(sent).toEqual(["PUT"]);
+  await expect(page).toHaveURL(/\/plan$/);
 });
 
 test("shows the plan's error state with Retry", async ({ page }) => {
