@@ -4,6 +4,7 @@ import {
   OPEN_STEP_TARGET,
   isPacedStep,
   paceZoneName,
+  readsInUnits,
   sessionName,
   stepAmount,
   stepKindName,
@@ -62,6 +63,21 @@ describe("stepAmount", () => {
     expect(stepAmount({ distanceM: 4828, durationS: null }, "mi")).toBe("3 mi");
     expect(stepAmount({ distanceM: 1000, durationS: null }, "mi")).toBe("1000 m");
     expect(stepAmount({ distanceM: 400, durationS: null }, "km")).toBe("400 m");
+  });
+
+  it("reads a 1 mi step saved as 1609 m as 1 mi, not 1609 m (1609 m in mi)", () => {
+    expect(stepAmount({ distanceM: 1609, durationS: null }, "mi")).toBe("1 mi");
+    expect(stepAmount({ distanceM: 1608, durationS: null }, "mi")).toBe("1608 m");
+    expect(stepAmount({ distanceM: 999, durationS: null }, "km")).toBe("999 m");
+  });
+});
+
+describe("readsInUnits", () => {
+  it("counts from one unit, less the half meter saving whole meters takes off (1609 m in mi)", () => {
+    expect(readsInUnits(1609, "mi")).toBe(true);
+    expect(readsInUnits(1608, "mi")).toBe(false);
+    expect(readsInUnits(1000, "km")).toBe(true);
+    expect(readsInUnits(999, "km")).toBe(false);
   });
 });
 

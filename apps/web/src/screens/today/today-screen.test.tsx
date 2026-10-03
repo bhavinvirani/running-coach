@@ -811,11 +811,12 @@ function weekCalendar(
 }
 
 type FakeWeekApi = {
-  me?: MeResponse;
+  /** GET /api/me: the runner, or one per read (the login found expired after the first). */
+  me?: MeResponse | (() => MeResponse);
   /** GET /api/calendar: the week, or an answer per request. */
   calendar?: CalendarResponse | ((request: FakeRequest) => Response | Promise<Response>);
   /** POST /api/calendar/unschedule; by default it takes the workout off and answers the new status. */
-  unschedule?: () => Response;
+  unschedule?: () => Response | Promise<Response>;
 };
 
 /**
@@ -830,7 +831,7 @@ function fakeWeekApi({
   let current = calendar;
   return stubFetch((request) => {
     const { method, path } = request;
-    if (method === "GET" && path === "/api/me") return json(me);
+    if (method === "GET" && path === "/api/me") return json(typeof me === "function" ? me() : me);
     if (method === "GET" && path === "/api/activities/latest") {
       return json({ activity: activityFixture() });
     }
@@ -935,8 +936,41 @@ describe("TodayScreen next 7 days", () => {
       within(rows[1]!)
         .getAllByRole("link", { name: /, / })
         .map((link) => link.getAttribute("aria-label")),
-    ).toEqual(["Easy, Skipped", "Hill reps, 7.1 km, 41:04, Waiting to send"]);
+    ).toEqual(["Easy, Skipped", "Hill reps, Tempo, 7.1 km, 41:04, Waiting to send"]);
     expect(within(rows[1]!).getByText("Easy").parentElement).toHaveClass("text-ink-2");
+  });
+
+  it("names the type of a titled custom workout beside its type colour, untitled ones by the type alone (type name)", async () => {
+    const titled = customSessionFixture();
+    const untitled = customSessionFixture({
+      id: "c0ffee00-0000-4000-8000-000000000002",
+      date: "2026-10-10",
+      type: "long",
+      title: null,
+    });
+    fakeWeekApi({ calendar: weekCalendar({ extra: [titled, untitled] }) });
+    renderToday();
+
+    const rows = await weekRows();
+    const link = within(rows[1]!).getByRole("link", { name: /^Hill reps,/ });
+    expect(link).toHaveAccessibleName("Hill reps, Tempo, 7.1 km, 41:04, Waiting to send");
+    expect(within(link).getByText("Hill reps").querySelector("span")).toHaveClass("bg-type-tempo");
+    expect(within(link).getByText("Tempo")).toHaveClass("text-caption");
+    expect(
+      within(rows[2]!).getByRole("link", { name: "Long run, 7.1 km, 41:04, Waiting to send" }),
+    ).toBeInTheDocument();
+    expect(within(rows[2]!).getAllByText(/Long run/)).toHaveLength(1);
+  });
+
+  it("puts each session's Garmin state on a line of its own under distance and time (caption line)", async () => {
+    fakeWeekApi();
+    renderToday();
+
+    const rows = await weekRows();
+    const link = within(rows[3]!).getByRole("link", { name: /^Long run,/ });
+    const lines = Array.from(link.children).map((line) => line.textContent);
+    expect(lines).toEqual(["Long run", "14.0 km·1:24:30", "Waiting to send"]);
+    expect(within(link).getByText("Waiting to send")).toHaveClass("text-caption", "text-ink-2");
   });
 
   it("leaves the next 7 days out for a runner without an active plan (no plan)", async () => {
@@ -1057,6 +1091,28 @@ describe("TodayScreen next 7 days", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads /api/me again when the calendar finds the login expired first, so the header says Reconnect Garmin (token expiry)", async () => {
+    let meReads = 0;
+    const calls = fakeWeekApi({
+      me: () => {
+        meReads += 1;
+        return meReads === 1 ? meFixture() : expiredMe;
+      },
+      calendar: weekCalendar({ garmin: garminPushStatusFixture({ connection: "expired" }) }),
+    });
+    renderToday();
+    const week = await loadedWeek();
+
+    expect(await screen.findByRole("link", { name: "Reconnect Garmin" })).toBeInTheDocument();
+    expect(header()).toContainElement(screen.getByRole("link", { name: "Reconnect Garmin" }));
+    expect(screen.getByText(errorMessages.garmin_auth_expired)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sync now" })).not.toBeInTheDocument();
+    expect(
+      within(week).getByRole("link", { name: "Easy, 5.0 km, 30:00, Not on Garmin" }),
+    ).toBeInTheDocument();
+    expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(2);
+  });
+
   it("lists the Garmin workouts the app did not create and unschedules one", async () => {
     const calls = fakeWeekApi({
       calendar: weekCalendar({
@@ -1109,6 +1165,54 @@ describe("TodayScreen next 7 days", () => {
     );
     expect(within(first!).queryByRole("alert")).not.toBeInTheDocument();
     expect(within(second!).getByRole("button", { name: /^Unschedule/ })).toBeEnabled();
+  });
+
+  it("unschedules one workout at a time and keeps each failure beside its workout (double tap)", async () => {
+    let answer: (response: Response) => void = () => {};
+    const calls = fakeWeekApi({
+      calendar: weekCalendar({
+        garmin: garminPushStatusFixture({
+          others: [
+            { scheduleId: 9001, date: "2026-10-09", title: "Club tempo" },
+            { scheduleId: 9002, date: "2026-10-11", title: null },
+          ],
+        }),
+      }),
+      unschedule: () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    renderToday();
+
+    const others = await screen.findByRole("region", { name: "Also on your Garmin calendar" });
+    const [first, second] = within(others).getAllByRole("listitem");
+    await userEvent.click(within(first!).getByRole("button", { name: /^Unschedule/ }));
+
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toHaveTextContent(
+      "Unscheduling…",
+    );
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toBeDisabled();
+    expect(within(second!).getByRole("button", { name: /^Unschedule/ })).toBeDisabled();
+    await userEvent.click(within(second!).getByRole("button", { name: /^Unschedule/ }));
+    expect(calls.filter((call) => call.path === "/api/calendar/unschedule")).toHaveLength(1);
+
+    answer(problem(429, ErrorCode.garminRateLimited));
+    expect(await within(first!).findByRole("alert")).toHaveTextContent(
+      errorMessages.garmin_rate_limited,
+    );
+    await userEvent.click(within(second!).getByRole("button", { name: /^Unschedule/ }));
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toBeDisabled();
+    answer(problem(502, ErrorCode.garminUnavailable));
+
+    expect(await within(second!).findByRole("alert")).toHaveTextContent(
+      errorMessages.garmin_unavailable,
+    );
+    expect(within(first!).getByRole("alert")).toHaveTextContent(errorMessages.garmin_rate_limited);
+    expect(within(first!).getByRole("button", { name: /^Unschedule/ })).toBeEnabled();
+    expect(
+      calls.filter((call) => call.path === "/api/calendar/unschedule").map((call) => call.body),
+    ).toEqual([{ scheduleIds: [9001] }, { scheduleIds: [9002] }]);
   });
 
   it("starts the week on the runner's date, not the device's UTC one (time zones)", async () => {

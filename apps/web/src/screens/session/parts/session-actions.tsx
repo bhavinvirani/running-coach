@@ -1,5 +1,5 @@
 import type { MoveWarning, PlanSession } from "@running-coach/shared";
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
@@ -34,19 +34,43 @@ type SessionActionsProps = {
 /**
  * What the runner can do with a session to come: Move to another day of its week, Skip session (a plan
  * session) or Delete workout (the runner's own), each confirmed in place, and Edit workout for their own.
- * The caller shows it only while canChange holds.
+ * The caller shows it only while canChange holds. Swapping the buttons for the confirm step takes away the
+ * focused button, so focus follows: to the question, which a screen reader then reads, back to Skip
+ * session or Delete workout on Keep, and back to Move once a day is chosen.
  */
 export function SessionActions({ session, name, today, move, skip }: SessionActionsProps) {
   const [moving, setMoving] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const questionId = useId();
+  const question = useRef<HTMLParagraphElement>(null);
+  const skipButton = useRef<HTMLButtonElement>(null);
+  const moveButton = useRef<HTMLButtonElement>(null);
+  // Set with the swap, so only a render the runner caused moves focus, never a refetch.
+  const focusAfterSwap = useRef<"question" | "skip" | null>(null);
   const custom = session.source === "custom";
   const days = moveDays(session, today);
   const skipLabel = custom ? sessionCopy.remove : sessionCopy.skip;
 
+  useEffect(() => {
+    const target = focusAfterSwap.current;
+    focusAfterSwap.current = null;
+    if (target === "question") question.current?.focus();
+    if (target === "skip") skipButton.current?.focus();
+  });
+
+  function confirm(open: boolean) {
+    focusAfterSwap.current = open ? "question" : "skip";
+    setConfirming(open);
+  }
+
   if (confirming) {
     return (
-      <div className="flex flex-col gap-3 rounded-md bg-surface-1 p-4">
-        <p className="text-body text-ink">
+      <div
+        role="group"
+        aria-labelledby={questionId}
+        className="flex flex-col gap-3 rounded-md bg-surface-1 p-4"
+      >
+        <p id={questionId} ref={question} tabIndex={-1} className="text-body text-ink">
           {custom ? sessionCopy.removeQuestion : sessionCopy.skipQuestion}
         </p>
         {skip.error ? (
@@ -58,7 +82,7 @@ export function SessionActions({ session, name, today, move, skip }: SessionActi
           <Button disabled={skip.skipping} aria-busy={skip.skipping} onClick={skip.onSkip}>
             {skipLabel}
           </Button>
-          <Button variant="ghost" onClick={() => setConfirming(false)}>
+          <Button variant="ghost" onClick={() => confirm(false)}>
             {custom ? sessionCopy.keepWorkout : sessionCopy.keepSession}
           </Button>
         </div>
@@ -71,6 +95,7 @@ export function SessionActions({ session, name, today, move, skip }: SessionActi
       <div className="flex flex-wrap gap-2">
         {days.length > 0 ? (
           <Button
+            ref={moveButton}
             variant="secondary"
             aria-expanded={moving}
             onClick={() => setMoving((open) => !open)}
@@ -78,7 +103,7 @@ export function SessionActions({ session, name, today, move, skip }: SessionActi
             {sessionCopy.move}
           </Button>
         ) : null}
-        <Button variant="secondary" onClick={() => setConfirming(true)}>
+        <Button ref={skipButton} variant="secondary" onClick={() => confirm(true)}>
           {skipLabel}
         </Button>
         {custom ? (
@@ -95,7 +120,11 @@ export function SessionActions({ session, name, today, move, skip }: SessionActi
               variant="secondary"
               className="rounded-full"
               disabled={move.moving}
-              onClick={() => move.onMove(date, () => setMoving(false))}
+              onClick={() => {
+                // The chips go once the move lands, and the chosen one is disabled until then.
+                moveButton.current?.focus();
+                move.onMove(date, () => setMoving(false));
+              }}
             >
               {formatShortDay(date)}
             </Button>

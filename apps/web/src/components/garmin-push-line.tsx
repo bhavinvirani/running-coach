@@ -17,7 +17,7 @@ type GarminPushLineProps = {
   send: SendState;
   /**
    * Say why nothing goes out while the login is expired. Today leaves it out: its header already swaps
-   * Sync now for Reconnect Garmin with that sentence.
+   * Sync now for Reconnect Garmin with that sentence, reading /api/me again when the calendar learns first.
    */
   explainExpired?: boolean;
 };

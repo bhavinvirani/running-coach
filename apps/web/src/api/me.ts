@@ -1,10 +1,12 @@
 import {
   meResponseSchema,
+  type GarminStatus,
   type MeResponse,
   type Settings,
   type UpdateSettingsRequest,
 } from "@running-coach/shared";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { apiFetch } from "./client";
 import { detailKey } from "./query-keys";
 
@@ -33,6 +35,20 @@ const selectGarmin = (me: MeResponse): MeResponse["garmin"] => me.garmin;
 /** The Garmin connection's status and last sync. */
 export function useGarminConnection() {
   return useQuery({ ...meQueryOptions(), select: selectGarmin });
+}
+
+/**
+ * Reads /api/me again when another response (the calendar, polled while a push runs) reports a Garmin
+ * connection other than the cached one, which can be up to a minute old: the login expired, or came back.
+ * Once per disagreement, so an /api/me that still disagrees is not read in a loop.
+ */
+export function useGarminConnectionSeen(seen: GarminStatus | undefined) {
+  const queryClient = useQueryClient();
+  const cached = useGarminConnection().data?.status;
+  useEffect(() => {
+    if (seen === undefined || cached === undefined || seen === cached) return;
+    void queryClient.invalidateQueries({ queryKey: detailKey("me") });
+  }, [seen, cached, queryClient]);
 }
 
 export function useUpdateSettings() {

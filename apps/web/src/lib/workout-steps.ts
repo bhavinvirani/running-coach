@@ -1,5 +1,6 @@
 import {
   distanceInUnits,
+  metersPerUnit,
   type PaceZone,
   type PlanPaces,
   type PlanSession,
@@ -72,11 +73,23 @@ export function stepTarget(step: Pick<Step, "kind" | "zone">, paces: PlanPaces, 
   return `${formatPlanPace(paces[step.zone], units)} ${zonePhrase(step.zone)}`;
 }
 
+// A step is saved in whole meters, so "1 mi" is stored as 1609 m, a third of a meter short of a mile.
+const SAVED_METER_ROUNDING_M = 0.5;
+
+/**
+ * Whether a step's distance reads in the runner's unit rather than in meters: from one unit up, the half
+ * meter that saving whole meters can take off included, so 1609 m reads "1 mi" and 1608 m "1608 m".
+ */
+export function readsInUnits(distanceM: number, units: Units): boolean {
+  return distanceM + SAVED_METER_ROUNDING_M >= metersPerUnit(units);
+}
+
 /** A step's length: "15 min", "1 km", "400 m". Under one unit a rep reads in meters, as on a track. */
 export function stepAmount(step: Pick<Step, "distanceM" | "durationS">, units: Units): string {
   if (step.distanceM !== null) {
-    const inUnits = distanceInUnits(step.distanceM, units);
-    return inUnits < 1 ? formatMeters(step.distanceM) : formatStepDistance(inUnits, units);
+    return readsInUnits(step.distanceM, units)
+      ? formatStepDistance(distanceInUnits(step.distanceM, units), units)
+      : formatMeters(step.distanceM);
   }
   return step.durationS !== null ? formatStepDuration(step.durationS) : MISSING;
 }

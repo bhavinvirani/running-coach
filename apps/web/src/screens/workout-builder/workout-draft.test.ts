@@ -2,6 +2,7 @@ import {
   GARMIN_WORKOUT_STEPS_MAX,
   REPEAT_STEPS_MAX,
   type CustomSessionType,
+  type SessionSteps,
 } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { errorMessages } from "@/lib/errors";
@@ -284,6 +285,18 @@ describe("workoutInput", () => {
     });
   });
 
+  it("formats the counts in the step cap sentence, never raw (step cap)", () => {
+    let draft = newDraft(TODAY, "km");
+    // 1 step plus 400 repeats of 1 + 2 steps: 1,201 steps, 1,151 over the cap.
+    for (let repeat = 0; repeat < 400; repeat += 1) draft = addRepeat(draft);
+
+    expect(workoutInput(draft, "km", TODAY)).toEqual({
+      ok: false,
+      message:
+        "This workout has 1,201 steps and a watch workout holds 50, a repeat counting one plus its steps. Remove 1,151.",
+    });
+  });
+
   it("falls back to the validation message for what only the contract catches", () => {
     const draft = { ...newDraft(TODAY, "km"), title: "x".repeat(61) };
     expect(workoutInput(draft, "km", TODAY)).toEqual({
@@ -341,4 +354,29 @@ describe("draftFromSession", () => {
       input: { steps: [{ distanceM: 4828 }] },
     });
   });
+
+  it.each([
+    { distanceM: 2000, units: "mi", amount: "2000", unit: "m" },
+    { distanceM: 1234, units: "km", amount: "1234", unit: "m" },
+    { distanceM: 1609, units: "mi", amount: "1", unit: "mi" },
+    { distanceM: 5000, units: "km", amount: "5", unit: "km" },
+  ] as const)(
+    "opens $distanceM m in $units as $amount $unit and saves the same steps back (round trip)",
+    ({ distanceM, units, amount, unit }) => {
+      const steps: SessionSteps = [
+        { kind: "run", zone: "easy", distanceM, durationS: null },
+        {
+          repeat: 3,
+          steps: [
+            { kind: "work", zone: "interval", distanceM, durationS: null },
+            { kind: "recovery", zone: "easy", distanceM: null, durationS: 125 },
+          ],
+        },
+      ];
+      const draft = draftFromSession(customSessionFixture({ steps }), units);
+
+      expect(firstStep(draft)).toMatchObject({ amount, unit });
+      expect(workoutInput(draft, units, TODAY)).toMatchObject({ ok: true, input: { steps } });
+    },
+  );
 });

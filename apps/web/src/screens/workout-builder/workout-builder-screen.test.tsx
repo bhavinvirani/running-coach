@@ -153,6 +153,30 @@ describe("WorkoutBuilderScreen", () => {
     expect(await screen.findByLabelText("Date")).toHaveValue("2026-10-08");
   });
 
+  it("keeps the draft when a save crosses midnight and asks for a date from today on (midnight)", async () => {
+    // 23:58 on Thu 8 Oct in London; the API's day has moved on by the time Save reaches it.
+    vi.setSystemTime(new Date("2026-10-08T22:58:00Z"));
+    const calls = fakeBuilderApi({ save: problem(400, ErrorCode.validation) });
+    renderNew(null);
+    expect(await screen.findByLabelText("Date")).toHaveValue("2026-10-08");
+    await userEvent.click(screen.getByRole("radio", { name: "Tempo" }));
+    await userEvent.type(screen.getByLabelText("Title"), "Late tempo");
+
+    // 00:01 on Fri 9 Oct: the save re-renders the screen with the new today.
+    vi.setSystemTime(new Date("2026-10-08T23:01:00Z"));
+    await save();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.validation);
+    expect(screen.getByLabelText("Title")).toHaveValue("Late tempo");
+    expect(screen.getByRole("radio", { name: "Tempo" })).toBeChecked();
+    expect(screen.getByLabelText("Date")).toHaveValue("2026-10-08");
+    expect(screen.getByLabelText("Date")).toHaveAttribute("min", "2026-10-09");
+
+    await save();
+    expect(screen.getByRole("alert")).toHaveTextContent("Pick a date from today on.");
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+  });
+
   it("loads each type's preset while the steps are untouched (presets)", async () => {
     fakeBuilderApi();
     renderNew();

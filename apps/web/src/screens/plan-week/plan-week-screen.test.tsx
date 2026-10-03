@@ -253,12 +253,40 @@ describe("PlanWeekScreen", () => {
     expect(skipped).toHaveAccessibleName("Easy, Fri 9 Oct, Skipped");
     expect(skipped).toHaveTextContent(/^EasySkipped$/);
     expect(skipped!.firstElementChild).toHaveClass("text-ink-2");
-    expect(custom).toHaveAccessibleName("Hill reps, Fri 9 Oct, 7.1 km, 41:04");
+    expect(custom).toHaveAccessibleName("Hill reps, Tempo, Fri 9 Oct, 7.1 km, 41:04");
     expect(within(custom!).getByText("Hill reps").querySelector("span")).toHaveClass(
       "bg-type-tempo",
     );
     expect(custom).toHaveTextContent(
-      "15 min easy, 4 x 400 m at 5:00-5:07 /km with 2 min jog, 10 min easy",
+      "Tempo · 15 min easy, 4 x 400 m at 5:00-5:07 /km with 2 min jog, 10 min easy",
     );
+  });
+
+  it("names the type of a titled custom workout beside its type colour, untitled ones by the type alone (type name)", async () => {
+    const plan = planFixture();
+    const [first, ...rest] = plan.weeks;
+    const week = {
+      ...first!,
+      sessions: [
+        ...first!.sessions,
+        customSessionFixture({ id: "c0ffee00-0000-4000-8000-000000000002", status: "skipped" }),
+        customSessionFixture({
+          id: "c0ffee00-0000-4000-8000-000000000003",
+          date: "2026-10-10",
+          type: "long",
+          title: null,
+        }),
+      ],
+    };
+    fakePlanApi({ plan: planResponseFixture({ plan: { ...plan, weeks: [week, ...rest] } }) });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    const skipped = within(rows[4]!).getByRole("link", { name: /^Hill reps,/ });
+    expect(skipped).toHaveAccessibleName("Hill reps, Tempo, Fri 9 Oct, Skipped");
+    expect(within(skipped).getByText("Tempo")).toHaveClass("text-ink-2");
+    const untitled = within(rows[5]!).getByRole("link", { name: /^Long run, Sat 10 Oct/ });
+    expect(untitled).toHaveAccessibleName("Long run, Sat 10 Oct, 7.1 km, 41:04");
+    expect(within(untitled).getAllByText(/Long run/)).toHaveLength(1);
   });
 });

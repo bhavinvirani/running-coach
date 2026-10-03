@@ -17,6 +17,7 @@ import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { garminCaption } from "@/lib/garmin-state";
 import { formatDistance, formatDuration, formatLocalDay, formatUpcomingDay } from "@/lib/format";
+import { sessionTypeName } from "@/lib/session-type";
 import { sessionName } from "@/lib/workout-steps";
 import { OtherGarminWorkouts, type UnscheduleState } from "./other-garmin-workouts";
 
@@ -133,6 +134,11 @@ function DayRow({ day, today, units, garmin }: DayRowProps) {
   );
 }
 
+/**
+ * A session as its name, then its type when a title took the name's place (the dot's color alone does not
+ * say it), distance and time, then where it stands on Garmin on a line of its own, so no row wraps a
+ * caption under its time at 390 px and every row reads the same way.
+ */
 function SessionLink({
   session,
   units,
@@ -148,8 +154,10 @@ function SessionLink({
     !skipped && distanceM > 0 ? formatDistance(distanceInUnits(distanceM, units), units) : null;
   const duration = !skipped && durationS > 0 ? formatDuration(durationS) : null;
   const name = sessionName(session);
+  const type = session.title === null ? null : sessionTypeName(session.type);
+  const facts = [type, distance, duration].filter((part) => part !== null);
   // Named in words: read from the lines, a screen reader would run "11.6 km" into "1:04:00".
-  const label = [name, distance, duration, caption].filter((part) => part !== null).join(", ");
+  const label = [name, ...facts, caption].filter((part) => part !== null).join(", ");
 
   return (
     <Link
@@ -160,11 +168,14 @@ function SessionLink({
       <span className={cn("text-body", skipped ? "text-ink-2" : "text-ink")}>
         <SessionTypeChip type={session.type} name={name} />
       </span>
-      <DotLine className="text-caption text-ink-2">
-        {distance}
-        {duration}
-        {caption}
-      </DotLine>
+      {facts.length > 0 ? (
+        <DotLine className="text-caption text-ink-2">
+          {type}
+          {distance}
+          {duration}
+        </DotLine>
+      ) : null}
+      {caption === null ? null : <span className="text-caption text-ink-2">{caption}</span>}
     </Link>
   );
 }

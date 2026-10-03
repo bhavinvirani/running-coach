@@ -88,7 +88,7 @@ export function useSendToGarmin() {
 /**
  * POST /api/calendar/unschedule: takes one workout the app did not create off the Garmin calendar; the
  * workout itself stays in the runner's Garmin library. It runs in the request, so it can answer the
- * garmin_* errors; the screen shows them beside the workout, read from the mutation's variables.
+ * garmin_* errors; the screen keeps each beside its workout and runs one unschedule at a time.
  */
 export function useUnscheduleGarmin() {
   const queryClient = useQueryClient();

@@ -20,8 +20,8 @@ import {
   type Units,
 } from "@running-coach/shared";
 import { errorMessages } from "@/lib/errors";
-import { formatStepDistance, formatStepDuration } from "@/lib/format";
-import { isPacedStep } from "@/lib/workout-steps";
+import { formatCountValue, formatStepDistance, formatStepDuration } from "@/lib/format";
+import { isPacedStep, readsInUnits } from "@/lib/workout-steps";
 
 /**
  * The workout builder's form as the runner types it, and the pure steps from it to the API's
@@ -77,6 +77,11 @@ function amountText(value: number): string {
   return String(Math.round(value * 100) / 100);
 }
 
+/** A distance amount as the whole meters it saves as: 1 mi → 1609, 1.24 mi → 1996, 400 m → 400. */
+function amountMeters(amount: number, unit: Units | "m"): number {
+  return Math.round(unit === "m" ? amount : amount * metersPerUnit(unit));
+}
+
 /**
  * A preset's distance as the runner reads it: whole kilometers, or in miles the nearest half mile (5 km is
  * "3 mi", 12 km "7.5 mi"), so no preset reads 3.11. Under a mile in mile units, a rep stays in meters, as
@@ -87,9 +92,8 @@ export function presetDistance(
   units: Units,
 ): Pick<StepDraft, "amount" | "unit"> {
   if (units === "km") return { amount: amountText(distanceM / METERS_PER_KM), unit: "km" };
-  const miles = distanceInUnits(distanceM, "mi");
-  if (miles < 1) return { amount: amountText(distanceM), unit: "m" };
-  return { amount: amountText(Math.round(miles * 2) / 2), unit: "mi" };
+  if (!readsInUnits(distanceM, "mi")) return { amount: amountText(distanceM), unit: "m" };
+  return { amount: amountText(Math.round(distanceInUnits(distanceM, "mi") * 2) / 2), unit: "mi" };
 }
 
 type PresetStep = { kind: StepKind; zone: PaceZone } & (
@@ -145,15 +149,20 @@ export function newDraft(date: string, units: Units): WorkoutDraft {
   return { date, type: "easy", title: "", items: presetItems("easy", units), edited: false };
 }
 
-/** A saved step as the form shows it: minutes, the runner's unit from one unit up, meters below it. */
+/**
+ * A saved step as the form shows it: minutes, or a distance in the runner's unit from one unit up when its
+ * two decimals save back as the same meters, else in meters. Opening and saving a workout must not change
+ * it: 2000 m reads 1.24 mi, which would save as 1996 m, so it stays "2000 m"; 1609 m reads "1 mi".
+ */
 function stepDraft(step: Step, units: Units): StepDraft {
   const base = { id: draftId(), kind: step.kind, zone: step.zone };
   if (step.durationS !== null)
     return { ...base, amount: amountText(step.durationS / 60), unit: "min" };
   const distanceM = step.distanceM ?? 0;
-  return distanceInUnits(distanceM, units) < 1
-    ? { ...base, amount: amountText(distanceM), unit: "m" }
-    : { ...base, amount: amountText(distanceInUnits(distanceM, units)), unit: units };
+  const inUnits = amountText(distanceInUnits(distanceM, units));
+  return readsInUnits(distanceM, units) && amountMeters(Number(inUnits), units) === distanceM
+    ? { ...base, amount: inUnits, unit: units }
+    : { ...base, amount: amountText(distanceM), unit: "m" };
 }
 
 /** A custom workout opened for editing: its own steps, kept when the runner picks another type. */
@@ -291,7 +300,7 @@ function parseStep(draft: StepDraft): StepParse {
     if (durationS > STEP_MAX_DURATION_S) return { ok: false, problem: "too_long" };
     return { ok: true, step: { ...base, distanceM: null, durationS } };
   }
-  const distanceM = Math.round(draft.unit === "m" ? amount : amount * metersPerUnit(draft.unit));
+  const distanceM = amountMeters(amount, draft.unit);
   if (distanceM < 1) return { ok: false, problem: "amount" };
   if (distanceM > STEP_MAX_DISTANCE_M) return { ok: false, problem: "too_long" };
   return { ok: true, step: { ...base, distanceM, durationS: null } };
@@ -364,7 +373,7 @@ export function workoutInput(draft: WorkoutDraft, units: Units, today: string): 
   if (count > GARMIN_WORKOUT_STEPS_MAX) {
     return {
       ok: false,
-      message: `This workout has ${count} steps and a watch workout holds ${GARMIN_WORKOUT_STEPS_MAX}, a repeat counting one plus its steps. Remove ${count - GARMIN_WORKOUT_STEPS_MAX}.`,
+      message: `This workout has ${formatCountValue(count)} steps and a watch workout holds ${formatCountValue(GARMIN_WORKOUT_STEPS_MAX)}, a repeat counting one plus its steps. Remove ${formatCountValue(count - GARMIN_WORKOUT_STEPS_MAX)}.`,
     };
   }
   const title = draft.title.trim();

@@ -1,8 +1,8 @@
 import { PUSH_WINDOW_DAYS } from "@running-coach/shared";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLatestActivity } from "@/api/activities";
 import { useCalendar, useSendToGarmin, useUnscheduleGarmin } from "@/api/calendar";
-import { useGarminConnection, useSettings } from "@/api/me";
+import { useGarminConnection, useGarminConnectionSeen, useSettings } from "@/api/me";
 import { NO_RUN_BESTS, bestDistancesByRun, usePersonalBests } from "@/api/personal-bests";
 import { screenState } from "@/api/screen-state";
 import { useLatestSync, useSyncNow } from "@/api/sync";
@@ -35,6 +35,12 @@ export function useTodayScreen() {
   );
   const send = useSendToGarmin();
   const unschedule = useUnscheduleGarmin();
+  // The header's Reconnect Garmin is the only place Today says why its sessions are not on Garmin.
+  useGarminConnectionSeen(calendar.data?.garmin.connection);
+  // Kept here rather than read from the mutation, which forgets one workout's error when the next starts.
+  const [unscheduleFailures, setUnscheduleFailures] = useState<ReadonlyMap<number, Error>>(
+    () => new Map(),
+  );
   const runBests = useMemo(
     () => (bests.data ? bestDistancesByRun(bests.data.bests) : NO_RUN_BESTS),
     [bests.data],
@@ -60,11 +66,23 @@ export function useTodayScreen() {
     } satisfies SendState,
     unschedule: {
       pendingId: unschedule.isPending ? unschedule.variables : null,
-      failed:
-        unschedule.isError && unschedule.variables !== undefined
-          ? { scheduleId: unschedule.variables, error: unschedule.error }
-          : null,
-      onUnschedule: (scheduleId: number) => unschedule.mutate(scheduleId),
+      failures: unscheduleFailures,
+      onUnschedule: (scheduleId: number) => {
+        // One at a time: a second call would take over the mutation and hide the first's state.
+        if (unschedule.isPending) return;
+        setUnscheduleFailures((failures) => withoutKey(failures, scheduleId));
+        unschedule.mutate(scheduleId, {
+          onError: (error) =>
+            setUnscheduleFailures((failures) => new Map(failures).set(scheduleId, error)),
+        });
+      },
     } satisfies UnscheduleState,
   };
+}
+
+function withoutKey<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
+  if (!map.has(key)) return map;
+  const next = new Map(map);
+  next.delete(key);
+  return next;
 }

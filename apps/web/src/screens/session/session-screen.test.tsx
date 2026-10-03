@@ -260,6 +260,40 @@ describe("SessionScreen", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
+  it("moves focus to the question on Skip session and back to Skip session on Keep session (confirm focus)", async () => {
+    fakeSessionApi();
+    renderSession();
+    await userEvent.click(await screen.findByRole("button", { name: "Skip session" }));
+
+    const confirm = screen.getByRole("group", { name: /^Skip this session\?/ });
+    expect(document.activeElement).toBe(within(confirm).getByText(/^Skip this session\?/));
+
+    await userEvent.click(within(confirm).getByRole("button", { name: "Keep session" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Skip session" }));
+  });
+
+  it("moves focus to the question on Delete workout and back on Keep workout (confirm focus)", async () => {
+    const custom = customSessionFixture();
+    fakeSessionApi({ detail: sessionDetailFixture({ session: custom }) });
+    renderSession(custom);
+    await userEvent.click(await screen.findByRole("button", { name: "Delete workout" }));
+
+    expect(document.activeElement).toBe(screen.getByText(/^Delete this workout\?/));
+    await userEvent.click(screen.getByRole("button", { name: "Keep workout" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Delete workout" }));
+  });
+
+  it("returns focus to Move once a day chip is chosen (move focus)", async () => {
+    fakeSessionApi();
+    renderSession();
+    await userEvent.click(await screen.findByRole("button", { name: "Move" }));
+    await userEvent.click(screen.getByRole("button", { name: "Fri 9" }));
+
+    expect(await screen.findByRole("heading", { name: "Fri 9 Oct" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Move to" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Move" }));
+  });
+
   it("explains a failed skip inside the confirm step", async () => {
     fakeSessionApi({ skip: problem(502, ErrorCode.internal) });
     renderSession();

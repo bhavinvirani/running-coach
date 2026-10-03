@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { describeSteps } from "@/lib/describe-steps";
 import { formatDistance, formatDuration, formatLocalDay } from "@/lib/format";
 import type { PlanDay } from "@/lib/plan-week";
+import { sessionTypeName } from "@/lib/session-type";
 import { sessionName } from "@/lib/workout-steps";
 import { planWeekCopy } from "../plan-week-copy";
 
@@ -24,8 +25,9 @@ type DayRowProps = {
 /**
  * One day of the week: its date, with Add from today on, then each session as its type chip with distance
  * and time on the right and its steps in one line under it (a lone run's pace band, so the distance is not
- * said twice), paces in the runner's unit. Each session opens its own screen. A day without a session
- * reads Rest; a skipped session reads Skipped, with nothing left to run.
+ * said twice), paces in the runner's unit. A custom workout with a title leads with it, and its type's name
+ * starts the line under it. Each session opens its own screen. A day without a session reads Rest; a
+ * skipped session reads Skipped, with nothing left to run.
  */
 export function DayRow({ day, paces, units, today }: DayRowProps) {
   const label = formatLocalDay(day.date);
@@ -87,7 +89,9 @@ function SessionLines({
   const duration = !skipped && durationS > 0 ? formatDuration(durationS) : null;
   const steps = skipped ? "" : describeSteps(session.steps, paces, units);
   const name = sessionName(session);
-  const label = [name, day, ...(skipped ? [planWeekCopy.skipped] : [distance, duration])]
+  // A title takes the type's name off the first line, and the dot's color alone does not say the type.
+  const type = session.title === null ? null : sessionTypeName(session.type);
+  const label = [name, type, day, ...(skipped ? [planWeekCopy.skipped] : [distance, duration])]
     .filter((part) => part !== null)
     .join(", ");
 
@@ -110,7 +114,13 @@ function SessionLines({
           {duration ? <span>{duration}</span> : null}
         </span>
       </span>
-      {steps ? <span className="text-body text-ink-2">{steps}</span> : null}
+      {type !== null || steps ? (
+        <span className="text-body text-ink-2">
+          {type}
+          {type !== null && steps ? <span aria-hidden="true"> · </span> : null}
+          {steps}
+        </span>
+      ) : null}
     </Link>
   );
 }

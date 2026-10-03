@@ -79,13 +79,15 @@ function NewWorkout() {
     );
   }
 
-  const date = startDate(params.get("date"), today);
+  const asked = params.get("date");
   return (
     <BuilderLayout title={title}>
       {refetchFailed}
       <BuilderForm
-        key={date}
-        initial={() => newDraft(date, units)}
+        // Keyed on the link, never on today: a render after midnight must not swap the draft for a fresh
+        // preset. The start date is read once, at mount; a draft left on yesterday fails the date check.
+        key={asked ?? "new"}
+        initial={() => newDraft(startDate(asked, today), units)}
         paces={data.plan.paces}
         units={units}
         today={today}
