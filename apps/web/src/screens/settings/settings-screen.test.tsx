@@ -65,6 +65,31 @@ describe("SettingsScreen", () => {
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
+  it("draws the Claude key card's skeleton like the card without a key, so the cards below do not jump", () => {
+    stubFetch(never);
+    renderSettings();
+
+    const cards = screen.getByRole("status", { name: "Loading settings" }).children;
+    expect(cards).toHaveLength(4);
+    const claudeKey = cards[1];
+    // The form's bottom padding, under Save key.
+    expect(claudeKey).toHaveClass("rounded-md", "border", "bg-surface-1", "px-4", "pb-4");
+    const [title, field, button, ...rest] = Array.from(claudeKey?.children ?? []);
+    expect(rest).toEqual([]);
+    // Section's title: its top padding and one body line.
+    expect(title).toHaveClass("mt-4", "h-5.5");
+    // TextField: its padding and gaps, the label's body line, the field, the helper's two caption lines.
+    expect(field).toHaveClass("flex", "flex-col", "gap-2", "py-4");
+    const [label, input, helper] = Array.from(field?.children ?? []);
+    expect(label).toHaveClass("h-5.5");
+    expect(input).toHaveClass("h-11", "rounded-sm", "border", "border-line", "bg-surface-0");
+    const helperLines = Array.from(helper?.children ?? []);
+    expect(helperLines).toHaveLength(2);
+    for (const line of helperLines) expect(line).toHaveClass("h-4");
+    // Save key, a 44 px button.
+    expect(button).toHaveClass("h-11");
+  });
+
   it("explains a failed load and loads again on Retry", async () => {
     let attempts = 0;
     stubFetch(() => {

@@ -26,6 +26,11 @@ const insightPath = `/api/activities/${run.id}/insight`;
 type Answer = InsightResponse | (() => Response | Promise<Response>);
 
 type FakeCoachApi = {
+  /**
+   * Whether GET /api/me says a Claude key is set, in order; the last one repeats. Set by default: a card
+   * that can be asked again comes with a key.
+   */
+  keys?: boolean[];
   /** What GET .../insight answers, in order; the last one repeats. */
   reads?: Answer[];
   /** What POST .../insight (Ask the coach, Try again) answers. */
@@ -40,13 +45,19 @@ function answer(value: Answer): Response | Promise<Response> {
 
 /** /api/me, the run with its detail already stored, and the coach's endpoints, in memory. */
 function fakeCoachApi({
+  keys = [true],
   reads = [{ state: "none" }],
   ask = { state: "pending" },
   feedback = (sent) => json(insightReadyFixture(insightCardFixture({ feedback: sent }))),
 }: FakeCoachApi = {}) {
   let read = 0;
+  let meRead = 0;
   return stubFetch(({ method, path, body }: FakeRequest) => {
-    if (path === "/api/me") return json(meFixture());
+    if (path === "/api/me") {
+      const hasClaudeKey = keys[Math.min(meRead, keys.length - 1)] as boolean;
+      meRead += 1;
+      return json(meFixture({ settings: { ...meFixture().settings, hasClaudeKey } }));
+    }
     if (method === "GET" && path === insightPath) {
       const next = reads[Math.min(read, reads.length - 1)] as Answer;
       read += 1;
@@ -123,7 +134,7 @@ describe("CoachCard", () => {
   });
 
   it("asks for the key with one sentence and one action when there is none (no key hides cards behind one action)", async () => {
-    const calls = fakeCoachApi({ reads: [{ state: "no_key" }] });
+    const calls = fakeCoachApi({ keys: [false], reads: [{ state: "no_key" }] });
     const { router } = renderRun();
 
     expect(
@@ -238,7 +249,7 @@ describe("CoachCard", () => {
 
     await userEvent.click(helpful);
     await vi.waitFor(() => expect(helpful).toHaveAttribute("aria-pressed", "true"));
-    expect(helpful).toHaveClass("text-accent");
+    expect(helpful).toHaveClass("bg-surface-2", "font-semibold", "text-ink");
     expect(within(coach()).getByRole("button", { name: "Not helpful" })).toHaveAttribute(
       "aria-pressed",
       "false",
@@ -253,6 +264,21 @@ describe("CoachCard", () => {
       `/api/insights/${insightCardFixture().id}/feedback`,
     ]);
     expect(sent.map((call) => call.body)).toEqual([{ feedback: "up" }, { feedback: null }]);
+  });
+
+  it("draws a pressed thumb like the app's other toggles, in surface-2, semibold and ink, never in accent", async () => {
+    fakeCoachApi({ reads: [insightReadyFixture(insightCardFixture({ feedback: "up" }))] });
+    renderRun();
+
+    const helpful = await within(await findCoach()).findByRole("button", { name: "Helpful" });
+    const notHelpful = within(coach()).getByRole("button", { name: "Not helpful" });
+    expect(helpful).toHaveAttribute("aria-pressed", "true");
+    expect(helpful).toHaveClass("bg-surface-2", "font-semibold", "text-ink");
+    expect(helpful).not.toHaveClass("text-accent");
+    expect(notHelpful).toHaveAttribute("aria-pressed", "false");
+    expect(notHelpful).toHaveClass("font-normal", "text-ink-2");
+    expect(notHelpful).not.toHaveClass("bg-surface-2");
+    expect(notHelpful).not.toHaveClass("text-accent");
   });
 
   it("puts the thumb back and says why when saving it fails (feedback rollback)", async () => {
@@ -371,13 +397,37 @@ describe("CoachCard", () => {
   });
 
   it("treats a card stored for a missing key like no key: Add Claude key", async () => {
-    fakeCoachApi({ reads: [insightReadyFixture(fallbackCardFixture("missing_key"))] });
+    fakeCoachApi({
+      keys: [false],
+      reads: [insightReadyFixture(fallbackCardFixture("missing_key"))],
+    });
     renderRun();
 
     const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
     expect(link).toHaveAttribute("href", "/settings");
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it.each(["timeout", "unavailable", "refusal", "key_invalid"] as const)(
+    "offers only Add Claude key on a stored %s fallback card when there is no key (no key hides cards behind one action)",
+    async (reason) => {
+      const fallback = fallbackCardFixture(reason);
+      const calls = fakeCoachApi({ keys: [false], reads: [insightReadyFixture(fallback)] });
+      const { router } = renderRun();
+
+      const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
+      expect(link).toHaveAttribute("href", "/settings");
+      // The card still says what happened; only the action changes.
+      expect(within(coach()).getByText(fallback.content.headline)).toBeInTheDocument();
+      expect(within(coach()).queryAllByRole("link")).toHaveLength(1);
+      expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
+      expect(within(coach()).queryByRole("link", { name: "Replace key" })).not.toBeInTheDocument();
+
+      await userEvent.click(link);
+      expect(router.state.location.pathname).toBe("/settings");
+      expect(asks(calls)).toEqual([]);
+    },
+  );
 
   it("says why Ask the coach failed and keeps the button (our rate limit)", async () => {
     fakeCoachApi({
@@ -398,6 +448,7 @@ describe("CoachCard", () => {
 
   it("switches to the one Add Claude key action when Ask the coach finds the key removed on another device (409 claude_key_missing)", async () => {
     const calls = fakeCoachApi({
+      keys: [true, false],
       reads: [{ state: "none" }, { state: "no_key" }],
       ask: () => problem(409, ErrorCode.claudeKeyMissing),
     });
@@ -409,6 +460,27 @@ describe("CoachCard", () => {
 
     const link = await within(coach()).findByRole("link", { name: "Add Claude key" });
     expect(link).toHaveAttribute("href", "/settings");
+    expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(coach()).queryByRole("alert")).not.toBeInTheDocument();
+    expect(asks(calls)).toHaveLength(1);
+  });
+
+  it("ends on Add Claude key when Try again on a fallback card finds the key removed on another device (409 claude_key_missing)", async () => {
+    const fallback = fallbackCardFixture("timeout");
+    const calls = fakeCoachApi({
+      keys: [true, false],
+      reads: [insightReadyFixture(fallback)],
+      ask: () => problem(409, ErrorCode.claudeKeyMissing),
+    });
+    renderRun();
+
+    await userEvent.click(
+      await within(await findCoach()).findByRole("button", { name: "Try again" }),
+    );
+
+    const link = await within(coach()).findByRole("link", { name: "Add Claude key" });
+    expect(link).toHaveAttribute("href", "/settings");
+    expect(within(coach()).getByText(fallback.content.headline)).toBeInTheDocument();
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
     expect(within(coach()).queryByRole("alert")).not.toBeInTheDocument();
     expect(asks(calls)).toHaveLength(1);

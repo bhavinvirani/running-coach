@@ -69,8 +69,9 @@ export function useUpdateSettings() {
 }
 
 /**
- * Saving or removing the Claude key answers with the whole MeResponse. Every run's coach state turns on the
- * key (no_key or none, a fallback card's action), so the cached ones are read again.
+ * Saving or removing the Claude key answers with the whole MeResponse. Stored as is, its hasClaudeKey picks a
+ * fallback card's action (Try again or Add Claude key). A run without a card answers no_key or none by the
+ * key, so the cached coach states are read again.
  */
 function storeKeyChange(queryClient: QueryClient, me: MeResponse): void {
   queryClient.setQueryData(detailKey("me"), me);

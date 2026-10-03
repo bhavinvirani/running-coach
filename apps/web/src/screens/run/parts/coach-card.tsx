@@ -18,6 +18,8 @@ const TITLE = "Coach";
 
 type CoachCardProps = {
   state: ScreenState<InsightResponse>;
+  /** From /api/me: without a key a fallback card's one action is Add Claude key. */
+  hasKey: boolean;
   /** Ask the coach, or Try again after a fallback card. */
   ask: () => void;
   asking: boolean;
@@ -29,7 +31,8 @@ type CoachCardProps = {
 /**
  * The coach's review of the run, right under the stats: what happened, what it means, what to do next.
  * Loads beside the run and has its own loading and error states, so a slow or failed coach never hides
- * the run. Without a Claude key the card is one sentence and the way to add one, nothing else.
+ * the run. Without a Claude key a run with no card is one sentence and the way to add one, nothing else; a
+ * stored card keeps its text, and a fallback card offers only that same way to add one.
  */
 export function CoachCard({ state, ...actions }: CoachCardProps) {
   if (state.status === "pending") {
@@ -69,6 +72,7 @@ export function CoachCard({ state, ...actions }: CoachCardProps) {
 
 function CoachBody({
   response,
+  hasKey,
   ask,
   asking,
   askError,
@@ -113,6 +117,7 @@ function CoachBody({
           ) : (
             <FallbackAction
               reason={response.insight.fallbackReason}
+              hasKey={hasKey}
               ask={ask}
               asking={asking}
               askError={askError}
@@ -128,16 +133,23 @@ function AddKey() {
   return (
     <>
       <Note>Add your Claude API key to get a coach review after each run.</Note>
-      <Button asChild variant="secondary" className="self-start">
-        <Link to="/settings">Add Claude key</Link>
-      </Button>
+      <AddKeyLink />
     </>
+  );
+}
+
+function AddKeyLink() {
+  return (
+    <Button asChild variant="secondary" className="self-start">
+      <Link to="/settings">Add Claude key</Link>
+    </Button>
   );
 }
 
 /**
  * A failed Ask the coach or Try again: 429, or the API down. A 409 claude_key_missing shows here only until
- * the card is read again and answers no_key (useAskCoach).
+ * the card and /api/me are read again (useAskCoach): a run without a card then answers no_key, and a fallback
+ * card, told there is no key, swaps this and Try again for Add Claude key.
  */
 function AskAlert({ error }: { error: Error | null }) {
   if (error === null) return null;
@@ -196,29 +208,25 @@ function Part({ label, text }: { label: string; text: string }) {
 }
 
 /**
- * A fallback card already says why the coach could not write one; this is what to do about it. A missing
- * key is added in Settings. A rejected key is replaced there, and Try again stays beside it for when it
- * already was (the card is from before) or Claude turned the key down only for a moment; any other reason
- * may pass on another try.
+ * A fallback card already says why the coach could not write one; this is what to do about it. With no key
+ * set, whatever the reason, the one action is Add Claude key: Try again could only answer 409. A rejected
+ * key is replaced in Settings, and Try again stays beside it for when it already was (the card is from
+ * before) or Claude turned the key down only for a moment; any other reason may pass on another try.
  */
 function FallbackAction({
   reason,
+  hasKey,
   ask,
   asking,
   askError,
 }: {
   reason: CoachFallbackReason;
+  hasKey: boolean;
   ask: () => void;
   asking: boolean;
   askError: Error | null;
 }) {
-  if (reason === "missing_key") {
-    return (
-      <Button asChild variant="secondary" className="self-start">
-        <Link to="/settings">Add Claude key</Link>
-      </Button>
-    );
-  }
+  if (reason === "missing_key" || !hasKey) return <AddKeyLink />;
   const tryAgain = (
     <Button
       variant="secondary"
@@ -286,7 +294,10 @@ function Thumbs({
   );
 }
 
-/** The word beside the icon is the label; accent marks the selected one only. */
+/**
+ * The word beside the icon is the label. Pressed is drawn like the app's other toggles (SegmentedField),
+ * not in accent, which is kept for the primary action.
+ */
 function Thumb({
   icon: Icon,
   label,
@@ -303,7 +314,13 @@ function Thumb({
       variant="ghost"
       aria-pressed={pressed}
       onClick={onClick}
-      className={cn("px-3 font-normal", pressed ? "text-accent" : "text-ink-2")}
+      className={cn(
+        "px-3",
+        // Also under the pointer: ghost's hover background would hide the pressed state after a click.
+        pressed
+          ? "bg-surface-2 font-semibold text-ink hover:bg-surface-2"
+          : "font-normal text-ink-2",
+      )}
     >
       <Icon aria-hidden="true" strokeWidth={1.75} />
       {label}

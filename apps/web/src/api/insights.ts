@@ -65,10 +65,12 @@ export function useAskCoach(activityId: string) {
     onMutate: () => queryClient.cancelQueries({ queryKey: insightKey(activityId) }),
     onSuccess: (response) => queryClient.setQueryData(insightKey(activityId), response),
     onError: (error) => {
-      // The key was removed on another device: read the card again, which answers no_key and swaps the
-      // button that cannot work for Add Claude key.
+      // The key was removed on another device. The card read again answers no_key for a run without one;
+      // /api/me read again says there is no key, which swaps a fallback card's Try again for Add Claude key
+      // and stops Settings showing the removed key as Saved.
       if (isApiError(error) && error.code === ErrorCode.claudeKeyMissing) {
         void queryClient.invalidateQueries({ queryKey: insightKey(activityId) });
+        void queryClient.invalidateQueries({ queryKey: detailKey("me") });
       }
     },
   });

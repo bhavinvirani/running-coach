@@ -53,6 +53,8 @@ export function useRunScreen(id: string) {
     retryDetail: () => mutate(),
     coach: {
       state: screenState(insight),
+      // Unknown only before /api/me loads: offer Try again, and a 409 swaps it for Add Claude key.
+      hasKey: settings.data?.hasClaudeKey !== false,
       asking: ask.isPending,
       askError: ask.error,
       ask: () => ask.mutate(),

@@ -9,7 +9,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
-import { activityFixture, insightCardFixture, insightReadyFixture } from "@/test/fixtures";
+import {
+  activityFixture,
+  insightCardFixture,
+  insightReadyFixture,
+  meFixture,
+} from "@/test/fixtures";
 import { holdPolls } from "@/test/held-polls";
 import { testQueryClient } from "@/test/render";
 import {
@@ -20,6 +25,8 @@ import {
   useInsight,
   useInsightFeedback,
 } from "./insights";
+import { useSettings } from "./me";
+import { detailKey } from "./query-keys";
 
 const polls = holdPolls();
 
@@ -132,6 +139,43 @@ describe("useAskCoach", () => {
     );
     await waitFor(() => expect(result.current.insight.data).toEqual({ state: "no_key" }));
     expect(reads()).toBe(readsBefore + 1);
+  });
+
+  it("reads /api/me again on 409 claude_key_missing, so Settings stops showing the removed key as Saved", async () => {
+    const withKey = (hasClaudeKey: boolean) =>
+      meFixture({ settings: { ...meFixture().settings, hasClaudeKey } });
+    const calls = stubFetch(({ method, path }) => {
+      if (path === "/api/me") return json(withKey(false));
+      return method === "POST" ? problem(409, ErrorCode.claudeKeyMissing) : json({ state: "none" });
+    });
+    const { queryClient, Wrapper } = wrapper();
+    // Cached a moment ago, when the key was still set: fresh for a minute, so nothing reads it again alone.
+    queryClient.setQueryData(detailKey("me"), withKey(true));
+    const { result } = renderHook(() => ({ settings: useSettings(), ask: useAskCoach(run.id) }), {
+      wrapper: Wrapper,
+    });
+    expect(result.current.settings.data?.hasClaudeKey).toBe(true);
+
+    await act(async () => {
+      await result.current.ask.mutateAsync().catch(() => undefined);
+    });
+
+    await waitFor(() => expect(result.current.settings.data?.hasClaudeKey).toBe(false));
+    expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(1);
+  });
+
+  it("leaves /api/me alone when Ask the coach fails for another reason (429)", async () => {
+    stubFetch(() => problem(429, ErrorCode.rateLimited));
+    const { queryClient, Wrapper } = wrapper();
+    queryClient.setQueryData(detailKey("me"), meFixture());
+    const { result } = renderHook(() => useAskCoach(run.id), { wrapper: Wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync().catch(() => undefined);
+    });
+
+    await waitFor(() => expect(result.current.error).toMatchObject({ code: "rate_limited" }));
+    expect(queryClient.getQueryState(detailKey("me"))?.isInvalidated).toBe(false);
   });
 
   it("leaves the cached card as it is when Ask the coach is rate limited (429)", async () => {

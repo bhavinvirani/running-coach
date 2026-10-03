@@ -102,8 +102,8 @@ test("run shows the coach's review of the long run under its stats, rated helpfu
 }) => {
   await seedLongRun();
   await seedRunDetail(fixtureRunIds.longRun, "outdoor");
-  // The model's card with a caution, already rated: every part the card can show, with the thumb in
-  // accent. The card's date is the seed's, and nothing on it reads the clock.
+  // The model's card with a caution, already rated: every part the card can show, with the thumb
+  // pressed. The card's date is the seed's, and nothing on it reads the clock.
   await seedInsight(fixtureRunIds.longRun, longRunInsight, { feedback: "up" });
 
   await openSeededRun(page);
