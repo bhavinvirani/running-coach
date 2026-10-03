@@ -1,8 +1,15 @@
-import { generatePlan, vdotFromPerformance } from "@running-coach/engine";
+import {
+  BASELINE_WEEKS,
+  BEST_EFFORT_LOOKBACK_DAYS,
+  BEST_EFFORT_MIN_DISTANCE_M,
+  generatePlan,
+  LONGEST_RUN_LOOKBACK_DAYS,
+  RACE_LOOKBACK_DAYS,
+  vdotFromPerformance,
+} from "@running-coach/engine";
 import {
   DISTANCE_METERS,
   distanceKeySchema,
-  ErrorCode,
   type Goal,
   type GoalInput,
   type Plan,
@@ -12,6 +19,8 @@ import {
   type PlanResponse,
   type PlanSession,
   type PlanWeek,
+  paceSecondsPerUnit,
+  RECENT_TIME_PACE_S_PER_KM,
   type RecentTime,
   type SaveGoalResponse,
   type VdotSource,
@@ -29,7 +38,6 @@ import {
   type PlanSessionRow,
   userSettings,
 } from "../db/schema";
-import { DomainError } from "../lib/errors";
 import { addDays, daysBetween, localDateOf, mondayOf } from "../lib/local-date";
 import { counted } from "./best-efforts";
 
@@ -38,18 +46,10 @@ import { counted } from "./best-efforts";
 // the previous version is kept, superseded, with its sessions and their run links. A conflict saves
 // nothing and is answered as data.
 
-/** The 4 Monday-to-Sunday weeks before this week are the baseline's volume (planBaselineSchema). */
-const BASELINE_WEEKS = 4;
-/** The engine's 110% rule looks at the longest run of the last 30 days. */
-const LONGEST_RUN_DAYS = 30;
-/** A race this recent still says what the runner can do; older fitness has drifted. */
-const RACE_LOOKBACK_DAYS = 180;
-/** Best efforts are training runs, a weaker signal than a race, so only recent ones count. */
-const BEST_EFFORT_LOOKBACK_DAYS = 90;
+// The lookback windows and the best-effort minimum are the engine's (SPEC: Plan engine).
+
 /** A recorded race shorter than this is a time trial on the track or a mis-tagged run. */
 const RACE_MIN_DISTANCE_M = DISTANCE_METERS["1k"];
-/** Shorter best efforts are sprints inside a run; their VDOT overstates endurance. */
-const BEST_EFFORT_MIN_DISTANCE_M = DISTANCE_METERS["5k"];
 const BEST_EFFORT_KEYS = distanceKeySchema.options.filter(
   (key) => DISTANCE_METERS[key] >= BEST_EFFORT_MIN_DISTANCE_M,
 );
@@ -87,12 +87,13 @@ async function timezoneOf(userId: string): Promise<string> {
 }
 
 /**
- * What the runner has been doing up to today. Manual runs are left out: a typed-in distance is not a
- * measured one. Indoor runs count, since a treadmill week is still a week of running.
+ * What the runner has been doing up to today. Manual runs stay out of the volume and the longest run,
+ * since a typed-in distance is not a measured one, but count for the days since the last run: the
+ * runner did run. Indoor runs count, since a treadmill week is still a week of running.
  */
 async function readBaseline(userId: string, today: string): Promise<PlanBaseline> {
   const firstWeek = addDays(mondayOf(today), -7 * BASELINE_WEEKS);
-  const [longestFrom] = lastDays(today, LONGEST_RUN_DAYS);
+  const [longestFrom] = lastDays(today, LONGEST_RUN_LOOKBACK_DAYS);
   const from = longestFrom < firstWeek ? longestFrom : firstWeek;
   const measured = and(eq(activity.userId, userId), eq(activity.isManual, false));
   const runs = await db
@@ -104,7 +105,7 @@ async function readBaseline(userId: string, today: string): Promise<PlanBaseline
   for (const run of runs) {
     const week = Math.floor(daysBetween(firstWeek, run.date) / 7);
     if (week >= 0 && week < BASELINE_WEEKS) weeklyVolumesM[week]! += run.distanceM;
-    if (daysBetween(run.date, today) < LONGEST_RUN_DAYS) {
+    if (daysBetween(run.date, today) < LONGEST_RUN_LOOKBACK_DAYS) {
       longestRunM = Math.max(longestRunM, run.distanceM);
     }
   }
@@ -112,7 +113,9 @@ async function readBaseline(userId: string, today: string): Promise<PlanBaseline
   const [last] = await db
     .select({ date: sql<string | null>`to_char(max(${activity.startLocal}), 'YYYY-MM-DD')` })
     .from(activity)
-    .where(and(measured, lt(activity.startLocal, `${addDays(today, 1)} 00:00:00`)));
+    .where(
+      and(eq(activity.userId, userId), lt(activity.startLocal, `${addDays(today, 1)} 00:00:00`)),
+    );
   const lastDate = last?.date ?? null;
   return {
     weeklyVolumesM: weeklyVolumesM.map(Math.round),
@@ -121,43 +124,41 @@ async function readBaseline(userId: string, today: string): Promise<PlanBaseline
   };
 }
 
-/** The performance's VDOT, or null for one too slow to give any (a walk tagged as a race). */
-function vdotOf(source: VdotSource): number | null {
-  try {
-    return vdotFromPerformance(source);
-  } catch (error) {
-    if (error instanceof RangeError) return null;
-    throw error;
-  }
+/**
+ * A recorded performance at a pace an entered time may have (recentTimeSchema): a walk tagged as a race
+ * or a GPS jump inside a best effort would otherwise set every pace of the plan.
+ */
+function plausible({ distanceM, timeS }: VdotSource): boolean {
+  const sPerKm = paceSecondsPerUnit(distanceM, timeS, "km");
+  return (
+    sPerKm !== null &&
+    sPerKm >= RECENT_TIME_PACE_S_PER_KM.fastest &&
+    sPerKm <= RECENT_TIME_PACE_S_PER_KM.slowest
+  );
 }
 
-/** The candidate with the highest VDOT; on a tie the first, so callers list the newest first. */
+/**
+ * The plausible candidate with the highest VDOT; on a tie the first, so callers list the newest first.
+ * Every pace inside the bounds gives a positive VDOT, so the engine never throws here.
+ */
 function fittest(sources: VdotSource[]): VdotSource | null {
   let best: { source: VdotSource; vdot: number } | null = null;
-  for (const source of sources) {
-    const vdot = vdotOf(source);
-    if (vdot !== null && (best === null || vdot > best.vdot)) best = { source, vdot };
+  for (const source of sources.filter(plausible)) {
+    const vdot = vdotFromPerformance(source);
+    if (best === null || vdot > best.vdot) best = { source, vdot };
   }
   return best?.source ?? null;
 }
 
+/** The contract keeps an entered time inside the plausible paces, so it is always a source. */
 function enteredSource({ distanceKey, timeS }: RecentTime): VdotSource {
-  const source: VdotSource = {
+  return {
     origin: "entered",
     distanceM: DISTANCE_METERS[distanceKey],
     timeS,
     activityId: null,
     date: null,
   };
-  if (vdotOf(source) === null) {
-    throw new DomainError(
-      ErrorCode.validation,
-      400,
-      "That time is too slow to set paces from. Enter a recent race or time trial.",
-      { issues: [{ path: "recentTime.timeS", message: "Too slow to set paces from" }] },
-    );
-  }
-  return source;
 }
 
 /** The fastest recorded race of the last 180 days by VDOT, each over its own distance and time. */
