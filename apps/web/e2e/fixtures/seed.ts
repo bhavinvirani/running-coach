@@ -443,7 +443,7 @@ export const longRunFallbackInsight = {
   whatItMeans:
     "No coach review: Claude is not answering right now. These are the run's numbers only.",
   nextStep:
-    "Follow the plan for your next session. Rest or run easy if anything hurts or you feel unwell.",
+    "Keep your next run easy, or take a rest day. Rest or run easy if anything hurts or you feel unwell.",
   caution: "none",
 } as const satisfies RunInsight;
 
