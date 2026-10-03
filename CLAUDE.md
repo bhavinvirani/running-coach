@@ -33,6 +33,7 @@ Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md
 | `pnpm db:generate` / `pnpm db:migrate`              | SQL from the Drizzle schema; apply locally                                                                                                                                                        |
 | `pnpm py:check`                                     | ruff, mypy, pytest for `services/garmin` through uv                                                                                                                                               |
 | `pnpm garmin:connect <app-url>`                     | laptop CLI: signs in to the app, logs in to Garmin with 2FA in the terminal, uploads the token bundle, which the API proves with one call and stores encrypted                                    |
+| `pnpm coach:dev`                                    | the coach service on 127.0.0.1:8777 for the owner's Claude plan, on this laptop's Claude Code login (needs `COACH_SERVICE_SECRET`)                                                                |
 
 ## Consistency standards
 

@@ -71,7 +71,7 @@ services:
     healthCheckPath: /health
     previews:
       generation: "off"
-    # Rebuilds only when the service, its contract or the lockfile changes.
+    # Rebuilds only when a file its Dockerfile copies changes.
     buildFilter:
       paths:
         - apps/coach/**
@@ -79,6 +79,8 @@ services:
         - package.json
         - pnpm-lock.yaml
         - pnpm-workspace.yaml
+        - .npmrc
+        - tsconfig.base.json
     envVars:
       - key: NODE_ENV
         value: production
