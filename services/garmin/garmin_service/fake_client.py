@@ -170,6 +170,8 @@ class FakeGarmin:
     def __init__(self, fixtures_dir: Path = FIXTURES_DIR) -> None:
         self._fixtures_dir = fixtures_dir
         self._tokens = FakeTokenStore()
+        # GarminApi's retry knob: no network behind the fake, so nothing reads it.
+        self.retry_attempts = 0
         self.display_name: str | None = None
         self.full_name: str | None = None
         self._fail_next_call: str | None = None

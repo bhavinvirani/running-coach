@@ -5,11 +5,14 @@ Writes are not idempotent: an upload sent twice is two workouts. So only a faile
 problem (nothing was done). After it, any failure stops the batch and answers 200 with what each
 action did: the failed one says which ids Garmin now holds for it (a create that uploaded but did
 not schedule answers its workoutId), the later ones are "skipped", and `stopped` carries the code
-and retry delay the failure would have answered on its own. The calendar is read only when every
-action is done or gone; its failure answers calendar null and never fails the batch.
+and retry delay the failure would have answered on its own. The calendar is read only when asked
+for (readCalendar) and every action is done or gone; its failure answers calendar null and never
+fails the batch.
 
-No action starts once WORKOUTS_BUDGET_S has passed: the API waits for the whole batch and loses a
-rotated bundle on a timeout. The actions left are "skipped" with no stop, and the calendar is null.
+No action and no month of the calendar starts once WORKOUTS_BUDGET_S has passed: the API waits for
+the whole answer, and one that comes after its timeout loses the ids of the writes that went
+through, so the job's retry uploads them again. The actions left are "skipped" with no stop, and the
+calendar is null.
 """
 
 import logging
@@ -34,8 +37,13 @@ from garmin_service.models.workouts import (
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-# No action or calendar read starts later than this after the request began: what the API waits,
-# less one write that hangs to the library's 15 s request timeout.
+# No action or month of the calendar starts later than this after the request began, the login
+# included. Worst case after it, with garminconnect's 15 s request timeout and the 30 s timeout of
+# the token refresh a 401 triggers: the one action started just before it is two writes, each a 1 s
+# gap (GARMIN_CALL_GAP_S) and 15 s, and a 401 adds the refresh and one 15 s resend, so
+# 2 x (1 + 15 + 30 + 15) = 122 s; a month of the calendar is one try with the library's retries
+# off, 1 + 15 + 30 + 15 = 61 s, less than that action. The answer leaves by 40 + 122 = 162 s, inside
+# WORKOUT_SYNC_TIMEOUT_MS (180 s) in apps/api/src/garmin/client.ts.
 WORKOUTS_BUDGET_S = 40.0
 
 # The clock the budget runs on; tests replace it.
@@ -74,7 +82,7 @@ def workouts_sync(body: WorkoutSyncRequest, connect: ConnectDep) -> WorkoutSyncR
         results.append(_result(action, outcome, held))
 
     complete = all(result.outcome in ("done", "gone") for result in results)
-    calendar = _calendar(garmin, body, deadline) if complete else None
+    calendar = _calendar(garmin, body, deadline) if body.read_calendar and complete else None
     outcomes = Counter(result.outcome for result in results)
     log.info(
         "workout batch finished",

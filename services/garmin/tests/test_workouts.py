@@ -16,8 +16,10 @@ from typing import Any
 
 import pytest
 import requests
-from garminconnect import GarminConnectConnectionError, GarminConnectNotFoundError
+from garminconnect import Garmin, GarminConnectConnectionError, GarminConnectNotFoundError
 
+from garmin_service import client as client_module
+from garmin_service.client import GARMIN_RETRY_ATTEMPTS, connect_real
 from garmin_service.fake_client import (
     CALENDAR_FIXTURE,
     FAKE_FIRST_SCHEDULE_ID,
@@ -194,6 +196,19 @@ def test_an_empty_action_list_still_reads_the_calendar(make_client: AppFactory) 
         "get_scheduled_workouts:2026:10",
         "get_scheduled_workouts:2026:11",
     ]
+
+
+def test_read_calendar_false_skips_the_calendar_read_and_answers_calendar_null(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin()
+    action = unschedule()
+
+    body = post(make_client, sync_body(action, read_calendar=False), connect=garmin.connect())
+
+    assert body["results"] == [result(action, "done", None, None)]
+    assert (body["stopped"], body["calendar"]) == (None, None)
+    assert garmin.calls == ["login", f"unschedule_workout:{action['scheduleId']}"]
 
 
 def test_returns_the_rotated_bundle_with_the_results(make_client: AppFactory) -> None:
@@ -461,17 +476,81 @@ def test_past_the_time_budget_no_action_starts_and_the_rest_are_skipped_without_
     ]
 
 
-def test_past_the_time_budget_the_calendar_is_not_read(
+def test_the_calendar_read_is_skipped_when_the_budget_is_spent(
     make_client: AppFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(workouts_route, "_now", clock_jumping_after(2, by=60.0))
+    # Reads: the deadline and before each action; the calendar read finds the budget spent.
+    monkeypatch.setattr(workouts_route, "_now", clock_jumping_after(3, by=60.0))
+    garmin = ScriptedGarmin()
+    actions = [remove(), unschedule()]
+
+    body = post(make_client, sync_body(*actions), connect=garmin.connect())
+
+    assert body["results"] == [
+        result(actions[0], "done", None, None),
+        result(actions[1], "done", None, None),
+    ]
+    assert (body["stopped"], body["calendar"]) == (None, None)
+    assert not any(call.startswith("get_scheduled_workouts") for call in garmin.calls)
+
+
+def test_the_second_month_of_the_calendar_is_not_read_once_the_budget_is_spent(
+    make_client: AppFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Reads: the deadline, before the action, before the first month; the second finds it spent.
+    monkeypatch.setattr(workouts_route, "_now", clock_jumping_after(3, by=60.0))
     garmin = ScriptedGarmin()
 
     body = post(make_client, sync_body(unschedule()), connect=garmin.connect())
 
     assert body["results"][0]["outcome"] == "done"
     assert (body["stopped"], body["calendar"]) == (None, None)
-    assert not any(call.startswith("get_scheduled_workouts") for call in garmin.calls)
+    assert [c for c in garmin.calls if c.startswith("get_scheduled_workouts")] == [
+        "get_scheduled_workouts:2026:10"
+    ]
+
+
+def test_the_calendar_read_makes_exactly_one_attempt_when_garmin_times_out(
+    make_client: AppFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # connect_real's own garminconnect.Garmin, retry wrapper and HTTP client included: only the
+    # token login and the network are replaced. Garmin answers the unschedule, never the calendar.
+    reads: list[str] = []
+
+    def offline_login(self: Garmin, /, tokenstore: str | None = None) -> tuple[None, None]:
+        self.client.loads(tokenstore or "")
+        return None, None
+
+    def network(self: requests.Session, method: str, url: str, **kwargs: Any) -> requests.Response:
+        if method == "GET":
+            reads.append(url)
+            raise requests.Timeout("read timed out")
+        answer = requests.Response()
+        answer.status_code = 204
+        return answer
+
+    monkeypatch.setattr(Garmin, "login", offline_login)
+    monkeypatch.setattr(requests.Session, "request", network)
+    monkeypatch.setattr(client_module, "GARMIN_CALL_GAP_S", 0.0)
+    action = unschedule()
+
+    body = post(make_client, sync_body(action), connect=connect_real)
+
+    assert body["results"] == [result(action, "done", None, None)]
+    assert (body["stopped"], body["calendar"]) == (None, None)
+    assert len(reads) == 1
+    assert reads[0].endswith("/year/2026/month/9")
+
+
+def test_reads_the_calendar_with_the_librarys_retries_off_and_puts_them_back(
+    make_client: AppFactory,
+) -> None:
+    garmin = ScriptedGarmin()
+
+    post(make_client, sync_body(), connect=garmin.connect())
+
+    assert garmin.calendar_retry_attempts == [0, 0]
+    assert garmin.retry_attempts == GARMIN_RETRY_ATTEMPTS
 
 
 def test_the_budget_is_about_40_seconds() -> None:
@@ -685,6 +764,8 @@ def test_returns_502_garmin_unavailable_when_garmin_is_down_at_login(
         sync_body({**create(), "workout": {**EASY_RUN, "steps": []}}),
         {**sync_body(), "calendarStart": "2026-11-02"},
         {k: v for k, v in sync_body().items() if k != "calendarEnd"},
+        {k: v for k, v in sync_body().items() if k != "readCalendar"},
+        {**sync_body(), "readCalendar": "yes"},
     ],
 )
 def test_returns_400_validation_for_a_bad_body_and_never_calls_garmin(

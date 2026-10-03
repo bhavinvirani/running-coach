@@ -34,8 +34,9 @@ export const jobOptions = {
   retryBackoff: true,
   retryDelay: 5 * 60,
   retryDelayMax: 30 * 60,
-  // Up to five batches of 60 s each, after waiting on the user lock behind a sync.
-  expireInSeconds: 15 * 60,
+  // Up to five batches of WORKOUT_SYNC_TIMEOUT_MS (3 min) each, after waiting on the user lock behind a
+  // sync: an expired job would be retried while it still runs.
+  expireInSeconds: 20 * 60,
 } satisfies SendOptions;
 
 export function sendOptions(job: PushWorkoutsData): SendOptions {

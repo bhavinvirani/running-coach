@@ -39,6 +39,9 @@ class TokenStore(Protocol):
 class GarminApi(Protocol):
     """The part of garminconnect.Garmin the routes use. FakeGarmin implements the same."""
 
+    # The library's own retries of a read (Garmin(retry_attempts=...)), looked up on every call.
+    retry_attempts: int
+
     @property
     def client(self) -> TokenStore: ...
 
@@ -123,6 +126,15 @@ class GarminSession:
             return fn(*args, **kwargs)
         finally:
             self._last_call_end = self._clock()
+
+    def call_once[**P, R](self, fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
+        """call() with the library's retries off: one try of a read that must fit a time budget."""
+        retries = self.api.retry_attempts
+        self.api.retry_attempts = 0
+        try:
+            return self.call(fn, *args, **kwargs)
+        finally:
+            self.api.retry_attempts = retries
 
     def token_bundle(self) -> str:
         """The bundle to hand back: refreshed when login rotated the tokens, else unchanged."""

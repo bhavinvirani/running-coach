@@ -234,16 +234,23 @@ export const GARMIN_WORKOUT_NAME_MAX = 60;
  * The name a session's workout carries on the watch: the runner's title or the type's name, then the
  * target distance in the runner's units with one decimal ("Tempo 6.2 km"). A long title is cut so the
  * distance always shows. Part of the workout's content hash, so a change of units re-sends the workouts.
+ *
+ * The cut keeps whole code points within the cap in UTF-16 units (what zod's max counts), and a lone
+ * surrogate becomes U+FFFD: the Garmin service rejects a string with half an emoji, and with it the whole
+ * batch of every other session.
  */
 export function garminWorkoutName(
   session: Pick<PlanSession, "title" | "type" | "target">,
   units: Units,
 ): string {
   const suffix = ` ${distanceInUnits(session.target.distanceM, units).toFixed(1)} ${units}`;
-  const base = (session.title ?? SESSION_TYPE_NAMES[session.type])
-    .slice(0, GARMIN_WORKOUT_NAME_MAX - suffix.length)
-    .trimEnd();
-  return `${base}${suffix}`;
+  const room = GARMIN_WORKOUT_NAME_MAX - suffix.length;
+  let base = "";
+  for (const codePoint of (session.title ?? SESSION_TYPE_NAMES[session.type]).toWellFormed()) {
+    if (base.length + codePoint.length > room) break;
+    base += codePoint;
+  }
+  return `${base.trimEnd()}${suffix}`;
 }
 
 /** A running workout as the engine's garminWorkout builds it from a session's steps and the plan's paces. */
@@ -303,12 +310,16 @@ export const garminWorkoutActionSchema = z.discriminatedUnion("action", [
 export type GarminWorkoutAction = z.infer<typeof garminWorkoutActionSchema>;
 export type GarminWorkoutActionKind = GarminWorkoutAction["action"];
 
-/** Actions per POST /workouts/sync: at most two paced calls each, a login and the calendar read stay inside the 60 s timeout. */
+/**
+ * Actions per POST /workouts/sync: at most two paced calls each, so a batch with its login and calendar
+ * read fits the service's time budget (WORKOUTS_BUDGET_S in services/garmin/garmin_service/routes/workouts.py).
+ */
 export const GARMIN_WORKOUT_BATCH_MAX = 8;
 
 /**
- * POST /workouts/sync: the actions in order under one login, then, unless the batch stopped, the workouts
- * scheduled between calendarStart and calendarEnd (get_scheduled_workouts, one call per month touched).
+ * POST /workouts/sync: the actions in order under one login, then, when readCalendar is set and the batch
+ * did not stop, the workouts scheduled between calendarStart and calendarEnd (get_scheduled_workouts, one
+ * call per month touched).
  */
 export const garminWorkoutSyncRequestSchema = z
   .object({
@@ -316,6 +327,8 @@ export const garminWorkoutSyncRequestSchema = z
     actions: z.array(garminWorkoutActionSchema).max(GARMIN_WORKOUT_BATCH_MAX),
     calendarStart: z.iso.date(),
     calendarEnd: z.iso.date(),
+    /** False skips the calendar read and answers calendar null: the caller has no use for the list. */
+    readCalendar: z.boolean(),
   })
   .strict();
 export type GarminWorkoutSyncRequest = z.infer<typeof garminWorkoutSyncRequestSchema>;
@@ -376,8 +389,8 @@ export const garminWorkoutSyncResponseSchema = z
     results: z.array(garminWorkoutResultSchema),
     stopped: garminWorkoutStopSchema.nullable(),
     /**
-     * Every workout scheduled in the calendar range, the app's own included; null when the batch stopped
-     * or the calendar read failed, which never fails the batch.
+     * Every workout scheduled in the calendar range, the app's own included; null when it was not asked
+     * for, the batch stopped or ran out of time, or the calendar read failed, which never fails the batch.
      */
     calendar: z.array(garminCalendarEntrySchema).nullable(),
   })

@@ -13,6 +13,7 @@ import {
   createGarminClient,
   type GarminCallOptions,
   garminClient,
+  WORKOUT_SYNC_TIMEOUT_MS,
   workoutStopError,
 } from "../../src/garmin/client";
 import { config } from "../../src/lib/config";
@@ -557,7 +558,11 @@ describe("garminClient", () => {
   });
 
   describe("syncWorkouts", () => {
-    const calendarRange = { calendarStart: "2026-10-01", calendarEnd: "2026-10-07" };
+    const calendarRange = {
+      calendarStart: "2026-10-01",
+      calendarEnd: "2026-10-07",
+      readCalendar: true,
+    };
     const create = (ref: string, date = "2026-10-02"): GarminWorkoutAction => ({
       action: "create",
       ref,
@@ -590,6 +595,34 @@ describe("garminClient", () => {
         ).toBe(true);
       }
       expect(options.saved).toEqual([]);
+    });
+
+    it("answers no calendar when not asked for one (readCalendar false)", async () => {
+      const response = await garminClient.syncWorkouts(
+        {
+          tokenBundle: garminBundle(),
+          actions: [create("session-1")],
+          ...calendarRange,
+          readCalendar: false,
+        },
+        writeBack(),
+      );
+
+      expect(response.results.map((result) => result.outcome)).toEqual(["done"]);
+      expect(response.calendar).toBeNull();
+    });
+
+    it("waits for a workout batch longer than the service's worst case, so a slow Garmin loses no ids (slow Garmin)", async () => {
+      const timeout = vi.spyOn(AbortSignal, "timeout");
+
+      await garminClient.syncWorkouts(
+        { tokenBundle: garminBundle(), actions: [], ...calendarRange },
+        writeBack(),
+      );
+
+      // services/garmin routes/workouts.py: 40 s budget + one action's worst case of 122 s.
+      expect(WORKOUT_SYNC_TIMEOUT_MS).toBeGreaterThan(162_000);
+      expect(timeout.mock.calls).toEqual([[WORKOUT_SYNC_TIMEOUT_MS]]);
     });
 
     it("answers the results so far and the stop, without throwing, when Garmin fails mid-batch (Garmin outage)", async () => {

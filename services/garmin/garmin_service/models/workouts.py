@@ -111,6 +111,8 @@ class WorkoutSyncRequest(RequestModel):
     # Inclusive, the runner's local dates (YYYY-MM-DD).
     calendar_start: IsoDate
     calendar_end: IsoDate
+    # False skips the calendar read and answers calendar null: the caller has no use for the list.
+    read_calendar: bool
 
     @model_validator(mode="after")
     def _start_not_after_end(self) -> Self:
@@ -155,5 +157,5 @@ class WorkoutSyncResponse(ResponseModel):
     token_bundle: str = Field(min_length=2)
     results: list[WorkoutResult]
     stopped: WorkoutStop | None
-    # Null when the batch stopped, ran out of time or the calendar read failed.
+    # Null when not asked for, or the batch stopped, ran out of time or the calendar read failed.
     calendar: list[CalendarEntry] | None

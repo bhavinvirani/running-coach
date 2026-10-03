@@ -228,9 +228,11 @@ def months_between(start: date, end: date) -> Iterator[tuple[int, int]]:
 
 def read_calendar_month(garmin: GarminSession, year: int, month: int) -> list[Any] | None:
     """One month of Garmin's calendar items; None when it could not be read. Never raises: the
-    calendar never fails the batch, whose writes are already done."""
+    calendar never fails the batch, whose writes are already done. One try, the library's retries
+    off: the read must end inside the API's timeout (routes/workouts.py, WORKOUTS_BUDGET_S), and the
+    next push reads the calendar again."""
     try:
-        answer = garmin.call(garmin.api.get_scheduled_workouts, year, month)
+        answer = garmin.call_once(garmin.api.get_scheduled_workouts, year, month)
     except Exception as exc:
         error = from_garmin_exception(exc)
         # Class names only: the library's messages can quote Garmin's answer.

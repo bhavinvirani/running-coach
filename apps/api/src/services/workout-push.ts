@@ -41,6 +41,13 @@ import {
 const log = logger.child({ module: "workout-push" });
 
 /**
+ * The push's own bookkeeping on garmin_connection leaves updated_at alone: it marks a Garmin 429 there
+ * (rateLimitSecondsLeft in garmin-account.ts), and a push refused during that hour would otherwise restart
+ * it on every try. Only Garmin outcomes (garmin-account.ts) move it.
+ */
+const keepUpdatedAt = { updatedAt: sql`${garminConnection.updatedAt}` };
+
+/**
  * Batches per push. A week's changes fit in two or three (remove and create for each session at most);
  * the cap only ends a push that keeps finding work, as a workout Garmin keeps losing would.
  */
@@ -115,30 +122,40 @@ async function recordResults(
   });
 }
 
-/** The stop's code, or internal for anything that is not a DomainError, as the push status shows it. */
+/**
+ * The stop's code, or internal for anything that is not a DomainError, as the push status shows it. Also
+ * runs for a refusal during a 429's hour, which must not move the hour's start.
+ */
 async function recordPushError(userId: string, error: unknown): Promise<void> {
   const code = error instanceof DomainError ? error.code : ErrorCode.internal;
   await db
     .update(garminConnection)
-    .set({ workoutsPushError: code })
+    .set({ workoutsPushError: code, ...keepUpdatedAt })
     .where(eq(garminConnection.userId, userId));
 }
 
 /**
  * One POST /workouts/sync through the account. `onResults` stores the results before a stop throws, inside
  * account.call, so the failure is recorded on the connection as any Garmin failure is (a 429's hour, the
- * expired-login count). A batch that ran through marks the login working.
+ * expired-login count). A batch that ran through marks the login working. `readCalendar` asks for the
+ * window's calendar after the actions.
  */
 async function sendBatch(
   account: GarminAccount,
   userId: string,
-  window: PushWindow,
+  { window, readCalendar }: { window: PushWindow; readCalendar: boolean },
   actions: GarminWorkoutAction[],
   onResults: (response: GarminWorkoutSyncResponse) => Promise<void>,
 ): Promise<GarminWorkoutSyncResponse> {
   const response = await account.call(async (tokenBundle, options) => {
     const answer = await garminClient.syncWorkouts(
-      { tokenBundle, actions, calendarStart: window.start, calendarEnd: window.end },
+      {
+        tokenBundle,
+        actions,
+        calendarStart: window.start,
+        calendarEnd: window.end,
+        readCalendar,
+      },
       options,
     );
     await onResults(answer);
@@ -215,7 +232,7 @@ export async function pushWorkouts({
         const response = await sendBatch(
           account,
           userId,
-          window,
+          { window, readCalendar: true },
           batch.map((planned) => planned.action),
           (answer) => recordResults(userId, batch, answer),
         );
@@ -247,6 +264,7 @@ async function finish(
       workoutsPushedAt: sql`now()`,
       workoutsPushError: null,
       ...(others === null ? {} : { garminCalendar: others }),
+      ...keepUpdatedAt,
     })
     .where(eq(garminConnection.userId, userId));
   const result = { window, ...counts, others: others?.length ?? 0 };
@@ -338,7 +356,8 @@ export async function unscheduleOthers(
           ref: String(scheduleId),
           scheduleId,
         }));
-        await sendBatch(account, userId, window, actions, record);
+        // No calendar read: the stored list loses what was unscheduled, and the next push reads the rest.
+        await sendBatch(account, userId, { window, readCalendar: false }, actions, record);
       }
       log.info({ userId, unscheduled: done.size }, "garmin workouts unscheduled");
     } catch (error) {
@@ -360,6 +379,6 @@ async function storeOthers(
   if (!row) return;
   await db
     .update(garminConnection)
-    .set({ garminCalendar: change(row.calendar) })
+    .set({ garminCalendar: change(row.calendar), ...keepUpdatedAt })
     .where(eq(garminConnection.userId, userId));
 }

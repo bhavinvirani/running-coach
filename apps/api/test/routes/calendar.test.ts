@@ -48,6 +48,7 @@ afterAll(async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   calendarPushLimiter.reset();
   calendarUnscheduleLimiter.reset();
@@ -291,6 +292,8 @@ describe("POST /api/calendar/unschedule", () => {
         ],
         calendarStart: windowDay(0),
         calendarEnd: windowDay(6),
+        // The answer's calendar would go unused: the next push reads it.
+        readCalendar: false,
       },
     ]);
     expect((await connection(userId)).garminCalendar).toEqual([hills]);
@@ -330,6 +333,39 @@ describe("POST /api/calendar/unschedule", () => {
       workoutsPushError: ErrorCode.garminUnavailable,
       lastError: ErrorCode.garminUnavailable,
     });
+  });
+
+  it("keeps the hour of a 429 when an unschedule is refused during it, and unschedules once the original hour has passed (Garmin 429)", async () => {
+    const { agent, userId } = await owner();
+    await storeOthers(userId, [strides]);
+    const limitedAt = new Date(Date.now() - 30 * 60 * 1000);
+    await db
+      .update(garminConnection)
+      .set({ lastError: ErrorCode.garminRateLimited, updatedAt: limitedAt })
+      .where(eq(garminConnection.userId, userId));
+    const sent = bodiesSentTo("/workouts/sync");
+    const unscheduleStrides = () =>
+      agent.post("/api/calendar/unschedule").send({ scheduleIds: [strides.scheduleId] });
+
+    const refused = expectProblem(await unscheduleStrides(), 429, ErrorCode.garminRateLimited);
+
+    expect(refused.retryAfterSeconds).toBeGreaterThan(29 * 60);
+    expect(sent()).toEqual([]);
+    expect(await connection(userId)).toMatchObject({
+      garminCalendar: [strides],
+      workoutsPushError: ErrorCode.garminRateLimited,
+      lastError: ErrorCode.garminRateLimited,
+      updatedAt: limitedAt,
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(limitedAt.getTime() + 61 * 60 * 1000);
+    const response = await unscheduleStrides();
+
+    expect(response.status).toBe(200);
+    expect(garminPushResponseSchema.parse(response.body).garmin.others).toEqual([]);
+    expect(sent()).toHaveLength(1);
+    expect(await connection(userId)).toMatchObject({ garminCalendar: [], lastError: null });
   });
 
   it("returns 409 for an expired login without calling Garmin (token expiry)", async () => {

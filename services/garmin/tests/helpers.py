@@ -9,7 +9,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from garmin_service.client import Connect, GarminSession, login
+from garmin_service.client import GARMIN_RETRY_ATTEMPTS, Connect, GarminSession, login
 from garmin_service.fake_client import FakeGarmin, FakeTokenStore
 
 TEST_SECRET = "test-secret-not-real"
@@ -106,11 +106,14 @@ def unschedule(ref: str = "6000000004", schedule_id: int = 6_000_000_004) -> dic
     return {"action": "unschedule", "ref": ref, "scheduleId": schedule_id}
 
 
-def workout_sync_body(*actions: dict[str, Any], token_bundle: str | None = None) -> dict[str, Any]:
+def workout_sync_body(
+    *actions: dict[str, Any], token_bundle: str | None = None, read_calendar: bool = True
+) -> dict[str, Any]:
     return {
         "tokenBundle": bundle() if token_bundle is None else token_bundle,
         "actions": list(actions),
         **WINDOW,
+        "readCalendar": read_calendar,
     }
 
 
@@ -175,6 +178,11 @@ class ScriptedGarmin:
         self._calendar = calendar
         self._calendar_error = calendar_error
         self.uploaded: list[Any] = []
+        # The library's retries of a read as connect_real sets them; the calendar read turns them
+        # off.
+        self.retry_attempts = GARMIN_RETRY_ATTEMPTS
+        # retry_attempts as each get_scheduled_workouts call found it.
+        self.calendar_retry_attempts: list[int] = []
         self.full_name = full_name
         self.display_name = display_name
         self.calls: list[str] = []
@@ -281,6 +289,7 @@ class ScriptedGarmin:
 
     def get_scheduled_workouts(self, year: int | str, month: int | str) -> dict[str, Any]:
         self.calls.append(f"get_scheduled_workouts:{year}:{month}")
+        self.calendar_retry_attempts.append(self.retry_attempts)
         if self._calendar_error is not None:
             raise self._calendar_error
         if self._calendar is not None:

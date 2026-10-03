@@ -46,11 +46,17 @@ import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } fr
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
 // caller's onTokenBundle, awaited before the call returns, retries or throws; a retry sends the new one.
 
-// Sync and history pages list many activities, an activity's detail is a login plus three paced calls, a
-// series batch is a login plus up to eleven, and a workout batch a login plus up to sixteen writes and a
-// calendar read inside the service's 40 s budget: 60 s for all five (api rule), 20 s for the rest.
+// Sync and history pages list many activities, an activity's detail is a login plus three paced calls and
+// a series batch a login plus up to eleven: 60 s for all four (api rule), 20 s for the rest.
 const SYNC_TIMEOUT_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
+/**
+ * A workout batch answers by 162 s at worst: the service starts nothing after its 40 s budget, and the one
+ * action started just before it can take 122 s more (WORKOUTS_BUDGET_S in
+ * services/garmin/garmin_service/routes/workouts.py has the arithmetic). Its writes are not idempotent: an
+ * answer this side gave up on loses the ids Garmin made, and the job's retry would upload them again.
+ */
+export const WORKOUT_SYNC_TIMEOUT_MS = 180_000;
 /** Garmin blocks last about an hour; the service sends 3600 when Garmin gives no delay. */
 export const DEFAULT_RETRY_AFTER_S = 3600;
 
@@ -93,9 +99,10 @@ export interface GarminClient {
    */
   series(request: GarminSeriesRequest, options: GarminCallOptions): Promise<GarminSeriesResponse>;
   /**
-   * Up to GARMIN_WORKOUT_BATCH_MAX workout actions in order under one login, one result each, then the
-   * calendar between calendarStart and calendarEnd. A failure after the login answers 200 with the results
-   * so far and `stopped` (workoutStopError turns it into the error); a failed login throws as usual.
+   * Up to GARMIN_WORKOUT_BATCH_MAX workout actions in order under one login, one result each, then, when
+   * readCalendar is set, the calendar between calendarStart and calendarEnd. A failure after the login
+   * answers 200 with the results so far and `stopped` (workoutStopError turns it into the error); a failed
+   * login throws as usual.
    */
   syncWorkouts(
     request: GarminWorkoutSyncRequest,
@@ -278,7 +285,7 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
         garminWorkoutSyncRequestSchema,
         request,
         garminWorkoutSyncResponseSchema,
-        SYNC_TIMEOUT_MS,
+        WORKOUT_SYNC_TIMEOUT_MS,
         callOptions,
       ),
   };

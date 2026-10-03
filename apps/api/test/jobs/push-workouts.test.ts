@@ -20,6 +20,7 @@ import { getBoss } from "../../src/jobs/boss";
 import * as pushJob from "../../src/jobs/push-workouts";
 import { config } from "../../src/lib/config";
 import { decrypt } from "../../src/lib/crypto";
+import type { DomainError } from "../../src/lib/errors";
 import { advisoryLockKey } from "../../src/lib/lock-key";
 import { syncGarmin } from "../../src/services/garmin-sync";
 import { saveGoal } from "../../src/services/plan";
@@ -164,9 +165,19 @@ afterAll(async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   jobClock = NOW;
 });
+
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected a rejection");
+}
 
 describe("pushWorkouts", () => {
   it("creates the window's sessions in one batch, stores their ids, dates and hashes, and lists the third-party workouts", async () => {
@@ -193,7 +204,11 @@ describe("pushWorkouts", () => {
 
     const [request, ...more] = sent();
     expect(more).toEqual([]);
-    expect(request).toMatchObject({ calendarStart: TODAY, calendarEnd: LAST_DAY });
+    expect(request).toMatchObject({
+      calendarStart: TODAY,
+      calendarEnd: LAST_DAY,
+      readCalendar: true,
+    });
     expect(kinds(request!.actions)).toEqual([
       ["create", easy.id],
       ["create", tempo.id],
@@ -242,7 +257,9 @@ describe("pushWorkouts", () => {
 
     const result = await pushWorkouts({ userId, now: NOW });
 
-    expect(sent()).toMatchObject([{ actions: [], calendarStart: TODAY, calendarEnd: LAST_DAY }]);
+    expect(sent()).toMatchObject([
+      { actions: [], calendarStart: TODAY, calendarEnd: LAST_DAY, readCalendar: true },
+    ]);
     expect(result).toMatchObject({ batches: 1, actions: 0 });
     expect(await storedSession(easy.id)).toEqual(before);
   });
@@ -402,6 +419,36 @@ describe("pushWorkouts", () => {
       code: ErrorCode.garminRateLimited,
     });
     expect(sent()).toEqual([]);
+  });
+
+  it("keeps the hour of a 429 when a push is refused during it, and pushes once the original hour has passed (Garmin 429)", async () => {
+    const { userId, planId } = await runner();
+    const easy = await createSession(userId, planId, { date: "2026-10-02" });
+    const limitedAt = new Date(Date.now() - 30 * 60 * 1000);
+    await db
+      .update(garminConnection)
+      .set({ lastError: ErrorCode.garminRateLimited, updatedAt: limitedAt })
+      .where(eq(garminConnection.userId, userId));
+    const sent = workoutSyncs();
+
+    const refused = await rejection(pushWorkouts({ userId, now: NOW }));
+
+    expect(refused).toMatchObject({ code: ErrorCode.garminRateLimited });
+    expect((refused as DomainError).retryAfterSeconds).toBeGreaterThan(29 * 60);
+    expect(sent()).toEqual([]);
+    expect(await connection(userId)).toMatchObject({
+      workoutsPushError: ErrorCode.garminRateLimited,
+      lastError: ErrorCode.garminRateLimited,
+      updatedAt: limitedAt,
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(limitedAt.getTime() + 61 * 60 * 1000);
+    await pushWorkouts({ userId, now: NOW });
+
+    expect(sent().map((request) => kinds(request.actions))).toEqual([[["create", easy.id]]]);
+    expectOnGarmin(await storedSession(easy.id));
+    expect(await connection(userId)).toMatchObject({ workoutsPushError: null, lastError: null });
   });
 
   it("creates again a workout Garmin no longer has (gone workout)", async () => {
