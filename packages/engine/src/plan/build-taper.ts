@@ -75,7 +75,12 @@ const hardDatesOf = (slots: Slots) => [
  * before the race run no long run and one race practice at most, at least 3 days out, and rest the day
  * before. When the taper starts inside the last peak week, that week's days before it are sized after
  * the first block, beside its sessions, for no more than the whole week gave them and within the
- * week's target, so the week keeps its rules.
+ * week's target, so the week keeps its rules. The first block leaves them 20 min each of that target:
+ * when its runs on the week's taper days would take more, its volume comes down until they do not.
+ * A block rests a day it lays out only when its easy runs cannot take one more 20 min run (fillWeek
+ * places min(days, max(floor(easy / 20 min), ceil(easy / long run))) runs), as when the taper's share
+ * of the peak is short of 20 min on each day; the weeks it covers, the one the taper starts in
+ * included, then run fewer than the days asked for.
  */
 export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): GeneratedWeek[] {
   const { phases, startDate, startVolumeM, seedM, preTaper } = input;
@@ -188,6 +193,18 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
   // in, which holds the block's first days beside its own.
   let previousM: number | null = whole.at(-1)?.week.distanceM ?? null;
   if (straddler !== null) previousM = Math.min(previousM ?? straddler.targetM, straddler.targetM);
+  const straddlerIndex = straddler === null ? -1 : straddler.week.number - 1;
+  const keptBefore = (session: GeneratedSession) => daysBetween(session.date, taperStart) > 0;
+  const keptSlots =
+    straddler === null
+      ? NO_SLOTS
+      : within(straddler.slots, straddler.week.startDate, addDays(taperStart, -1));
+  // The straddler's target less 20 min on each day it lays out before the taper.
+  const keptDays = hardDatesOf(keptSlots).length + keptSlots.easy.length;
+  const straddlerRoomM =
+    straddler === null ? 0 : Math.max(0, straddler.targetM - ctx.minRunM * keptDays);
+  const inStraddlerM = (sessions: readonly GeneratedSession[]) =>
+    sumM(sessions.filter((session) => weekOf(session.date) === straddlerIndex));
   blocks.forEach((block, k) => {
     const targetM = weekTargetM({
       kind: "eased",
@@ -196,21 +213,34 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
     });
     const capM = Math.min(runCapM(weekOf(block.firstDate)), runCapM(weekOf(block.lastDate)));
     const slots = blockSlots(block);
-    const sessions =
+    const sizeBlock = (blockM: number) =>
       block.number === 1
         ? sizeRaceBlock(ctx, {
             practiceDate: slots.quality[0]?.date ?? null,
             easyDates: slots.easy,
-            targetM,
+            targetM: blockM,
             // No run passes the long run the block before allowed.
             capM: longRunM({
-              weekVolumeM: previousM ?? targetM,
+              weekVolumeM: previousM ?? blockM,
               daysPerWeek: ctx.daysPerWeek,
               easyPaceSPerKm: ctx.easyPaceSPerKm,
               maxRunM: capM,
             }),
           })
-        : sizeWeek(ctx, { slots, keepsBaselineLongest: false, targetM, maxRunM: capM });
+        : sizeWeek(ctx, { slots, keepsBaselineLongest: false, targetM: blockM, maxRunM: capM });
+    let sessions = sizeBlock(targetM);
+    if (straddler !== null && k === 0 && inStraddlerM(sessions) > straddlerRoomM) {
+      // The largest block whose runs in the straddler leave 20 min to each of its days before the
+      // taper; an empty block takes none.
+      let fitsM = 0;
+      let tooMuchM = targetM;
+      while (tooMuchM - fitsM > 1) {
+        const middleM = Math.floor((fitsM + tooMuchM) / 2);
+        if (inStraddlerM(sizeBlock(middleM)) <= straddlerRoomM) fitsM = middleM;
+        else tooMuchM = middleM;
+      }
+      sessions = sizeBlock(fitsM);
+    }
     sessions.forEach((session) => byWeek[weekOf(session.date)]!.push(session));
     // A block the plan's start cut short ran only part of its 7 days: it caps nothing after it.
     const ranAllDays = daysBetween(block.firstDate, block.lastDate) === TAPER_BLOCK_DAYS - 1;
@@ -218,11 +248,10 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
     if (straddler !== null && k === 0) {
       // The last peak week's days before the taper: what the whole week gave them, sized again beside
       // the block's sessions so the week keeps its rules and never passes its target.
-      const index = straddler.week.number - 1;
-      const keptBefore = (session: GeneratedSession) => daysBetween(session.date, taperStart) > 0;
+      const index = straddlerIndex;
       const tail = [...byWeek[index]!];
       const kept = sizeWeek(ctx, {
-        slots: within(straddler.slots, straddler.week.startDate, addDays(taperStart, -1)),
+        slots: keptSlots,
         fixed: tail,
         keepsBaselineLongest: true,
         targetM: Math.min(

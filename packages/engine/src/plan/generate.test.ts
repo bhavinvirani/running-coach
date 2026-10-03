@@ -484,6 +484,24 @@ function assertPlanKeepsEveryRule(
       label,
     ).toEqual(noLong ? [] : [longDate]);
 
+    // Every day asked for runs, but in the race week and where a taper block rests one: a block rests a
+    // day it lays out only when its easy runs cannot take one more 20 min run (fillWeek), as when the
+    // taper's share of the peak is short of 20 min on each of its days.
+    if (week.phase !== "race" && week.sessions.length < goal.daysPerWeek) {
+      const weekEnd = addDays(week.startDate, 6);
+      const resting = (taper?.blocks ?? []).filter((block) => {
+        const easy = sessions.filter(
+          (s) => s.type === "easy" && between(s.date, block.first, block.last),
+        );
+        return (
+          daysBetween(block.first, weekEnd) >= 0 &&
+          daysBetween(week.startDate, block.last) >= 0 &&
+          sumM(easy) < (easy.length + 1) * minRunM
+        );
+      });
+      expect(resting, `${label} runs ${week.sessions.length} days`).not.toEqual([]);
+    }
+
     const isPreTaper = week.phase === "base" || week.phase === "build" || week.phase === "peak";
     if (!isPreTaper) return;
     // Every 4th week recovers to 80% of the week before as built; the others climb at most 10% over
@@ -500,7 +518,8 @@ function assertPlanKeepsEveryRule(
 
     const own = week.sessions.filter((session) => !isTaper(session.date));
     const longM = longs[0]?.target.distanceM ?? null;
-    if (own.length === week.sessions.length) {
+    // By its days, not its sessions: a block can rest every taper day of the week the taper starts in.
+    if (!isTaper(addDays(week.startDate, 6))) {
       // A whole week before the taper runs every day asked for and keeps its shares.
       expect(week.sessions.length, label).toBe(goal.daysPerWeek);
       assertShares(label, paces, {
@@ -1047,7 +1066,7 @@ describe("generate plan", () => {
     const half = plan(
       input({ goal: { distanceKey: "half", raceDate: addDays(START, 7 * 12 - 1) } }),
     );
-    expect(half.engineVersion).toBe("0.3.0");
+    expect(half.engineVersion).toBe("0.4.0");
     expect(half.weeks.at(-1)!.sessions.at(-1)!.steps).toEqual([
       { kind: "run", zone: "race", distanceM: 21_098, durationS: null },
     ]);
@@ -1070,6 +1089,102 @@ describe("generate plan", () => {
     expect(weekBefore.sessions.map((session) => session.date)).not.toContain(
       addDays(START, 7 * 13 - 1),
     );
+  });
+
+  it("keeps every rule for seed 131140314, a 5K 3 weeks out on 5 days from no runs: week 1 runs all 5, its Sunday in the taper", () => {
+    const close: PlanGenerationInput = {
+      goal: {
+        kind: "race",
+        distanceKey: "5k",
+        raceDate: "2025-01-26",
+        targetTimeS: null,
+        daysPerWeek: 5,
+        longRunDay: "wed",
+        recentTime: null,
+      },
+      startDate: "2025-01-06",
+      baseline: { weeklyVolumesM: [0, 0, 0, 0], longestRunM: 0, daysSinceLastRun: null },
+      vdotSource: { origin: "entered", distanceM: 5000, timeS: 1693, activityId: null, date: null },
+    };
+    const result = generatePlan(close);
+    assertPlanKeepsEveryRule(close, result);
+    const weekOne = plan(close).weeks[0]!;
+    expect(weekOne.sessions).toHaveLength(5);
+    expect(weekOne.sessions.at(-1)!.date).toBe("2025-01-12");
+  });
+
+  it("rests a laid-out day of the week the taper starts in only when its block's easy runs cannot take another 20 min run", () => {
+    // A half on Saturday 3 weeks out, 6 days, no recent runs: the taper starts on week 1's Saturday and
+    // its first 7 days hold 65% of the 26 520 m start beside a 20 min long run, 3 easy runs short of
+    // 4 x 20 min, so week 1 runs 5 days.
+    const saturday: PlanGenerationInput = {
+      goal: {
+        kind: "race",
+        distanceKey: "half",
+        raceDate: "2025-12-27",
+        targetTimeS: null,
+        daysPerWeek: 6,
+        longRunDay: "thu",
+        recentTime: { distanceKey: "10k", timeS: 8930 },
+      },
+      startDate: "2025-12-08",
+      baseline: { weeklyVolumesM: [9, 6, 74_381, 53_233], longestRunM: 15, daysSinceLastRun: null },
+      vdotSource: {
+        origin: "entered",
+        distanceM: 10_000,
+        timeS: 2085,
+        activityId: null,
+        date: null,
+      },
+    };
+    const result = generatePlan(saturday);
+    assertPlanKeepsEveryRule(saturday, result);
+    const { paces, weeks } = plan(saturday);
+    const minRunM = minRunDistanceM(bandMidpointSPerKm(paces.easy));
+    expect(weeks[0]!.sessions).toHaveLength(5);
+    expect(weeks[0]!.sessions.map((session) => session.date)).not.toContain("2025-12-13");
+    const blockEasy = weeks
+      .flatMap((week) => week.sessions)
+      .filter((s) => s.type === "easy" && between(s.date, "2025-12-13", "2025-12-19"))
+      .map((s) => s.target.distanceM);
+    expect(blockEasy.reduce((sum, m) => sum + m, 0)).toBeLessThan((blockEasy.length + 1) * minRunM);
+  });
+
+  it("runs every day of a down week the taper starts in: its first block leaves the day before the taper 20 min", () => {
+    // A Tuesday marathon: the taper starts on the Tuesday of week 20, a down week of 57 600 m. Its first
+    // block, 80% of the 72 km peak, lays out only that week's Thursday, Saturday and Sunday, so sized
+    // alone it filled them to 56 721 m and left Monday 879 m, under 20 min, which then did not run.
+    const tuesday = input({
+      goal: {
+        distanceKey: "marathon",
+        raceDate: "2028-03-14",
+        daysPerWeek: 4,
+        longRunDay: "thu",
+      },
+      startDate: "2027-10-11",
+      baseline: {
+        weeklyVolumesM: [69_663, 15_000, 89_991, 15_002],
+        longestRunM: 10_505,
+        daysSinceLastRun: 5,
+      },
+      vdotSource: {
+        origin: "entered",
+        distanceM: 21_097.5,
+        timeS: 8477,
+        activityId: null,
+        date: null,
+      },
+    });
+    const result = generatePlan(tuesday);
+    assertPlanKeepsEveryRule(tuesday, result);
+    const { paces, weeks } = plan(tuesday);
+    const weekTwenty = weeks[19]!;
+    const monday = weekTwenty.sessions.find((session) => session.date === "2028-02-21");
+    expect(weekTwenty.sessions).toHaveLength(4);
+    expect(monday?.target.distanceM).toBeGreaterThanOrEqual(
+      minRunDistanceM(bandMidpointSPerKm(paces.easy)),
+    );
+    expect(weekTwenty.distanceM).toBeLessThanOrEqual(57_600);
   });
 
   it("throws on an input the contract rejects, a start that is not a Monday", () => {

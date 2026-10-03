@@ -20,6 +20,7 @@ import {
   maxRunM,
   requiredLongRunM,
 } from "../rules/long-run";
+import { neededWeeklyM } from "../rules/needed-volume";
 import { planLength } from "../rules/plan-length";
 import { predictTimeS, racePace } from "../rules/prediction";
 import { bandMidpointSPerKm } from "../rules/session-target";
@@ -29,7 +30,6 @@ import { baseCurveM, isDownWeek, weekTargetM } from "../rules/volume-curve";
 import { minRunDistanceM } from "../rules/week-fill";
 import { buildTrainingWeek, type PlanContext } from "./build-week";
 import { buildTaperWeeks, type PreTaperWeek } from "./build-taper";
-import { neededWeeklyM } from "./needed-volume";
 
 const PRE_TAPER: readonly PlanPhase[] = ["base", "build", "peak"];
 

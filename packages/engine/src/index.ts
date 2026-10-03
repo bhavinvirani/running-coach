@@ -34,6 +34,8 @@ export type {
   LongRunInput,
   LongRunRoomInput,
 } from "./rules/long-run";
+export { neededWeeklyM } from "./rules/needed-volume";
+export type { NeededWeekInput } from "./rules/needed-volume";
 export { planLength } from "./rules/plan-length";
 export type { PlanLengthInput, PlanLengthResult } from "./rules/plan-length";
 export { predictTimeS, racePace } from "./rules/prediction";

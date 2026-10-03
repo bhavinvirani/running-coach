@@ -1,11 +1,12 @@
 import {
   GPS_GLITCH_PACE_S_PER_KM,
+  MAX_PLAN_WEEKS,
   METERS_PER_KM,
   type RaceDistanceKey,
 } from "@running-coach/shared";
 
 // Stored on each plan so a plan can be traced to the rule set that produced it.
-export const ENGINE_VERSION = "0.3.0";
+export const ENGINE_VERSION = "0.4.0";
 
 // The 10% rule: weekly running volume rises at most 10% over the previous week.
 export const WEEKLY_VOLUME_MAX_INCREASE = 0.1;
@@ -54,9 +55,9 @@ export const RACE_PACE_BAND = 0.015;
 // A target more than 5% faster than the prediction is a wish, not a pace to train at.
 export const TARGET_TIME_AMBITIOUS_MARGIN = 0.05;
 
-// SPEC "Plan engine": a plan covers at most 52 weeks. A year is the longest plan the engine makes:
-// beyond it the baseline is stale before the build starts.
-export const MAX_PLAN_WEEKS = 52;
+// SPEC "Plan engine": a plan covers at most 52 weeks. Defined in the shared contract, where the web
+// form caps the race date with it; re-exported so the rules and the API read it from here.
+export { MAX_PLAN_WEEKS };
 
 // SPEC "Plan engine": minimum plan 8 weeks for 5K and 10K, 12 for the half, 18 for the marathon.
 export const MIN_PLAN_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
@@ -144,6 +145,7 @@ export const LONG_RUN_SHARE_3_DAYS = 0.4;
 
 // A taper block can hold fewer than 3 runs: the long run of n runs takes 1.2/n of them, the room 3 runs
 // at 40% leave, so the runs still hold the block instead of shrinking it towards nothing.
+// Source: this app's own choice; Daniels and the SPEC give no share under 3 runs, so 3 x 40% carries.
 export const LONG_RUN_SHARE_FEW_RUNS = 1.2;
 
 // SPEC "Plan engine": no run over 110% of the longest of the last 30 days (4 plan weeks).
@@ -151,6 +153,7 @@ export const LONGEST_RUN_MAX_INCREASE = 0.1;
 export const LONGEST_RUN_LOOKBACK_WEEKS = 4;
 
 // The longest run to grow from when the runner has none recent: a 5 km run.
+// Source: this app's own choice: the shortest race it plans for, and room for a 20 min run beside it.
 export const LONG_RUN_FLOOR_M = 5000;
 
 // A marathon's 150 min long run beside two capped quality sessions is about 45% of a 3-run week.
@@ -202,6 +205,7 @@ export const THRESHOLD_BLOCKS: Readonly<Record<RaceDistanceKey, number>> = {
   marathon: 2,
 };
 // Threshold blocks are whole 100 m so the watch shows round distances.
+// Source: Daniels' Running Formula sets T blocks by distance; the 100 m rounding is this app's own.
 export const THRESHOLD_BLOCK_STEP_M = 100;
 
 // Daniels' recoveries: 1 min per T block, about equal time after I reps, 2 min jog after R and race pace.
@@ -211,11 +215,17 @@ export const REPETITION_RECOVERY_S = 120;
 export const RACE_PRACTICE_RECOVERY_S = 120;
 
 // Every quality session opens with 15 min and closes with 10 min easy.
+// Source: Daniels' Running Formula, whose quality sessions start and end with E running.
 export const WARMUP_S = 900;
 export const COOLDOWN_S = 600;
 
 // The shortest easy run worth lacing up for: 20 min.
+// Source: this app's own choice: a shorter run is mostly the first minutes of a warmup.
 export const MIN_RUN_S = 1200;
+
+// Week 1's search tries every whole 100 m of week and the meter before it (rules/needed-volume.ts).
+// Source: this app's own choice: work jumps at whole 100 m of week (T in 100 m blocks, reps by shares).
+export const NEEDED_VOLUME_STEP_M = 100;
 
 // SPEC "Plan engine": at least 80% of the week's time easy.
 export const HARD_TIME_MAX_SHARE = 0.2;
