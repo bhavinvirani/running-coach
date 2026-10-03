@@ -189,7 +189,7 @@ export const planConflictSchema = z.discriminatedUnion("code", [
       minDaysPerWeek: z.number().int().positive(),
     })
     .strict(),
-  /** This many runs at the minimum run length is more than the 10% rule allows over the baseline. */
+  /** Week 1, at the start volume, cannot hold a 20 min run on this many days once the long run and the quality sessions are placed. */
   z
     .object({
       code: z.literal("too_many_days"),
