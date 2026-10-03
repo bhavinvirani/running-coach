@@ -8,6 +8,7 @@ import { garminRouter } from "./garmin";
 import { goalRouter } from "./goal";
 import { healthRouter } from "./health";
 import { importRouter } from "./import";
+import { insightsRouter } from "./insights";
 import { meRouter } from "./me";
 import { personalBestsRouter } from "./personal-bests";
 import { planRouter } from "./plan";
@@ -29,6 +30,7 @@ export function registerRoutes(app: Express): void {
   api.use(garminRouter);
   api.use(syncRouter);
   api.use(activitiesRouter);
+  api.use(insightsRouter);
   api.use(importRouter);
   api.use(personalBestsRouter);
   api.use(goalRouter);

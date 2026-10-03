@@ -13,7 +13,9 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate-cli.ts",
-    "seed:owner": "tsx --env-file-if-exists=../../.env src/scripts/seed-owner.ts"
+    "seed:owner": "tsx --env-file-if-exists=../../.env src/scripts/seed-owner.ts",
+    "coach:eval": "tsx --env-file-if-exists=../../.env src/scripts/coach-eval.ts",
+    "fake:claude": "tsx test/fake-claude-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.131.0",

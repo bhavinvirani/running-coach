@@ -6,6 +6,7 @@ import {
 import {
   buildRunInsightInput,
   type InsightActivity,
+  type InsightPlan,
   type InsightSettings,
 } from "./prompts/run-insight/input";
 import { type RunInsight, runInsightSchema } from "./prompts/run-insight/schema";
@@ -21,6 +22,8 @@ export interface RunInsightInput {
   apiKey: string | null;
   activity: InsightActivity;
   settings: InsightSettings;
+  /** The sessions planned that day and next; null when the user has no active plan. */
+  plan: InsightPlan | null;
 }
 
 export interface RunInsightResult {
@@ -41,6 +44,7 @@ export async function runInsight({
   apiKey,
   activity,
   settings,
+  plan,
 }: RunInsightInput): Promise<RunInsightResult> {
   const promptVersion = `${RUN_INSIGHT_PROMPT}/${RUN_INSIGHT_VERSION}`;
   const fallback = (
@@ -48,7 +52,7 @@ export async function runInsight({
     usage: CoachUsage | null,
     requestId: string | null,
   ): RunInsightResult => ({
-    content: buildRunInsightFallback(activity, settings, reason),
+    content: buildRunInsightFallback(activity, settings, reason, plan),
     fallback: true,
     fallbackReason: reason,
     usage,
@@ -63,7 +67,7 @@ export async function runInsight({
     apiKey,
     prompt: RUN_INSIGHT_PROMPT,
     version: RUN_INSIGHT_VERSION,
-    input: buildRunInsightInput(activity, settings),
+    input: buildRunInsightInput(activity, settings, plan),
     schema: runInsightSchema,
     maxTokens: INSIGHT_MAX_TOKENS,
   });

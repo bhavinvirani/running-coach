@@ -3,6 +3,8 @@ import {
   formatDistance,
   formatDuration,
   formatElevation,
+  formatLocalDate,
+  formatLocalStart,
   formatPace,
 } from "../../src/coach/format";
 
@@ -28,5 +30,16 @@ describe("coach format", () => {
   it("writes elevation in meters with km and in feet with miles", () => {
     expect(formatElevation(142, "km")).toBe("142 m");
     expect(formatElevation(88, "mi")).toBe("289 ft");
+  });
+
+  it("writes a local date with its weekday and no zone math, also across the DST change", () => {
+    expect(formatLocalDate("2026-10-08")).toBe("Thursday 8 October 2026");
+    expect(formatLocalDate("2026-10-25")).toBe("Sunday 25 October 2026");
+    expect(formatLocalDate("not a date")).toBe("not a date");
+  });
+
+  it("writes a wall-clock start as its date and hh:mm", () => {
+    expect(formatLocalStart("2026-09-27 08:00:00")).toBe("Sunday 27 September 2026, 08:00");
+    expect(formatLocalStart("2026-09-27T18:05:00")).toBe("Sunday 27 September 2026, 18:05");
   });
 });

@@ -1,0 +1,3 @@
+ALTER TABLE "coach_message" ADD COLUMN "fallback_reason" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "coach_message_insight_activity_id_idx" ON "coach_message" USING btree ("activity_id") WHERE "coach_message"."kind" = 'insight';--> statement-breakpoint
+ALTER TABLE "coach_message" ADD CONSTRAINT "coach_message_fallback_reason_check" CHECK ("coach_message"."fallback_reason" in ('missing_key', 'key_invalid', 'refusal', 'max_tokens', 'invalid_output', 'timeout', 'unavailable'));

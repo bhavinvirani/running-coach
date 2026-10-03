@@ -13,6 +13,13 @@ import { DomainError } from "./errors";
  */
 export const garminRouteLimit = { limit: config.GARMIN_ROUTE_LIMIT, windowMs: 60_000 } as const;
 
+/**
+ * Each route that calls Claude on the user's key or queues a call (saving a key, Ask the coach): six a
+ * minute per user by default, so a stuck button cannot spend the runner's quota. config.COACH_ROUTE_LIMIT
+ * raises it where one runner sends many requests (e2e).
+ */
+export const coachRouteLimit = { limit: config.COACH_ROUTE_LIMIT, windowMs: 60_000 } as const;
+
 export interface RateLimitOptions {
   /** Requests allowed per key within any window. */
   limit: number;

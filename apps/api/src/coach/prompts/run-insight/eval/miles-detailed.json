@@ -13,13 +13,34 @@
       "isIndoor": false,
       "isManual": false
     },
-    "settings": { "units": "mi", "coachDetail": "detailed" }
+    "settings": {
+      "units": "mi",
+      "coachDetail": "detailed"
+    },
+    "plan": {
+      "planned": [
+        {
+          "date": "2026-09-20",
+          "type": "long",
+          "title": null,
+          "distanceM": 14484,
+          "durationS": 4860
+        }
+      ],
+      "next": {
+        "date": "2026-09-22",
+        "type": "intervals",
+        "title": "Hill repeats",
+        "distanceM": 9656,
+        "durationS": 3300
+      }
+    }
   },
   "output": {
-    "headline": "8.7 mi in 1:17:00 at 8:51 /mi.",
-    "whatHappened": "8.7 mi on Sunday morning at 8:51 /mi. Average heart rate 146 bpm, max 160 bpm. Cadence 167 and 289 ft of climbing.",
-    "whatItMeans": "146 bpm at 8:51 /mi is a controlled aerobic run. A max of 160 bpm shows no hard surges. This is the steady volume that builds endurance.",
-    "nextStep": "Keep the next two runs easy and follow the plan. Do not add distance this week to make up for anything.",
+    "headline": "8.7 mi in 1:17:00 at 8:51 /mi, 0.3 mi short of the planned 9.0 mi.",
+    "whatHappened": "8.7 mi on Sunday morning at 8:51 /mi against a planned 9.0 mi in 1:21:00. Average heart rate 146 bpm, max 160 bpm. Cadence 167 and 289 ft of climbing.",
+    "whatItMeans": "146 bpm at 8:51 /mi is a controlled aerobic run. A max of 160 bpm shows no hard surges. Being 0.3 mi short changes nothing: this is the steady volume that builds endurance.",
+    "nextStep": "Next is Hill repeats on Tuesday 22 September: 6.0 mi in 55:00, as written. Do not add the missing 0.3 mi to it or to any other run this week.",
     "caution": "none"
   }
 }

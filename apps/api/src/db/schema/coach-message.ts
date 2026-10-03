@@ -1,18 +1,23 @@
+import {
+  type CoachFallbackReason,
+  type CoachFeedback,
+  coachFallbackReasonSchema,
+  coachFeedbackSchema,
+} from "@running-coach/shared";
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
+import { check, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { CoachUsage } from "../../coach/client";
 import { activity } from "./activity";
 import { user } from "./auth";
 import { id, inList, timestamps } from "./columns";
 import { plan } from "./plan";
 
-// Everything the coach wrote: run insights now, weekly reviews and race plans later. Kinds and feedback
-// move to shared zod enums when a route exposes them.
+// Everything the coach wrote: run insights now, weekly reviews and race plans later. Feedback and the
+// fallback reason come from shared zod enums; kinds stay local, because no route exposes them (the
+// insight routes imply "insight").
 
 const COACH_MESSAGE_KINDS = ["insight", "weekly_review", "race_plan"] as const;
-const COACH_MESSAGE_FEEDBACK = ["up", "down"] as const;
 export type CoachMessageKind = (typeof COACH_MESSAGE_KINDS)[number];
-export type CoachMessageFeedback = (typeof COACH_MESSAGE_FEEDBACK)[number];
 
 export const coachMessage = pgTable(
   "coach_message",
@@ -32,19 +37,30 @@ export const coachMessage = pgTable(
     model: text("model"),
     // The prompt's output schema, or its fallback card in the same shape.
     content: jsonb("content").notNull(),
-    feedback: text("feedback").$type<CoachMessageFeedback>(),
+    // Why content is the fallback card; null when the model wrote it.
+    fallbackReason: text("fallback_reason").$type<CoachFallbackReason>(),
+    feedback: text("feedback").$type<CoachFeedback>(),
     // Null when no call was made (no key); set for a failed call too, because it was billed.
     usage: jsonb("usage").$type<CoachUsage>(),
     ...timestamps(),
   },
   (table) => [
     index("coach_message_user_id_idx").on(table.userId),
+    // For the cascade from activity, whose delete does not filter on kind.
     index("coach_message_activity_id_idx").on(table.activityId),
+    // At most one insight per run: the card is upserted on this, so a job firing twice never makes two.
+    uniqueIndex("coach_message_insight_activity_id_idx")
+      .on(table.activityId)
+      .where(sql`${table.kind} = 'insight'`),
     index("coach_message_plan_id_idx").on(table.planId),
     check("coach_message_kind_check", sql`${table.kind} in (${inList(COACH_MESSAGE_KINDS)})`),
     check(
       "coach_message_feedback_check",
-      sql`${table.feedback} in (${inList(COACH_MESSAGE_FEEDBACK)})`,
+      sql`${table.feedback} in (${inList(coachFeedbackSchema.options)})`,
+    ),
+    check(
+      "coach_message_fallback_reason_check",
+      sql`${table.fallbackReason} in (${inList(coachFallbackReasonSchema.options)})`,
     ),
   ],
 );

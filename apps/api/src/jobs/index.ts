@@ -1,4 +1,5 @@
 import type { WorkOptions } from "pg-boss";
+import * as analyzeRun from "./analyze-run";
 import * as bestEfforts from "./best-efforts";
 import { startBoss, stopBoss } from "./boss";
 import * as importHistory from "./import-history";
@@ -55,6 +56,12 @@ export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
         })
       : undefined,
   );
+
+  await boss.createQueue(analyzeRun.name, analyzeRun.queue);
+  // With metadata, so the job knows its last attempt (retryCount against retryLimit).
+  await boss.work(analyzeRun.name, { ...work, includeMetadata: true }, async ([job]) =>
+    job ? analyzeRun.handle(job) : undefined,
+  );
 }
 
 export async function stopJobs(): Promise<void> {
@@ -75,3 +82,6 @@ export { enqueueBestEfforts } from "./best-efforts-queue";
 
 /** Queues a push of the user's next seven days to Garmin unless one waits (push-workouts-queue.ts). */
 export { enqueuePushWorkouts } from "./push-workouts-queue";
+
+/** Queues the coach's card for one run unless a job for it waits (analyze-run-queue.ts). */
+export { enqueueAnalyzeRun } from "./analyze-run-queue";

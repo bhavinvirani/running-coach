@@ -17,6 +17,8 @@ const log = logger.child({ module: "coach" });
 
 export const INSIGHT_MAX_TOKENS = 4096;
 export const PLAN_MAX_TOKENS = 16_384;
+/** The key check is free and the user waits for it on Settings, so it gets far less than a message. */
+export const CLAUDE_KEY_CHECK_TIMEOUT_MS = 10_000;
 
 const DEFAULT_BASE_URL = "https://api.anthropic.com";
 const RETRY_BASE_DELAY_MS = 1000;
@@ -53,6 +55,19 @@ export interface CoachCall<T extends z.ZodType> {
   maxTokens: number;
 }
 
+/** A client on the user's key alone: never a token or base URL from the server's environment. */
+function clientFor(apiKey: string, timeout: number): Anthropic {
+  return new Anthropic({
+    apiKey,
+    authToken: null,
+    baseURL: config.CLAUDE_BASE_URL ?? DEFAULT_BASE_URL,
+    timeout,
+    // Retries are the caller's: callCoach moves its one retry to the fallback model, the key check has none.
+    maxRetries: 0,
+    logLevel: "off",
+  });
+}
+
 const promptCache = new Map<string, string>();
 
 /** A prompt file, read once per process. */
@@ -78,12 +93,23 @@ function isRetryable(error: unknown): boolean {
   return false;
 }
 
-function failureOf(error: unknown): CoachFailure | undefined {
+/** What a thrown SDK error means, for a message and the key check alike; undefined is not Claude's. */
+function failureOf(error: unknown): "timeout" | "key_invalid" | "unavailable" | undefined {
   if (error instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
   if (error instanceof Anthropic.AuthenticationError) return "key_invalid";
   if (error instanceof Anthropic.PermissionDeniedError) return "key_invalid";
+  // Any other status (429, 5xx, 529) or a dropped connection: Claude, not the key.
   if (error instanceof Anthropic.APIError) return "unavailable";
   return undefined;
+}
+
+/** The status and Claude's request id of a failed call, for the log. */
+function errorContext(error: unknown): { status: number | null; claudeRequestId: string | null } {
+  if (!(error instanceof Anthropic.APIError)) return { status: null, claudeRequestId: null };
+  return {
+    status: typeof error.status === "number" ? error.status : null,
+    claudeRequestId: error.requestID ?? null,
+  };
 }
 
 type Parsed<T> = { ok: true; output: T } | { ok: false; issues: string[] };
@@ -119,16 +145,7 @@ export async function callCoach<T extends z.ZodType>(
 ): Promise<CoachResult<z.output<T>>> {
   const system = await loadPrompt(call.prompt, call.version);
   const promptVersion = `${call.prompt}/${call.version}`;
-  const client = new Anthropic({
-    apiKey: call.apiKey,
-    // Only the user's key: never a token or base URL from the server's environment.
-    authToken: null,
-    baseURL: config.CLAUDE_BASE_URL ?? DEFAULT_BASE_URL,
-    timeout: config.CLAUDE_TIMEOUT_MS,
-    // Retries are ours, below, so the fallback model takes the second attempt.
-    maxRetries: 0,
-    logLevel: "off",
-  });
+  const client = clientFor(call.apiKey, config.CLAUDE_TIMEOUT_MS);
   const requestId = currentRequestId();
   const models = [config.COACH_MODEL, config.COACH_FALLBACK_MODEL];
 
@@ -186,12 +203,7 @@ export async function callCoach<T extends z.ZodType>(
         requestId: context.claudeRequestId,
       };
     } catch (error) {
-      const status =
-        error instanceof Anthropic.APIError && typeof error.status === "number"
-          ? error.status
-          : null;
-      const claudeRequestId =
-        error instanceof Anthropic.APIError ? (error.requestID ?? null) : null;
+      const { status, claudeRequestId } = errorContext(error);
       if (isRetryable(error) && attempt < models.length - 1) {
         log.warn({ promptVersion, model, status, claudeRequestId }, "coach call failed; retrying");
         await sleep(RETRY_BASE_DELAY_MS + Math.random() * RETRY_BASE_DELAY_MS);
@@ -205,4 +217,33 @@ export async function callCoach<T extends z.ZodType>(
   }
   // Unreachable: the last attempt always returns or throws.
   throw new Error("coach call ended without a result");
+}
+
+/** What Claude said about a key: it works, it was rejected (401 or 403), or Claude could not tell us. */
+export type ClaudeKeyCheck = "ok" | "key_invalid" | "unavailable" | "timeout";
+
+/**
+ * Checks a key with GET /v1/models, which costs nothing, before it is stored. One try: the user is
+ * waiting on Settings and can press Save again. The wait is CLAUDE_KEY_CHECK_TIMEOUT_MS, or the message
+ * timeout when that is shorter (tests). Logs the status and Claude's request id, never the key.
+ */
+export async function checkClaudeKey(apiKey: string): Promise<ClaudeKeyCheck> {
+  const client = clientFor(apiKey, Math.min(CLAUDE_KEY_CHECK_TIMEOUT_MS, config.CLAUDE_TIMEOUT_MS));
+  const requestId = currentRequestId();
+  const started = Date.now();
+  try {
+    const { request_id: claudeRequestId } = await client.models
+      .list({ limit: 1 }, requestId ? { headers: { "x-request-id": requestId } } : undefined)
+      .withResponse();
+    log.info({ claudeRequestId, durationMs: Date.now() - started }, "claude key accepted");
+    return "ok";
+  } catch (error) {
+    const result = failureOf(error);
+    if (!result) throw error;
+    log.warn(
+      { ...errorContext(error), result, durationMs: Date.now() - started },
+      "claude key check failed",
+    );
+    return result;
+  }
 }

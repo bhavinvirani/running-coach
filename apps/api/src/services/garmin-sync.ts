@@ -15,6 +15,7 @@ import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
 import { queueBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
+import { queueRunInsights } from "./insights";
 
 const log = logger.child({ module: "garmin-sync" });
 
@@ -95,7 +96,23 @@ export async function upsertActivities(
   summaries: GarminActivitySummary[],
   executor: Db | DbTransaction = db,
 ): Promise<number> {
-  if (summaries.length === 0) return 0;
+  return (await writeActivities(userId, summaries, executor)).written;
+}
+
+export interface WrittenActivities {
+  /** Rows inserted or changed. */
+  written: number;
+  /** Ids of the rows inserted, not changed: the runs new to the app. */
+  insertedIds: string[];
+}
+
+/** upsertActivities, also telling the inserted rows from the changed ones. */
+export async function writeActivities(
+  userId: string,
+  summaries: GarminActivitySummary[],
+  executor: Db | DbTransaction = db,
+): Promise<WrittenActivities> {
+  if (summaries.length === 0) return { written: 0, insertedIds: [] };
   const rows = await executor
     .insert(activity)
     .values(
@@ -134,8 +151,12 @@ export async function upsertActivities(
         sql`, `,
       )})`,
     })
-    .returning({ id: activity.id });
-  return rows.length;
+    // xmax is 0 on a row this statement inserted and set on one its ON CONFLICT updated.
+    .returning({ id: activity.id, inserted: sql<boolean>`(xmax = 0)` });
+  return {
+    written: rows.length,
+    insertedIds: rows.filter((row) => row.inserted).map((row) => row.id),
+  };
 }
 
 /** Where the next sync starts: the day before the last synced one, or 30 days back the first time. */
@@ -226,9 +247,9 @@ async function saveChunk(
   userId: string,
   response: { activities: GarminActivitySummary[]; recent: GarminRecentRuns | null },
   cursor: Date,
-): Promise<{ written: number; removed: number }> {
+): Promise<WrittenActivities & { removed: number }> {
   return db.transaction(async (tx) => {
-    const written = await upsertActivities(userId, response.activities, tx);
+    const { written, insertedIds } = await writeActivities(userId, response.activities, tx);
     // Null when not asked for (an earlier chunk) or when Garmin would not list them: nothing is checked.
     const removed = response.recent
       ? await removeRunsDeletedOnGarmin(userId, response.recent, tx)
@@ -237,7 +258,7 @@ async function saveChunk(
     await recordGarminSuccess(tx, userId, {
       lastSyncAt: sql`greatest(${garminConnection.lastSyncAt}, ${cursor.toISOString()}::timestamptz)`,
     });
-    return { written, removed };
+    return { written, insertedIds, removed };
   });
 }
 
@@ -275,13 +296,18 @@ export function syncGarmin(input: SyncGarminInput): Promise<SyncGarminResult> {
  * the finished chunks and the cursor, and the next run resumes there. A bundle Garmin rotated is written
  * back the moment the client hands it over, before the call returns or throws, because the old refresh
  * token no longer works. A finished sync then queues the user's best efforts when runs are pending,
- * outside the lock the batch also takes.
+ * outside the lock the batch also takes, and the coach's card for each run it inserted that started in
+ * the last INSIGHT_WINDOW_DAYS, when the user has a Claude key (queueRunInsights).
  */
 async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGarminResult> {
+  // Runs new to the app across chunks, and the clock the sync read today from, for the coach below.
+  const insertedIds: string[] = [];
+  let clock = now ?? new Date();
   const synced = await withUserLock(userId, async () => {
     const account = await openGarminAccount(userId);
     const timeZone = account.connection.timezone;
-    const today = localDateOf(now ?? new Date(), timeZone);
+    clock = now ?? new Date();
+    const today = localDateOf(clock, timeZone);
     const startDate = syncStartDate(account.connection.lastSyncAt, timeZone, today);
     const chunks = dateChunks(startDate, today, SYNC_CHUNK_DAYS);
     let activitiesSeen = 0;
@@ -312,6 +338,7 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
       const saved = await saveChunk(userId, response, cursor);
       activitiesWritten += saved.written;
       activitiesRemoved += saved.removed;
+      insertedIds.push(...saved.insertedIds);
     }
 
     const result = {
@@ -324,6 +351,10 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
     };
     log.info({ userId, ...result }, "garmin sync finished");
     return result;
+  }).finally(async () => {
+    // The coach for the runs this sync inserted, never one it updated; the history import queues none.
+    // Also after a failed chunk: the runs the chunks before it stored would not be new to the next sync.
+    await queueRunInsights(userId, insertedIds, clock);
   });
   // Also when this sync wrote nothing: runs left pending by an earlier stop (an expired login since
   // reconnected, a rule version bump) start again here.

@@ -13,7 +13,11 @@
       "isIndoor": false,
       "isManual": false
     },
-    "settings": { "units": "km", "coachDetail": "standard" }
+    "settings": {
+      "units": "km",
+      "coachDetail": "standard"
+    },
+    "plan": null
   },
   "output": {
     "headline": "10.2 km at 5:24 /km with an average heart rate of 178 bpm.",
