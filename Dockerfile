@@ -22,12 +22,13 @@ ENV CI=true \
 RUN corepack enable pnpm
 WORKDIR /app
 
-# Dependencies from the lockfile alone, so this layer survives every source change.
+# Dependencies from the lockfile alone, so this layer survives every source change. The coach service has
+# its own image (apps/coach/Dockerfile), so its Claude Code binary is never linked or built here.
 FROM pnpm AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN corepack install && pnpm fetch
 COPY . .
-RUN pnpm install --frozen-lockfile --offline
+RUN pnpm install --frozen-lockfile --offline --filter '!@running-coach/coach'
 
 FROM deps AS build
 # Render passes service env vars as build args; Vite inlines VITE_* into the bundle.

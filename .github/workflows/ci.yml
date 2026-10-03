@@ -246,6 +246,46 @@ jobs:
       - name: Image logs
         if: always()
         run: docker logs app || true
+      # The coach service's own image (the owner's Claude plan through Claude Code). Its own cache scope, so
+      # the two images never evict each other's layers.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/coach/Dockerfile
+          load: true
+          tags: running-coach-coach:ci
+          cache-from: type=gha,scope=coach
+          cache-to: type=gha,mode=max,scope=coach
+      # Boot it the way Render runs it (production, its own PORT, 512 MB and no swap) with a placeholder
+      # token: /health answers without the secret, a run without it is 401 and starts no Claude Code, and
+      # the process runs as the node user. No call ever reaches Claude.
+      - name: Smoke test the coach image
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=http://localhost:10001
+          docker run -d --name coach --network host --memory 512m --memory-swap 512m \
+            -e PORT=10001 \
+            -e NODE_ENV=production \
+            -e LOG_LEVEL=info \
+            -e COACH_SERVICE_SECRET="$(openssl rand -hex 32)" \
+            -e CLAUDE_CODE_OAUTH_TOKEN=ci-smoke-placeholder-not-a-token \
+            running-coach-coach:ci
+          for _ in $(seq 1 30); do
+            curl -fs -o /dev/null "$base/health" && break
+            sleep 1
+          done
+          test "$(curl -fsS "$base/health")" = '{"status":"ok"}'
+          status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{}' "$base/v1/run")"
+          test "$status" = "401"
+          test "$(docker exec coach id -u)" = "1000"
+          processes="$(docker top coach -o pid,uid,rss,args)"
+          echo "$processes"
+          awk 'NR > 1 && $2 == 0 { root = 1 } END { exit root }' <<<"$processes"
+          if grep -q claude <<<"$processes"; then echo "a refused run started Claude Code"; exit 1; fi
+      - name: Coach image logs
+        if: always()
+        run: docker logs coach || true
 
   # Not a required check, and PR-only: on main it would hold every deploy hostage to a new advisory.
   audit:

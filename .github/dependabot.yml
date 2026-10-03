@@ -1,4 +1,5 @@
-# Weekly updates. dependabot-auto-merge.yml merges patch and minor once CI is green, except garminconnect.
+# Weekly updates. dependabot-auto-merge.yml merges patch and minor once CI is green, except garminconnect
+# and the Claude Agent SDK.
 # The 7-day cooldown keeps auto-merge away from fresh releases, the window in which hijacked packages
 # get caught and yanked. Security updates skip it.
 version: 2
@@ -12,6 +13,8 @@ updates:
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
+        # The SDK bundles Claude Code: plan-token auth and its frames are re-checked by a human, own PR.
+        exclude-patterns: ["@anthropic-ai/claude-agent-sdk*"]
 
   - package-ecosystem: uv
     directory: /services/garmin

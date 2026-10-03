@@ -4,6 +4,8 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+packageExtensionsChecksum: sha256-YoM8W/8BXc5gd2/ej7gBDg/b9jqOmg3Bqzib4RFuePY=
+
 importers:
 
   .:
@@ -138,6 +140,37 @@ importers:
       vitest:
         specifier: 5.0.3
         version: 5.0.3(@types/node@24.19.1)(@vitest/coverage-v8@5.0.3)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.2(@types/node@24.19.1)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
+
+  apps/coach:
+    dependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: 0.3.288
+        version: 0.3.288(@anthropic-ai/sdk@0.131.0(zod@4.6.5))(zod@4.6.5)
+      '@running-coach/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      pino:
+        specifier: 10.3.1
+        version: 10.3.1
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
+      tsup:
+        specifier: 8.5.1
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.28)(tsx@4.23.15)(typescript@6.0.3)
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.19.1)(@vitest/coverage-v8@5.0.3)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.2(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
 
   apps/web:
     dependencies:
@@ -293,6 +326,63 @@ packages:
 
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
+
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.288':
+    resolution: {integrity: sha512-85niGScWj8sr7yqOjSfqINaKv/zB47T45o4NBq1BmpaKRYFK7grtK24LA6C7cjx1Pznp+WT68mo373fbbwFW0A==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.288':
+    resolution: {integrity: sha512-hY8MQtgAi+cRedFb+qSqZzAYXIfjC+ZiXtCxKCs4OqWbqrdVZ0GKcEv4nB6MfQGs/Qr4U24cDNuO2lskBbZAWA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.288':
+    resolution: {integrity: sha512-66MD4hzNTqrTL5MN21bSfxm/fhbnM+ERsmWHGEsJojxAWY5DXCUlDkaAYM0rxDpdvLMVt9PpRVIiWDptaiFPxA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.288':
+    resolution: {integrity: sha512-CCj0xau64T+Ia+X2wZgjYFSUIWfNJRWIGFbT8+jKiCzQggaBo6OSZ8hAYyME3h13JYrgpyrUTzB5YiwKaw8ZFg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.288':
+    resolution: {integrity: sha512-g3HDERLfEamirfp+MJDVl1fT8YYQMILUH65jPzl+SzKLeBu26WmAXAoZFmU4dasEmKZkEnBdL0ZQy3qnDy5EXg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.288':
+    resolution: {integrity: sha512-Y5M496UZKttScbzptA45NI+CMHYONnskw0aq3rJ6s+gE6L6Jy8F8UoKt0lQO11R5xTY65TIeCasjQf/bLavuNg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.288':
+    resolution: {integrity: sha512-ijVSU5Vl1L1SlEm1djPNEekxHm9FS5GOitz8kL8KLdYDspMA97bgFM4gy/+riA3qn4ERepJkjdDLE+oYMTO+UA==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.288':
+    resolution: {integrity: sha512-zh4yfGduDEBKUqb3BPtq/cLYwHoScqm7X5fJhmkSs0BJiSJGlb38j6FXWDvoPfe+OXNjE5onNx5HlAnDzsQzrA==}
+    cpu: [x64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk@0.3.288':
+    resolution: {integrity: sha512-W0axvKSBKC8E1rMvriV8NVMFfNv8uwN3HnJxUiFLJOQcJLp1MDp0SoAugkAKTn3WLx3JnqCxxME6bGvfNJzJoA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      '@anthropic-ai/sdk': '>=0.93.0'
+      '@modelcontextprotocol/sdk': ^1.29.0
+      zod: ^4.0.0
+    peerDependenciesMeta:
+      '@anthropic-ai/sdk':
+        optional: true
+      '@modelcontextprotocol/sdk':
+        optional: true
 
   '@anthropic-ai/sdk@0.131.0':
     resolution: {integrity: sha512-9+PepoU7qVMmM70jSahdnfcMHAvAnzhMOLv2W9WjRLO+OG/MAiBETkwKZqv7KIJ1Cj5h8eZ019bHzZaq+Mbepw==}
@@ -6403,6 +6493,44 @@ snapshots:
 
   '@adobe/css-tools@4.5.0': {}
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.288':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk@0.3.288(@anthropic-ai/sdk@0.131.0(zod@4.6.5))(zod@4.6.5)':
+    dependencies:
+      zod: 4.6.5
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.288
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.288
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.288
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.288
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.288
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.288
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.288
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.288
+      '@anthropic-ai/sdk': 0.131.0(zod@4.6.5)
+
   '@anthropic-ai/sdk@0.131.0(zod@4.6.5)':
     dependencies:
       json-schema-to-ts: 3.1.1
@@ -9189,7 +9317,7 @@ snapshots:
       obug: 2.2.1
       std-env: 4.3.0
       tinyrainbow: 3.2.0
-      vitest: 5.0.3(@types/node@24.19.1)(@vitest/coverage-v8@5.0.3)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.2(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
+      vitest: 5.0.3(@types/node@24.19.1)(@vitest/coverage-v8@5.0.3)(jsdom@30.1.1(@noble/hashes@2.4.0))(vite@8.3.2(@types/node@24.19.1)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
 
   '@vitest/istanbul-lib-coverage@1.0.2': {}
 

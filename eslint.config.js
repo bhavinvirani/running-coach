@@ -109,6 +109,7 @@ export default tseslint.config(
         { type: "api-route", pattern: "apps/api/src/routes" },
         { type: "api-db", pattern: "apps/api/src/db" },
         { type: "api", pattern: "apps/api" },
+        { type: "coach", pattern: "apps/coach" },
       ],
     },
     rules: {
@@ -138,6 +139,11 @@ export default tseslint.config(
               from: { element: { type: "api-route" } },
               disallow: { to: { element: { type: "api-db" } } },
               message: "Routes never touch the database; call a service.",
+            },
+            // The coach service runs prompts it is sent: shared contracts only, and nothing imports it.
+            {
+              from: { element: { type: "coach" } },
+              allow: { to: { element: { types: ["shared", "coach"] } } },
             },
             { allow: { to: { module: { origin: ["external", "core"] } } } },
           ],
@@ -200,6 +206,21 @@ export default tseslint.config(
           object: "process",
           property: "env",
           message: "Read configuration from src/lib/config.ts.",
+        },
+      ],
+    },
+  },
+  // Coach service: environment variables are read once, in src/config.ts.
+  {
+    files: ["apps/coach/src/**/*.ts"],
+    ignores: ["apps/coach/src/config.ts"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message: "Read configuration from src/config.ts.",
         },
       ],
     },
