@@ -1,5 +1,8 @@
-# Render Blueprint: one free Docker web service holding the SPA, API, worker and Garmin service.
-# Deploys main only after every CI check on the commit passes; migrations run at process start.
+# Render Blueprint: one free Docker web service holding the SPA, API, worker and Garmin service, and a
+# second one, the coach service (apps/coach), that runs the owner's coach on their Claude plan through
+# Claude Code, so its 200-250 MB child process never shares the main service's 512 MB.
+# Both deploy main only after every CI check on the commit passes; migrations run at process start.
+# Both sleep when idle and share the workspace's 750 free hours a month: nothing keeps either awake.
 services:
   - type: web
     name: running-coach
@@ -13,6 +16,10 @@ services:
     healthCheckPath: /health
     previews:
       generation: "off"
+    # The coach service's own files never change this image.
+    buildFilter:
+      ignoredPaths:
+        - apps/coach/**
     envVars:
       - key: NODE_ENV
         value: production
@@ -41,4 +48,47 @@ services:
         sync: false
       # Also passed to the Docker build as a build arg, where Vite inlines it.
       - key: VITE_MAPBOX_TOKEN
+        sync: false
+      # The coach service's onrender.com URL (it can carry a suffix, so it is set by hand). Until it is set
+      # the plan stays off and every user, the owner included, uses their own Claude key.
+      - key: COACH_SERVICE_URL
+        sync: false
+      - key: COACH_SERVICE_SECRET
+        fromService:
+          type: web
+          name: running-coach-coach
+          envVarKey: COACH_SERVICE_SECRET
+
+  - type: web
+    name: running-coach-coach
+    runtime: docker
+    plan: free
+    region: ohio
+    branch: main
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./apps/coach/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    previews:
+      generation: "off"
+    # Rebuilds only when the service, its contract or the lockfile changes.
+    buildFilter:
+      paths:
+        - apps/coach/**
+        - packages/shared/**
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      # The API sends it in x-coach-secret; Render generates it once and hands it to the main service.
+      - key: COACH_SERVICE_SECRET
+        generateValue: true
+      # From `claude setup-token` on the owner's laptop (valid a year). The owner's alone: it runs only the
+      # OWNER_EMAIL account's coach, and only Claude Code ever receives it. The service refuses to start
+      # without it.
+      - key: CLAUDE_CODE_OAUTH_TOKEN
         sync: false
