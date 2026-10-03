@@ -1,13 +1,17 @@
 import {
+  ErrorCode,
   insightResponseSchema,
   latestActivityResponseSchema,
   meResponseSchema,
   type InsightResponse,
+  type MeResponse,
+  type Problem,
 } from "@running-coach/shared";
 import type { Locator, Page, Response } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
 import {
   fakeClaudeCalls,
+  fakeClaudeCodeRuns,
   fakeClaudeKey,
   fixtureRunIds,
   longRunFallbackInsight,
@@ -19,8 +23,11 @@ import {
 } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
-// The coach against the fake Claude playwright.config.ts starts: a key "test-<fixture>.<nonce>" picks the
-// fixture it answers with (apps/api/test/fixtures/claude). No test connects Garmin, so no app-open sync runs.
+// The coach against the fakes playwright.config.ts starts: on a key, the fake Claude, where a key
+// "test-<fixture>.<nonce>" picks the fixture it answers with (apps/api/test/fixtures/claude); on the owner's
+// Claude plan, the coach service over the fake Claude Code CLI, which answers every run with one card. The
+// runner is the owner and the coach service is set up, so Settings always offers the plan, and every test
+// starts on a key. No test connects Garmin, so no app-open sync runs.
 
 /**
  * The card the fake Claude's "valid" fixture writes (apps/api/test/fixtures/claude/valid.json), as the
@@ -35,16 +42,56 @@ const validCard = {
   caution: "Make the next run easy",
 } as const;
 
-/** The analyze-run worker polls every 2 s and the screen reads the card every 3 s while it waits. */
+/**
+ * The card the fake Claude Code CLI writes on the plan (CARD in apps/coach/test/fake-claude-code.mjs), as
+ * the run screen shows it. Its caution is none, so no caution line.
+ */
+const planCard = {
+  headline: "Easy 8.0 km at 5:30 per km, heart rate 146 bpm",
+  whatHappened:
+    "You ran 8.0 km in 44:00 at an even 5:30 per km. Average heart rate 146 bpm, in your easy zone.",
+  whatItMeans:
+    "Pace and heart rate matched the easy run planned for today. Aerobic work with no extra fatigue.",
+  nextStep: "Rest tomorrow. Thursday's 6 x 800 m intervals stay as planned.",
+} as const;
+
+/** What the Claude card says in place of the key form while the plan is chosen. */
+const planLine =
+  "The coach runs on your Claude plan, through the coach service. Each review counts toward your plan's usage limits.";
+
+/**
+ * The analyze-run worker polls every 2 s and the screen reads the card every 3 s while it waits; on the
+ * plan the coach service's run of the fake CLI takes about a second more.
+ */
 const CARD_TIMEOUT_MS = 15_000;
 
 function region(page: Page, title: string): Locator {
   return page.getByRole("region", { name: title, exact: true });
 }
 
-async function hasClaudeKey(page: Page): Promise<boolean> {
+async function getSettings(page: Page): Promise<MeResponse["settings"]> {
   const me = meResponseSchema.parse(await (await page.request.get("/api/me")).json());
-  return me.settings.hasClaudeKey;
+  return me.settings;
+}
+
+async function hasClaudeKey(page: Page): Promise<boolean> {
+  return (await getSettings(page)).hasClaudeKey;
+}
+
+const isSaveSettings = (response: Response) =>
+  response.request().method() === "PATCH" && response.url().endsWith("/api/me/settings");
+
+/**
+ * Taps a choice under "Coach uses" in the Claude card and returns the save's answer. The radio itself is
+ * visually hidden; a thumb taps its label.
+ */
+async function chooseCredential(page: Page, label: "Claude plan" | "API key"): Promise<Response> {
+  const saved = page.waitForResponse(isSaveSettings);
+  await region(page, "Claude")
+    .getByRole("group", { name: "Coach uses" })
+    .getByText(label, { exact: true })
+    .click();
+  return saved;
 }
 
 /** A seeded run with its laps and route, so the screen never asks Garmin, which no test connects. */
@@ -94,7 +141,7 @@ async function expectValidCard(coach: Locator): Promise<void> {
 test("saves a key Claude accepts, keeps it after a reload, and removes it", async ({ page }) => {
   const key = fakeClaudeKey("valid");
   await page.goto("/settings");
-  const section = region(page, "Claude key");
+  const section = region(page, "Claude");
   const field = section.getByLabel("Claude API key");
 
   await field.fill(key);
@@ -128,7 +175,7 @@ test("a key Claude rejects says what to do, stays in the field to fix, and is no
 }) => {
   const rejected = fakeClaudeKey("key-invalid");
   await page.goto("/settings");
-  const section = region(page, "Claude key");
+  const section = region(page, "Claude");
   const field = section.getByLabel("Claude API key");
 
   await field.fill(rejected);
@@ -260,10 +307,8 @@ test("a fallback card for a rejected key offers Replace key, which opens Setting
 
   await coach.getByRole("link", { name: "Replace key" }).click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(region(page, "Claude key").getByText("Saved", { exact: true })).toBeVisible();
-  await expect(
-    region(page, "Claude key").getByRole("button", { name: "Replace key" }),
-  ).toBeVisible();
+  await expect(region(page, "Claude").getByText("Saved", { exact: true })).toBeVisible();
+  await expect(region(page, "Claude").getByRole("button", { name: "Replace key" })).toBeVisible();
 });
 
 test("without a key the run offers only Add Claude key, which opens Settings", async ({ page }) => {
@@ -281,5 +326,141 @@ test("without a key the run offers only Add Claude key, which opens Settings", a
   await coach.getByRole("link", { name: "Add Claude key" }).click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
   await expect(page).toHaveURL(/\/settings$/);
-  await expect(region(page, "Claude key").getByLabel("Claude API key")).toBeVisible();
+  await expect(region(page, "Claude").getByLabel("Claude API key")).toBeVisible();
+});
+
+test("the owner picks the Claude plan, which replaces the key form and stays after a reload, and API key brings it back", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+  const section = region(page, "Claude");
+  const choice = section.getByRole("group", { name: "Coach uses" });
+  const plan = choice.getByRole("radio", { name: "Claude plan", exact: true });
+  const apiKey = choice.getByRole("radio", { name: "API key", exact: true });
+  const field = section.getByLabel("Claude API key");
+
+  // Every test starts on a key, and none is saved: the key form is what to fill in.
+  await expect(apiKey).toBeChecked();
+  await expect(field).toBeVisible();
+  expect(await getSettings(page)).toMatchObject({
+    claudePlanAvailable: true,
+    coachCredential: "none",
+  });
+
+  expect((await chooseCredential(page, "Claude plan")).ok()).toBe(true);
+  await expect(plan).toBeChecked();
+  await expect(section.getByText(planLine, { exact: true })).toBeVisible();
+  await expect(field).toHaveCount(0);
+  await expect(section.getByRole("button", { name: "Save key" })).toHaveCount(0);
+  expect(await getSettings(page)).toMatchObject({ coachCredential: "plan", hasClaudeKey: false });
+
+  await page.reload();
+  await expect(plan).toBeChecked();
+  await expect(section.getByText(planLine, { exact: true })).toBeVisible();
+  await expect(field).toHaveCount(0);
+
+  expect((await chooseCredential(page, "API key")).ok()).toBe(true);
+  await expect(apiKey).toBeChecked();
+  await expect(field).toBeVisible();
+  await expect(field).toHaveValue("");
+  await expect(section.getByRole("button", { name: "Save key" })).toBeVisible();
+  await expect(section.getByText(planLine, { exact: true })).toHaveCount(0);
+  expect(await getSettings(page)).toMatchObject({ coachCredential: "none" });
+});
+
+test("a Claude plan the server no longer offers says to use an API key and keeps the key form", async ({
+  page,
+}) => {
+  // Settings offered the plan from /api/me, and the server stopped offering it before the tap.
+  const refusal = {
+    type: "about:blank",
+    title: "Conflict",
+    status: 409,
+    code: ErrorCode.claudePlanUnavailable,
+    requestId: "e2e-plan-unavailable",
+  } satisfies Problem;
+  await page.route("**/api/me/settings", (route) =>
+    route.request().method() === "PATCH"
+      ? route.fulfill({
+          status: refusal.status,
+          contentType: "application/problem+json",
+          body: JSON.stringify(refusal),
+        })
+      : route.continue(),
+  );
+  await page.goto("/settings");
+  const section = region(page, "Claude");
+  const apiKey = section
+    .getByRole("group", { name: "Coach uses" })
+    .getByRole("radio", { name: "API key", exact: true });
+
+  expect((await chooseCredential(page, "Claude plan")).status()).toBe(409);
+
+  await expect(section.getByRole("alert")).toHaveText(errorMessages.claude_plan_unavailable);
+  await expect(apiKey).toBeChecked();
+  await expect(section.getByLabel("Claude API key")).toBeVisible();
+  await expect(section.getByText(planLine, { exact: true })).toHaveCount(0);
+  expect(await getSettings(page)).toMatchObject({ coachCredential: "none" });
+});
+
+test("on the Claude plan without a key, Ask the coach gets the run's card from the coach service, and a thumbs up stays", async ({
+  page,
+}) => {
+  await seedRun();
+  // Picking the plan in Settings has its own test; here the run is what is under test.
+  const chosen = await page.request.patch("/api/me/settings", {
+    data: { coachCredential: "plan" },
+  });
+  expect(chosen.ok()).toBe(true);
+  const runsBefore = await fakeClaudeCodeRuns();
+  const runId = await openSeededRun(page);
+  const coach = region(page, "Coach");
+
+  // The plan is a credential: the run offers Ask the coach, not Add Claude key.
+  await expect(coach.getByText("No coach review for this run yet.", { exact: true })).toBeVisible();
+  await expect(coach.getByRole("link", { name: "Add Claude key" })).toHaveCount(0);
+  const asked = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().endsWith(`/${runId}/insight`),
+  );
+  await coach.getByRole("button", { name: "Ask the coach" }).click();
+  expect((await asked).ok()).toBe(true);
+  await expect(coach.getByRole("status")).toContainText("The coach is reviewing this run.");
+
+  await expect(coach.getByText(planCard.headline, { exact: true })).toBeVisible({
+    timeout: CARD_TIMEOUT_MS,
+  });
+  await expect(coach.getByRole("heading", { level: 3 })).toHaveText([
+    "What happened",
+    "What it means",
+    "Next",
+  ]);
+  await expect(coach.getByText(planCard.whatHappened, { exact: true })).toBeVisible();
+  await expect(coach.getByText(planCard.whatItMeans, { exact: true })).toBeVisible();
+  await expect(coach.getByText(planCard.nextStep, { exact: true })).toBeVisible();
+  await expect(coach.getByRole("status")).toHaveCount(0);
+  await expect(coach.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  // The model's card, not a fallback: written by one run of Claude Code in the coach service, with no
+  // key anywhere.
+  expect(await getInsight(page, runId)).toMatchObject({
+    state: "ready",
+    insight: { fallbackReason: null, feedback: null, content: { headline: planCard.headline } },
+  });
+  expect(await fakeClaudeCodeRuns()).toBe(runsBefore + 1);
+  expect(await storedClaudeKey()).toBeNull();
+
+  const helpful = coach.getByRole("button", { name: "Helpful", exact: true });
+  await expect(coach.getByRole("button", { name: "Not helpful", exact: true })).toBeVisible();
+  const rated = page.waitForResponse(
+    (response) => response.request().method() === "PUT" && response.url().endsWith("/feedback"),
+  );
+  await helpful.click();
+  expect((await rated).ok()).toBe(true);
+  await expect(helpful).toHaveAttribute("aria-pressed", "true");
+
+  await page.reload();
+  await expect(coach.getByText(planCard.headline, { exact: true })).toBeVisible();
+  await expect(helpful).toHaveAttribute("aria-pressed", "true");
+  // Opened again, the run shows the stored card: no second run.
+  expect(await fakeClaudeCodeRuns()).toBe(runsBefore + 1);
 });

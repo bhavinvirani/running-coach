@@ -1,7 +1,9 @@
+import path from "node:path";
 import { defineConfig, type Project } from "@playwright/test";
 import {
   e2eDatabaseUrl,
   e2eMasterKey,
+  fakeClaudeCodeToken,
   fakeClaudePort,
   fakeClaudeUrl,
   runner,
@@ -10,10 +12,16 @@ import {
 // Flows (`pnpm test:e2e`) drive a local Chromium. Screens (`pnpm test:screens`) drive the Chromium inside the
 // official Playwright image through e2e/run-screens.ts, so host fonts and rendering never reach a baseline.
 // Both hit the production web build served by the API in Garmin fixture mode, on the e2e database, and
-// the coach on a local fake Claude.
+// the coach on a local fake Claude: the Messages API for a key, and the coach service over a fake Claude
+// Code CLI for the owner's Claude plan.
 
 const PORT = 4173;
 const baseURL = `http://localhost:${PORT}`;
+
+// Not dev's 8777, so e2e runs next to `pnpm dev`.
+const COACH_SERVICE_PORT = 8778;
+// A fake value for e2e only; the API sends it to the coach service in x-coach-secret.
+const coachServiceSecret = "e2e-only-coach-service-secret-not-for-production";
 
 /** Set only by e2e/run-screens.ts, once the Playwright run-server container answers. */
 const screensEndpoint = process.env.PW_SCREENS_WS_ENDPOINT;
@@ -80,6 +88,33 @@ export default defineConfig({
       stderr: "pipe",
     },
     {
+      name: "coach",
+      // The coach service (apps/coach) as on Render, but running the fake Claude Code CLI instead of the
+      // real one: the fake plan token picks its scenario (fakeClaudeCodeToken in seed.ts), and nothing
+      // ever reaches Anthropic or a Claude plan. With it set up, the API offers the runner, its owner, the
+      // Claude plan.
+      command: "pnpm --filter @running-coach/coach exec tsx src/index.ts",
+      port: COACH_SERVICE_PORT,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
+      // Its pino lines go to stdout, and at LOG_LEVEL error only a failure writes one; Node's own start-up
+      // errors go to stderr.
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        NODE_ENV: "test",
+        PORT: String(COACH_SERVICE_PORT),
+        LOG_LEVEL: "error",
+        COACH_SERVICE_SECRET: coachServiceSecret,
+        CLAUDE_CODE_OAUTH_TOKEN: fakeClaudeCodeToken,
+        CLAUDE_CODE_EXECUTABLE: path.resolve(
+          import.meta.dirname,
+          "../coach/test/fake-claude-code.mjs",
+        ),
+      },
+    },
+    {
       name: "api",
       // The production bundle served by the API from apps/web/dist, as on Render. The build's progress
       // lines are dropped; its warnings and errors go to stderr and still show.
@@ -116,6 +151,11 @@ export default defineConfig({
         // As for Garmin: every test saves keys and asks the coach as the one runner, against the API's six
         // a minute per user, which its integration tests cover.
         COACH_ROUTE_LIMIT: "1000",
+        COACH_SERVICE_URL: `http://127.0.0.1:${COACH_SERVICE_PORT}`,
+        COACH_SERVICE_SECRET: coachServiceSecret,
+        // The service is up before the first test, so the wake-up poll answers at once; should it ever not,
+        // a test waits 200 ms between polls instead of the 5 s meant for Render's sleeping service.
+        COACH_SERVICE_WAKE_POLL_MS: "200",
         OWNER_EMAIL: runner.email,
         OWNER_PASSWORD: runner.password,
         OWNER_NAME: runner.name,

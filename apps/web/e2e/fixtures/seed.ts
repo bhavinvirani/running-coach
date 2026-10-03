@@ -1,4 +1,7 @@
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { expect, type APIRequestContext } from "@playwright/test";
 import { garminWorkout, generatePlan } from "@running-coach/engine";
 import {
@@ -416,6 +419,36 @@ export async function fakeClaudeCalls(
   const response = await request.get(kind === "models" ? `${path}/models` : path);
   if (!response.ok()) throw new Error(`The fake Claude's log answered ${response.status()}`);
   return (await response.json()) as unknown[];
+}
+
+/**
+ * The plan token playwright.config.ts gives the coach service, which hands it to the fake Claude Code CLI
+ * it runs (apps/coach/test/fake-claude-code.mjs): "test-<scenario>.<nonce>", where "success" answers every
+ * run with a valid card of fake data, and the nonce names the log the fake appends to (fakeClaudeCodeRuns).
+ */
+const fakeClaudeCodeNonce = "e2e-plan";
+export const fakeClaudeCodeToken = `test-success.${fakeClaudeCodeNonce}`;
+
+/**
+ * How many times the coach service has started the fake Claude Code CLI so far: each process appends a
+ * "start" line to its log in the shared temp directory (TMPDIR reaches the coach service and its child
+ * from this machine's environment). The log outlives a run, so a test compares counts before and after.
+ */
+export async function fakeClaudeCodeRuns(): Promise<number> {
+  let log: string;
+  try {
+    log = await readFile(
+      path.join(tmpdir(), `fake-claude-code-${fakeClaudeCodeNonce}.jsonl`),
+      "utf8",
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+  return log
+    .split("\n")
+    .filter((line) => line !== "")
+    .filter((line) => (JSON.parse(line) as { event?: unknown }).event === "start").length;
 }
 
 /**
