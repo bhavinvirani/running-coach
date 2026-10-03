@@ -64,6 +64,7 @@ export const defaultSettings = {
   units: "km",
   timezone: "UTC",
   coachDetail: "standard",
+  coachCredential: "key",
 } as const satisfies Required<UpdateSettingsRequest>;
 
 /**

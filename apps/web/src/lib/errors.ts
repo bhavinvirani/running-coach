@@ -22,6 +22,11 @@ export const errorMessages: Record<ErrorCode, string> = {
   claude_key_invalid:
     "Claude rejected this key. Copy it again from the Claude Console and save it.",
   claude_unavailable: "Claude is not responding. Try again in a few minutes.",
+  // Settings offers the plan from a cached /api/me; the server may have stopped offering it since.
+  claude_plan_unavailable:
+    "The Claude plan is not set up for this account. Use an API key instead.",
+  claude_plan_limited:
+    "Your Claude plan has reached its usage limit. The coach tries again when the limit resets.",
   plan_missing: "Workouts read their paces from your plan. Set a goal first.",
   session_locked:
     "This session can no longer change: it is past, done or skipped. Refresh to see it.",

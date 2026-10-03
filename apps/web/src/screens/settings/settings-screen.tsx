@@ -54,7 +54,22 @@ export function SettingsScreen() {
           {errorMessage(screen.updateError)}
         </p>
       ) : null}
-      <ClaudeKeySection hasKey={data.settings.hasClaudeKey} {...screen.claudeKey} />
+      <ClaudeKeySection
+        hasKey={data.settings.hasClaudeKey}
+        credential={
+          data.settings.claudePlanAvailable
+            ? {
+                // Without a key the coach uses nothing (none), and the key form is what to fill in.
+                choice:
+                  screen.coachCredential.pending ??
+                  (data.settings.coachCredential === "plan" ? "plan" : "key"),
+                error: screen.coachCredential.error,
+                choose: screen.coachCredential.choose,
+              }
+            : undefined
+        }
+        {...screen.claudeKey}
+      />
       <GarminSection garmin={data.garmin} timeZone={data.settings.timezone} />
       <AccountSection
         email={data.user.email}

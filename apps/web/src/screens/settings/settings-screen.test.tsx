@@ -1,4 +1,11 @@
-import type { ClaudeKeyRequest, MeResponse, UpdateSettingsRequest } from "@running-coach/shared";
+import type {
+  ClaudeKeyRequest,
+  CoachCredential,
+  CoachCredentialChoice,
+  MeResponse,
+  Settings,
+  UpdateSettingsRequest,
+} from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -16,39 +23,58 @@ type KeyAnswer = "stored" | Response | Promise<Response>;
 
 /**
  * A tiny in-memory /api/me that applies PATCHes and stores or removes the Claude key, like the real API.
- * `saveKey` decides each PUT's answer from the key sent.
+ * `saveKey` decides each PUT's answer from the key sent. Like the API it keeps the runner's choice of
+ * credential and answers what the coach uses now: none for the key without a saved key.
  */
 function fakeMeApi(
   initial: MeResponse,
   { saveKey = () => "stored" }: { saveKey?: (key: string) => KeyAnswer } = {},
 ) {
   let me = initial;
-  const withKey = (hasClaudeKey: boolean) => {
-    me = { ...me, settings: { ...me.settings, hasClaudeKey } };
+  let choice: CoachCredentialChoice = initial.settings.coachCredential === "plan" ? "plan" : "key";
+  const answer = (changes: Partial<Settings>) => {
+    const settings = { ...me.settings, ...changes };
+    const coachCredential = choice === "plan" ? "plan" : settings.hasClaudeKey ? "key" : "none";
+    me = { ...me, settings: { ...settings, coachCredential } };
     return json(me);
   };
   return stubFetch(({ method, path, body }: FakeRequest) => {
     if (method === "GET" && path === "/api/me") return json(me);
     if (method === "PATCH" && path === "/api/me/settings") {
-      me = { ...me, settings: { ...me.settings, ...(body as UpdateSettingsRequest) } };
-      return json(me);
+      const { coachCredential, ...changes } = body as UpdateSettingsRequest;
+      if (coachCredential === "plan" && !me.settings.claudePlanAvailable) {
+        return problem(409, ErrorCode.claudePlanUnavailable);
+      }
+      if (coachCredential !== undefined) choice = coachCredential;
+      return answer(changes);
     }
     if (method === "PUT" && path === "/api/me/claude-key") {
-      const answer = saveKey((body as ClaudeKeyRequest).key);
-      return answer === "stored" ? withKey(true) : answer;
+      const stored = saveKey((body as ClaudeKeyRequest).key);
+      return stored === "stored" ? answer({ hasClaudeKey: true }) : stored;
     }
-    if (method === "DELETE" && path === "/api/me/claude-key") return withKey(false);
+    if (method === "DELETE" && path === "/api/me/claude-key")
+      return answer({ hasClaudeKey: false });
     if (method === "POST" && path === "/api/auth/sign-out") return json({ success: true });
     return notFound();
   });
 }
 
-const withSavedKey = () => meFixture({ settings: { ...meFixture().settings, hasClaudeKey: true } });
+const withSavedKey = () =>
+  meFixture({ settings: { ...meFixture().settings, hasClaudeKey: true, coachCredential: "key" } });
+/** The owner, offered the Claude plan, with the coach on `coachCredential`. */
+const owner = (coachCredential: CoachCredential, hasClaudeKey = false) =>
+  meFixture({
+    settings: { ...meFixture().settings, hasClaudeKey, coachCredential, claudePlanAvailable: true },
+  });
+const PLAN_LINE =
+  "The coach runs on your Claude plan, through the coach service. Each review counts toward your plan's usage limits.";
 /** A fake key in the shape Anthropic issues; never a real one (tests rule). */
 const FAKE_KEY = "sk-ant-api03-fake-key-for-tests-only";
 const RUN_ID = activityFixture().id;
 const claudeKey = () => screen.getByRole("region", { name: "Claude key" });
 const findClaudeKey = () => screen.findByRole("region", { name: "Claude key" });
+const claude = () => screen.getByRole("region", { name: "Claude" });
+const findClaude = () => screen.findByRole("region", { name: "Claude" });
 const keyCalls = (calls: FakeRequest[]) =>
   calls.filter((call) => call.path === "/api/me/claude-key").map((call) => call.method);
 
@@ -404,5 +430,150 @@ describe("SettingsScreen", () => {
     expect(claudeKey().previousElementSibling).toContainElement(
       screen.getByRole("radio", { name: "Standard" }),
     );
+  });
+
+  describe("Coach uses (Claude plan)", () => {
+    it("shows no Coach uses choice and the Claude key card as before when the plan is not offered (claudePlanAvailable false)", async () => {
+      fakeMeApi(meFixture());
+      renderSettings();
+
+      const section = await findClaudeKey();
+      expect(screen.queryByRole("group", { name: "Coach uses" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("radio", { name: "Claude plan" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Claude" })).not.toBeInTheDocument();
+      expect(within(section).getByLabelText("Claude API key")).toBeInTheDocument();
+    });
+
+    it("offers Coach uses: Claude plan or API key, API key chosen while the coach has no key, only when the plan is offered (claudePlanAvailable)", async () => {
+      fakeMeApi(owner("none"));
+      renderSettings();
+
+      const section = await findClaude();
+      const choice = within(section).getByRole("group", { name: "Coach uses" });
+      const radios = within(choice).getAllByRole("radio");
+      expect(radios.map((radio) => radio.closest("label")?.textContent)).toEqual([
+        "Claude plan",
+        "API key",
+      ]);
+      expect(within(choice).getByRole("radio", { name: "API key" })).toBeChecked();
+      // API key chosen: the key form exactly as for every other runner.
+      expect(within(section).getByLabelText("Claude API key")).toHaveAccessibleDescription(
+        /^The coach uses your own Claude API key/,
+      );
+      expect(within(section).queryByText(PLAN_LINE)).not.toBeInTheDocument();
+      const named = screen
+        .getAllByRole("region")
+        .map((region) => region.getAttribute("aria-label"))
+        .filter((name) => name !== null);
+      expect(named).toEqual(["Claude", "Garmin", "Account"]);
+    });
+
+    it("shows one line instead of the key form while the coach uses the Claude plan", async () => {
+      fakeMeApi(owner("plan", true));
+      renderSettings();
+
+      const section = await findClaude();
+      expect(within(section).getByRole("radio", { name: "Claude plan" })).toBeChecked();
+      const line = within(section).getByText(PLAN_LINE);
+      expect(line).toHaveClass("text-body", "text-ink-2");
+      expect(within(section).queryByLabelText("Claude API key")).not.toBeInTheDocument();
+      expect(within(section).queryByText("Saved")).not.toBeInTheDocument();
+      expect(within(section).queryByRole("button")).not.toBeInTheDocument();
+    });
+
+    it("chooses Claude plan with one PATCH coachCredential plan, hides the key form, keeps focus on the choice and reads every run's coach state again", async () => {
+      const calls = fakeMeApi(owner("none"));
+      const { queryClient } = renderSettings();
+      // A run screen opened before cached its coach state.
+      queryClient.setQueryData(insightKey(RUN_ID), { state: "no_key" });
+
+      const plan = within(await findClaude()).getByRole("radio", { name: "Claude plan" });
+      await userEvent.click(plan);
+
+      expect(plan).toBeChecked();
+      expect(within(claude()).getByText(PLAN_LINE)).toBeInTheDocument();
+      expect(within(claude()).queryByLabelText("Claude API key")).not.toBeInTheDocument();
+      await vi.waitFor(() => expect(queryClient.isMutating()).toBe(0));
+      expect(plan).toBeChecked();
+      expect(plan).toHaveFocus();
+      expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+        "GET /api/me",
+        "PATCH /api/me/settings",
+      ]);
+      expect(calls[1]?.body).toEqual({ coachCredential: "plan" });
+      expect(queryClient.getQueryData<MeResponse>(detailKey("me"))?.settings.coachCredential).toBe(
+        "plan",
+      );
+      expect(queryClient.getQueryState(insightKey(RUN_ID))?.isInvalidated).toBe(true);
+    });
+
+    it("chooses API key with one PATCH coachCredential key and shows the key form again", async () => {
+      const calls = fakeMeApi(owner("plan"));
+      renderSettings();
+
+      const section = await findClaude();
+      expect(within(section).queryByLabelText("Claude API key")).not.toBeInTheDocument();
+      await userEvent.click(within(section).getByRole("radio", { name: "API key" }));
+
+      const field = await within(claude()).findByLabelText("Claude API key");
+      expect(field).toHaveValue("");
+      expect(within(claude()).getByRole("button", { name: "Save key" })).toBeDisabled();
+      expect(within(claude()).queryByText(PLAN_LINE)).not.toBeInTheDocument();
+      expect(within(claude()).getByRole("radio", { name: "API key" })).toBeChecked();
+      await vi.waitFor(() =>
+        expect(calls.filter((call) => call.method === "PATCH").map((call) => call.body)).toEqual([
+          { coachCredential: "key" },
+        ]),
+      );
+    });
+
+    it("keeps a saved key while the Claude plan is chosen and shows it as saved on API key", async () => {
+      const calls = fakeMeApi(owner("plan", true));
+      renderSettings();
+
+      await userEvent.click(within(await findClaude()).getByRole("radio", { name: "API key" }));
+
+      expect(await within(claude()).findByText("Saved")).toBeInTheDocument();
+      expect(within(claude()).getByRole("button", { name: "Replace key" })).toBeInTheDocument();
+      expect(keyCalls(calls)).toEqual([]);
+    });
+
+    it("says the plan is not set up and stays on API key when the API answers 409 claude_plan_unavailable", async () => {
+      stubFetch(({ method }) =>
+        method === "PATCH" ? problem(409, ErrorCode.claudePlanUnavailable) : json(owner("none")),
+      );
+      renderSettings();
+
+      await userEvent.click(within(await findClaude()).getByRole("radio", { name: "Claude plan" }));
+
+      const alert = await within(claude()).findByRole("alert");
+      expect(alert).toHaveTextContent(
+        /^The Claude plan is not set up for this account\. Use an API key instead\.$/,
+      );
+      expect(alert).toHaveClass("text-body", "text-ink");
+      // Said in the Claude card, not under units and coach detail.
+      expect(screen.getAllByRole("alert")).toEqual([alert]);
+      expect(within(claude()).getByRole("radio", { name: "API key" })).toBeChecked();
+      expect(within(claude()).getByLabelText("Claude API key")).toBeInTheDocument();
+      expect(within(claude()).queryByText(PLAN_LINE)).not.toBeInTheDocument();
+    });
+
+    it("drops the key form's last error when the choice changes", async () => {
+      fakeMeApi(owner("none"), { saveKey: () => problem(422, ErrorCode.claudeKeyInvalid) });
+      renderSettings();
+
+      const section = await findClaude();
+      await userEvent.type(within(section).getByLabelText("Claude API key"), FAKE_KEY);
+      await userEvent.click(within(section).getByRole("button", { name: "Save key" }));
+      expect(await within(section).findByRole("alert")).toHaveTextContent(
+        errorMessages.claude_key_invalid,
+      );
+
+      await userEvent.click(within(section).getByRole("radio", { name: "Claude plan" }));
+      await userEvent.click(within(section).getByRole("radio", { name: "API key" }));
+
+      expect(await within(claude()).findByLabelText("Claude API key")).toHaveValue("");
+      expect(within(claude()).queryByRole("alert")).not.toBeInTheDocument();
+    });
   });
 });

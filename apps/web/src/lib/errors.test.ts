@@ -27,6 +27,20 @@ describe("errorMessage", () => {
     expect(errorMessage(error)).toBe("Garmin login expired. Reconnect in Settings.");
   });
 
+  it("tells the runner to use an API key when the Claude plan is not offered (409 claude_plan_unavailable)", () => {
+    const error = new ApiError({ status: 409, code: ErrorCode.claudePlanUnavailable });
+    expect(errorMessage(error)).toBe(
+      "The Claude plan is not set up for this account. Use an API key instead.",
+    );
+  });
+
+  it("says the coach waits for the reset when the Claude plan's usage limit is reached (claude_plan_limited)", () => {
+    const error = new ApiError({ status: 429, code: ErrorCode.claudePlanLimited });
+    expect(errorMessage(error)).toBe(
+      "Your Claude plan has reached its usage limit. The coach tries again when the limit resets.",
+    );
+  });
+
   it("explains a network failure separately from a server error", () => {
     const error = new ApiError({ status: 0, code: ErrorCode.internal, network: true });
     expect(errorMessage(error)).toBe(networkErrorMessage);

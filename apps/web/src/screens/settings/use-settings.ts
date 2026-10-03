@@ -1,4 +1,4 @@
-import type { UpdateSettingsRequest } from "@running-coach/shared";
+import type { CoachCredentialChoice, UpdateSettingsRequest } from "@running-coach/shared";
 import { useNavigate } from "react-router";
 import { useMe, useRemoveClaudeKey, useSaveClaudeKey, useUpdateSettings } from "@/api/me";
 import { screenState } from "@/api/screen-state";
@@ -11,6 +11,8 @@ import { useLogOut } from "@/api/session";
 export function useSettingsScreen() {
   const me = useMe();
   const update = useUpdateSettings();
+  // Its own instance, so a failed choice is said in the Claude card, not under units and coach detail.
+  const chooseCredential = useUpdateSettings();
   const logOut = useLogOut();
   const saveKey = useSaveClaudeKey();
   const removeKey = useRemoveClaudeKey();
@@ -22,6 +24,17 @@ export function useSettingsScreen() {
     pendingChanges: update.isPending ? update.variables : undefined,
     updateError: update.error,
     updateSettings: (changes: UpdateSettingsRequest) => update.mutate(changes),
+    coachCredential: {
+      /** The choice in flight, shown at once like the other settings. */
+      pending: chooseCredential.isPending ? chooseCredential.variables.coachCredential : undefined,
+      error: chooseCredential.error,
+      choose: (choice: CoachCredentialChoice) => {
+        // The key form closes or opens with the choice: an error from its last try no longer applies.
+        saveKey.reset();
+        removeKey.reset();
+        chooseCredential.mutate({ coachCredential: choice });
+      },
+    },
     claudeKey: {
       saving: saveKey.isPending,
       saveError: saveKey.error,
