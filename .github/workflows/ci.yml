@@ -217,7 +217,15 @@ jobs:
           test "$(cache_control /)" = "no-cache"
           test "$(cache_control "$asset")" = "public, max-age=31536000, immutable"
           test "$(cache_control /sw.js)" = "no-cache"
+          test "$(cache_control /index.html)" = "no-cache"
           curl -fsS -o /dev/null "$base/manifest.webmanifest"
+          # The app registers /sw.js itself (src/app/app-update.ts), and a new worker takes over open apps at
+          # once: vite-plugin-pwa drops both calls when it does not inject its own registration.
+          html="$(curl -fsS "$base/")"
+          if grep -q registerSW <<<"$html"; then echo "index.html still loads registerSW.js"; exit 1; fi
+          sw="$(curl -fsS "$base/sw.js")"
+          grep -qF 'skipWaiting()' <<<"$sw"
+          grep -qF 'clientsClaim()' <<<"$sw"
 
           # The owner seeded at boot signs in through Better Auth (Origin must equal APP_URL).
           curl -fsS -o /dev/null -c "$cookies" -H "Origin: $base" -H "Content-Type: application/json" \
