@@ -4,9 +4,10 @@ description: Run every check, commit, push and open an auto-merging PR for the c
 disable-model-invocation: true
 arguments: [issue]
 ---
+
 # /ship $issue
 
-1. Checks, all green, in this order: `pnpm check`; `pnpm test:e2e`; `pnpm test:screens`; `pnpm py:check` when anything under `services/garmin` changed; `pnpm build`. A red check stops the ship: fix it, never skip or weaken it. A change under `packages/shared/src/contracts/` also keeps the deploy rules in `.claude/rules/contracts.md`, which no check enforces.
+1. Checks, all green, in this order: `pnpm check`; `pnpm test:e2e`; `pnpm test:screens`; `pnpm py:check` when anything under `services/garmin` changed; `pnpm build`. A red check stops the ship: fix it, never skip or weaken it. A change under `packages/shared/src/contracts/` also keeps the deploy rules in `.claude/rules/contracts.md`; a check covers only their union and record shapes, for the schemas listed in `apps/web/src/api/parse-response.test.ts`.
 2. `git status --porcelain` shows no `.env*` file other than `.env.example`, no recordings, no screenshots outside `apps/web/e2e/screens/*-snapshots/`, no files the slice did not need.
 3. Commits: conventional messages (`feat(web): ...`, `fix(api): ...`, `test(engine): ...`, `chore: ...`), one per logical change. Squash `wip` commits first with `git reset --soft origin/main` and recommit.
 4. `git push -u origin HEAD`. Never force-push; if the push is rejected, `git pull --rebase origin "$(git branch --show-current)"` and push again.
