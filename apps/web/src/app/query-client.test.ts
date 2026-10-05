@@ -2,12 +2,14 @@ import { ErrorCode } from "@running-coach/shared";
 import { MutationObserver, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
-import { bootRetry, createQueryClient } from "./query-client";
+import { bootRetry, createQueryClient, throwOnFirstLoadMismatch } from "./query-client";
 
 const unauthorized = () => new ApiError({ status: 401, code: ErrorCode.unauthorized });
 const invalid = () => new ApiError({ status: 400, code: ErrorCode.validation });
 const unreachable = () => new ApiError({ status: 0, code: ErrorCode.internal, network: true });
 const serverError = (status: number) => new ApiError({ status, code: ErrorCode.internal });
+const unreadable = () =>
+  new ApiError({ status: 200, code: ErrorCode.internal, contractMismatch: "read" });
 
 async function failMutation(onUnauthorized: () => void, error: ApiError) {
   const client = createQueryClient({ onUnauthorized });
@@ -41,6 +43,41 @@ describe("createQueryClient", () => {
     const onUnauthorized = vi.fn();
     await failMutation(onUnauthorized, invalid());
     expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+});
+
+describe("a 2xx this version cannot read", () => {
+  it("is never retried, also while the app waits for the server at boot, and is reported once", async () => {
+    const onContractMismatch = vi.fn();
+    const client = createQueryClient({ onContractMismatch });
+    const queryFn = vi.fn(() => Promise.reject(unreadable()));
+    const query = new QueryObserver(client, { queryKey: ["me", "detail"], queryFn });
+    await query.refetch();
+    expect(queryFn).toHaveBeenCalledOnce();
+    expect(onContractMismatch).toHaveBeenCalledOnce();
+    expect(bootRetry(() => 0).retry(0, unreadable())).toBe(false);
+  });
+
+  it("is reported from a mutation too, which never throws to a boundary", async () => {
+    const onContractMismatch = vi.fn();
+    const client = createQueryClient({ onContractMismatch });
+    const mutation = new MutationObserver(client, {
+      mutationFn: () => Promise.reject(unreadable()),
+    });
+    await mutation.mutate().catch(() => undefined);
+    expect(onContractMismatch).toHaveBeenCalledOnce();
+    expect(client.getDefaultOptions().mutations?.throwOnError).toBeUndefined();
+  });
+
+  it("throws to the route's boundary on a first load, and keeps the data of a refetch on screen", () => {
+    const client = createQueryClient();
+    const cache = client.getQueryCache();
+    const firstLoad = cache.build(client, { queryKey: ["plan", "detail"] });
+    expect(throwOnFirstLoadMismatch(unreadable(), firstLoad)).toBe(true);
+    expect(throwOnFirstLoadMismatch(serverError(500), firstLoad)).toBe(false);
+    client.setQueryData(["plan", "detail"], { goal: null, plan: null });
+    expect(throwOnFirstLoadMismatch(unreadable(), firstLoad)).toBe(false);
+    expect(client.getDefaultOptions().queries?.throwOnError).toBe(throwOnFirstLoadMismatch);
   });
 });
 

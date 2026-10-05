@@ -2,7 +2,7 @@ import { ErrorCode, meResponseSchema } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { json, problem, stubFetch } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
-import { ApiError, apiFetch } from "./client";
+import { ApiError, apiFetch, isContractMismatch } from "./client";
 
 async function failure(promise: Promise<unknown>): Promise<ApiError> {
   const error = await promise.then(
@@ -68,9 +68,50 @@ describe("apiFetch", () => {
     expect(error).toMatchObject({ status: 0, code: "internal", network: true });
   });
 
-  it("rejects a response that breaks the contract", async () => {
-    stubFetch(() => json({ user: { id: "not-a-uuid" } }));
+  it("drops fields this version does not know, at any depth, as a newer API sends them", async () => {
+    const me = meFixture();
+    stubFetch(() => json({ ...me, addedLater: 1, settings: { ...me.settings, weekStart: "mon" } }));
+    await expect(apiFetch("/api/me", { schema: meResponseSchema })).resolves.toEqual(me);
+  });
+
+  it("flags a 2xx this version cannot read as a contract mismatch, and is never a network error", async () => {
+    const me = meFixture();
+    stubFetch(() => json({ ...me, settings: { ...me.settings, coachDetail: "brief" } }));
     const error = await failure(apiFetch("/api/me", { schema: meResponseSchema }));
-    expect(error).toMatchObject({ status: 200, code: "internal" });
+    expect(error).toMatchObject({
+      status: 200,
+      code: "internal",
+      contractMismatch: "read",
+      network: false,
+    });
+    expect(isContractMismatch(error)).toBe(true);
+  });
+
+  it("marks a write whose 2xx it cannot read, since the server may have done it", async () => {
+    stubFetch(() => json({ user: { id: "not-a-uuid" } }));
+    const error = await failure(
+      apiFetch("/api/me/settings", {
+        method: "PATCH",
+        body: { units: "mi" },
+        schema: meResponseSchema,
+      }),
+    );
+    expect(error).toMatchObject({ status: 200, contractMismatch: "write" });
+  });
+
+  it("treats a 2xx page that is not JSON as no answer from the API, not a mismatch", async () => {
+    stubFetch(() => new Response("<html>Sign in to the Wi-Fi</html>", { status: 200 }));
+    const error = await failure(apiFetch("/api/me", { schema: meResponseSchema }));
+    expect(error).toMatchObject({ network: true, contractMismatch: undefined });
+  });
+
+  it("reads a problem with a field it does not know by its code", async () => {
+    stubFetch(() => problem(409, ErrorCode.garminAuthExpired, { addedLater: true } as never));
+    const error = await failure(apiFetch("/api/me", { schema: meResponseSchema }));
+    expect(error).toMatchObject({
+      status: 409,
+      code: "garmin_auth_expired",
+      contractMismatch: undefined,
+    });
   });
 });

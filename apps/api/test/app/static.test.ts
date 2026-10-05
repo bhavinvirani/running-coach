@@ -27,8 +27,9 @@ describe("serving the web app", () => {
     expect(response.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
   });
 
-  it("serves the service worker and manifest with no-cache", async () => {
-    for (const file of ["/sw.js", "/manifest.webmanifest"]) {
+  it("serves the service worker, the manifest and index.html itself with no-cache", async () => {
+    // The web app reads /index.html to learn whether a reload would load another version (app-update.ts).
+    for (const file of ["/sw.js", "/manifest.webmanifest", "/index.html"]) {
       const response = await request(app).get(file);
       expect(response.status).toBe(200);
       expect(response.headers["cache-control"]).toBe("no-cache");

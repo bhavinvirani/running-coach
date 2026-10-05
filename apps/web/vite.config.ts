@@ -48,8 +48,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: "autoUpdate",
-      injectRegister: "auto",
+      // src/app/app-update.ts registers /sw.js and decides when an open page reloads into a new version.
+      injectRegister: false,
       pwaAssets: {
         image: "public/favicon.svg",
         preset: iconPreset as never,
@@ -70,6 +70,11 @@ export default defineConfig({
         background_color: surface0,
       },
       workbox: {
+        // A new version takes over open pages at once, as registerSW.js's autoUpdate did: an installed app is
+        // rarely closed, so a waiting worker could wait for days. The plugin sets these two only when it
+        // injects its own registration, so without them sw.js would wait for a message no page sends.
+        skipWaiting: true,
+        clientsClaim: true,
         // App shell only. No runtimeCaching: API responses are never cached offline.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
         // The map loads on demand: precached, mapbox-gl would add 1.9 MB to every install and update for a

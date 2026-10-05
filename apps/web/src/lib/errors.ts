@@ -1,5 +1,6 @@
 import type { ErrorCode } from "@running-coach/shared";
-import { isApiError } from "@/api/client";
+import { isApiError, isContractMismatch } from "@/api/client";
+import { ScreenLoadError } from "@/app/lazy-screen";
 
 /**
  * The one place user-facing error text lives. Each message says what happened and what to do.
@@ -35,11 +36,30 @@ export const errorMessages: Record<ErrorCode, string> = {
 export const networkErrorMessage =
   "Could not reach the server. Check your connection and try again.";
 export const unknownErrorMessage = "Something went wrong. Try again.";
+/**
+ * The server runs another version than this page (after a deploy or a rollback): an answer it cannot read,
+ * or a screen whose code is gone. Shown only beside Reload (ScreenErrorBoundary, RetryAlert).
+ */
+export const versionMismatchMessage =
+  "This version of the app does not match the server. Reload to get the current one.";
+/** A write whose 2xx this version could not read: it may have gone through, and trying again could repeat it. */
+export const unreadWriteMessage =
+  "The server may have done this already, but this version of the app could not read its answer. Check before trying again.";
+
+/** An error only another version of the app can fix: Reload, never Retry. */
+export function isVersionMismatch(error: unknown): boolean {
+  return isContractMismatch(error) || error instanceof ScreenLoadError;
+}
 
 /** What to show the user for any thrown value. */
 export function errorMessage(error: unknown): string {
+  if (error instanceof ScreenLoadError) {
+    return navigator.onLine ? versionMismatchMessage : networkErrorMessage;
+  }
   if (!isApiError(error)) return unknownErrorMessage;
   if (error.network) return networkErrorMessage;
+  if (error.contractMismatch === "write") return unreadWriteMessage;
+  if (error.contractMismatch === "read") return versionMismatchMessage;
   return errorMessages[error.code];
 }
 

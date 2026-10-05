@@ -1,5 +1,5 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
-import { isApiError, isClientError } from "@/api/client";
+import { isApiError, isClientError, isContractMismatch } from "@/api/client";
 
 const MAX_RETRIES = 3;
 
@@ -10,6 +10,8 @@ const WAKE_DELAY_CAP_MS = 5_000;
 type Options = {
   /** Called when any query or mutation gets a 401: the session expired while the app was open. */
   onUnauthorized?: () => void;
+  /** Called when any query or mutation gets a 2xx this version cannot read: the server runs another version. */
+  onContractMismatch?: () => void;
 };
 
 /** Exponential backoff with full jitter, so many tabs never retry in lockstep. */
@@ -22,9 +24,24 @@ export function retryDelay(attempt: number): number {
   return backoff(attempt, 30_000);
 }
 
-/** A 4xx will fail the same way again; only network and server errors are worth retrying. */
+/**
+ * A 4xx, or a 2xx this version cannot read, fails the same way again; only network and server errors are
+ * worth retrying.
+ */
 function shouldRetry(failureCount: number, error: unknown): boolean {
-  return !isClientError(error) && failureCount < MAX_RETRIES;
+  return !isClientError(error) && !isContractMismatch(error) && failureCount < MAX_RETRIES;
+}
+
+/**
+ * A first load whose answer this version cannot read throws to the route's ScreenErrorBoundary, which offers
+ * Reload and lets app-update.ts reload into the server's version: the screen had nothing to show yet. Once a
+ * query holds data, a failed refetch keeps it on screen, with Reload in RetryAlert.
+ */
+export function throwOnFirstLoadMismatch(
+  error: Error,
+  query: { state: { data: unknown } },
+): boolean {
+  return isContractMismatch(error) && query.state.data === undefined;
 }
 
 /** What a sleeping server looks like from here: no answer at all, or Render's proxy answering 502 to 504. */
@@ -51,9 +68,13 @@ export function bootRetry(now: () => number = Date.now) {
   };
 }
 
-export function createQueryClient({ onUnauthorized }: Options = {}): QueryClient {
+export function createQueryClient({
+  onUnauthorized,
+  onContractMismatch,
+}: Options = {}): QueryClient {
   const onError = (error: unknown) => {
     if (isApiError(error) && error.status === 401) onUnauthorized?.();
+    if (isContractMismatch(error)) onContractMismatch?.();
   };
   return new QueryClient({
     queryCache: new QueryCache({ onError }),
@@ -63,6 +84,7 @@ export function createQueryClient({ onUnauthorized }: Options = {}): QueryClient
         retry: shouldRetry,
         retryDelay,
         refetchOnWindowFocus: false,
+        throwOnError: throwOnFirstLoadMismatch,
       },
     },
   });
