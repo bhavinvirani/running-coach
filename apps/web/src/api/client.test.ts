@@ -1,7 +1,7 @@
-import { ErrorCode, meResponseSchema } from "@running-coach/shared";
+import { ErrorCode, activityResponseSchema, meResponseSchema } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { json, problem, stubFetch } from "@/test/fake-api";
-import { meFixture } from "@/test/fixtures";
+import { activityDetailFixture, activityResponseFixture, meFixture } from "@/test/fixtures";
 import { ApiError, apiFetch, isContractMismatch } from "./client";
 
 async function failure(promise: Promise<unknown>): Promise<ApiError> {
@@ -97,6 +97,25 @@ describe("apiFetch", () => {
       }),
     );
     expect(error).toMatchObject({ status: 200, contractMismatch: "write" });
+  });
+
+  it("marks an idempotent POST whose 2xx it cannot read as a read, since asking again only answers again, and any other POST as a write", async () => {
+    const run = activityResponseFixture();
+    const detail = activityDetailFixture();
+    // A newer API renamed a lap field.
+    const laps = detail.laps.map(({ avgCadence, ...lap }) => ({ ...lap, cadenceAvg: avgCadence }));
+    stubFetch(() => json({ ...run, detail: { ...detail, laps } }));
+    const fetchDetail = (idempotent?: boolean) =>
+      failure(
+        apiFetch(`/api/activities/${run.activity.id}/detail`, {
+          method: "POST",
+          schema: activityResponseSchema,
+          idempotent,
+        }),
+      );
+
+    expect(await fetchDetail(true)).toMatchObject({ status: 200, contractMismatch: "read" });
+    expect(await fetchDetail()).toMatchObject({ status: 200, contractMismatch: "write" });
   });
 
   it("treats a 2xx page that is not JSON as no answer from the API, not a mismatch", async () => {

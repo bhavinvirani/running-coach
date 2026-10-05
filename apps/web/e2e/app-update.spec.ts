@@ -61,12 +61,14 @@ test("offers Reload for an answer it cannot read, and never reloads by itself wh
   // A coach detail this version does not know.
   await changeMe(page, (me) => ({ ...me, settings: { ...me.settings, coachDetail: "brief" } }));
   const loads = documentLoads(page);
-  const asked = page.waitForRequest("**/index.html");
+  const probed = page.waitForResponse("**/index.html");
   await page.goto("/");
 
   await expect(page.getByRole("alert")).toHaveText(versionMismatchMessage);
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
-  await asked;
+  // The app decides on the probe's answer, so count once that answer is in and the page has gone quiet.
+  await (await probed).finished();
+  await page.waitForLoadState("networkidle");
   expect(loads).toHaveLength(1);
 
   await page.unroute("**/api/me");
@@ -103,14 +105,20 @@ test("shows a screen whose code is gone inside the tabs with Reload, never a bla
   await expect(todayHeading(page)).toBeVisible();
 
   const tabs = page.getByRole("navigation", { name: "Tabs" });
+  const probed = page.waitForResponse("**/index.html");
   await tabs.getByRole("link", { name: "Plan" }).click();
 
   await expect(page.getByRole("alert")).toHaveText(versionMismatchMessage);
   await expect(tabs).toBeVisible();
   await expect(page).toHaveURL(/\/plan$/);
+  await (await probed).finished();
+  await page.waitForLoadState("networkidle");
   expect(loads).toHaveLength(1);
 
   await page.unroute(planChunk);
   await page.getByRole("button", { name: "Reload" }).click();
   await expect(page.getByRole("heading", { name: "Plan", level: 1 })).toBeVisible();
+  // networkidle fires once per document and Today may have reached it before the tap, so a reload that the
+  // probe's answer started shows here, as a third load.
+  expect(loads).toHaveLength(2);
 });

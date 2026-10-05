@@ -44,9 +44,12 @@ describe("errorMessage", () => {
     expect(errorMessage(write)).toBe(unreadWriteMessage);
   });
 
-  it("asks to check the connection when a screen's code did not load offline", () => {
-    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
-    expect(errorMessage(new ScreenLoadError("offline"))).toBe(networkErrorMessage);
+  it("asks to check the connection when a screen's code did not load offline, also once back online", () => {
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const offline = new ScreenLoadError("offline");
+    expect(errorMessage(offline)).toBe(networkErrorMessage);
+    onLine.mockReturnValue(true);
+    expect(errorMessage(offline)).toBe(networkErrorMessage);
   });
 
   it("tells the user to reconnect when the Garmin login expired", () => {

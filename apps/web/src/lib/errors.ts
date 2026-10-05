@@ -38,7 +38,7 @@ export const networkErrorMessage =
 export const unknownErrorMessage = "Something went wrong. Try again.";
 /**
  * The server runs another version than this page (after a deploy or a rollback): an answer it cannot read,
- * or a screen whose code is gone. Shown only beside Reload (ScreenErrorBoundary, RetryAlert).
+ * or a screen whose code is gone. Shown only beside Reload (ScreenErrorBoundary, RetryAlert, RunDetail).
  */
 export const versionMismatchMessage =
   "This version of the app does not match the server. Reload to get the current one.";
@@ -54,7 +54,7 @@ export function isVersionMismatch(error: unknown): boolean {
 /** What to show the user for any thrown value. */
 export function errorMessage(error: unknown): string {
   if (error instanceof ScreenLoadError) {
-    return navigator.onLine ? versionMismatchMessage : networkErrorMessage;
+    return error.offline ? networkErrorMessage : versionMismatchMessage;
   }
   if (!isApiError(error)) return unknownErrorMessage;
   if (error.network) return networkErrorMessage;

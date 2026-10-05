@@ -70,9 +70,10 @@ export default defineConfig({
         background_color: surface0,
       },
       workbox: {
-        // A new version takes over open pages at once, as registerSW.js's autoUpdate did: an installed app is
-        // rarely closed, so a waiting worker could wait for days. The plugin sets these two only when it
-        // injects its own registration, so without them sw.js would wait for a message no page sends.
+        // A new version takes over open pages at once: an installed app is rarely closed, so a waiting worker
+        // could wait for days. vite-plugin-pwa sets these two only for registerType "autoUpdate" with
+        // injectRegister "auto" or null. Without skipWaiting, sw.js waits for a SKIP_WAITING message no page
+        // sends; ci.yml's smoke test checks the built sw.js for both.
         skipWaiting: true,
         clientsClaim: true,
         // App shell only. No runtimeCaching: API responses are never cached offline.

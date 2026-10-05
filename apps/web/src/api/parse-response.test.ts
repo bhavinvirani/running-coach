@@ -143,6 +143,45 @@ function at(root: unknown, path: PropertyKey[]): Json {
 
 const copy = <T>(value: T): T => structuredClone(value);
 
+const isSchema = (value: unknown): value is z.core.$ZodType =>
+  typeof value === "object" && value !== null && "_zod" in value;
+
+/** The schemas right inside one: fields, items, union members, record keys and values, wrapped types. */
+function innerSchemas(schema: z.core.$ZodType): [where: string, inner: z.core.$ZodType][] {
+  const def = schema._zod.def as unknown as Record<string, unknown>;
+  return Object.entries(def).flatMap(([key, value]): [string, z.core.$ZodType][] => {
+    if (key === "checks") return []; // refinements, which hold no part of the body
+    if (key === "shape") return Object.entries(value as z.core.$ZodShape);
+    if (key === "getter") return [[key, (value as () => z.core.$ZodType)()]];
+    const values: unknown[] = Array.isArray(value) ? value : [value];
+    return values.filter(isSchema).map((inner) => [key, inner]);
+  });
+}
+
+/** Every schema in the table's schemas, each once, by the first path that reaches it. */
+function everySchema(): Map<z.core.$ZodType, string> {
+  const paths = new Map<z.core.$ZodType, string>();
+  const visit = (schema: z.core.$ZodType, path: string) => {
+    if (paths.has(schema)) return;
+    paths.set(schema, path);
+    for (const [where, inner] of innerSchemas(schema)) visit(inner, `${path}.${where}`);
+  };
+  for (const [name, schema] of bodies) visit(schema, name);
+  return paths;
+}
+
+/** The fields of the object a union member reads, through optional, nullable, readonly or a pipe. */
+function shapeOf(schema: z.core.$ZodType): z.core.$ZodShape | undefined {
+  const def = schema._zod.def as {
+    shape?: z.core.$ZodShape;
+    innerType?: z.core.$ZodType;
+    in?: z.core.$ZodType;
+  };
+  if (def.shape) return def.shape;
+  const inner = def.innerType ?? def.in;
+  return inner && shapeOf(inner);
+}
+
 describe.each(bodies)("parseResponse: %s", (name, schema, body) => {
   const onContract = schema.parse(copy(body));
 
@@ -225,5 +264,33 @@ describe("parseResponse", () => {
   it("leaves the shared schema strict", () => {
     parseResponse(meResponseSchema, { ...meFixture(), addedLater: 1 });
     expect(meResponseSchema.safeParse({ ...meFixture(), addedLater: 1 }).success).toBe(false);
+  });
+
+  // When no member reads the body, a union without a discriminator reports the one member that failed on
+  // unknown keys alone, and parseResponse drops those keys. So when the member a newer body was meant for
+  // fails on a changed field, no other member may read that field as unknown: the members share no key and
+  // each require one. A record keyed by an enum or literals reports a key it does not know as unknown too.
+  it("never takes a field a newer API changed for an unknown key, in any union or record it reads", () => {
+    const problems: string[] = [];
+    for (const [schema, path] of everySchema()) {
+      const def = (schema as z.core.$ZodTypes)._zod.def;
+      if (def.type === "record" && def.keyType._zod.values) {
+        problems.push(`${path}: a record keyed by an enum or literals`);
+      }
+      if (def.type !== "union" || "discriminator" in def) continue;
+      const shapes = def.options.map(shapeOf).filter((shape) => shape !== undefined);
+      if (shapes.length < 2) continue;
+      const keys = new Set<string>();
+      for (const shape of shapes) {
+        if (Object.values(shape).every((field) => field._zod.optin !== undefined)) {
+          problems.push(`${path}: a member with no required key`);
+        }
+        for (const key of Object.keys(shape)) {
+          if (keys.has(key)) problems.push(`${path}: members share ${key}`);
+          keys.add(key);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
   });
 });

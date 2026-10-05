@@ -1,7 +1,8 @@
 import { expect, test } from "./fixtures/login";
 
 // The other specs block service workers so that page.route sees every request; this one is about the worker
-// itself: src/app/app-update.ts registers it (vite-plugin-pwa no longer injects registerSW.js).
+// that src/app/app-update.ts registers. No screen shows the worker, so this spec reads it with page.evaluate
+// and page.waitForFunction: the one exception to e2e-flow's taps and typing.
 test.use({ serviceWorkers: "allow" });
 
 test("registers /sw.js for the whole app, takes control, and serves the next open from its cache", async ({

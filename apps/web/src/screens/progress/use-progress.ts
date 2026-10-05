@@ -9,8 +9,10 @@ import { screenState } from "@/api/screen-state";
  * Everything Progress reads and does: runs by week, the import's progress, and starting or resuming it,
  * and the personal bests. The weeks decide the screen's state; the import line has its own load error,
  * shown as an inline alert, so a failed GET /api/import never hides the runs; the bests load and fail on
- * their own in their section, and the rows get their PB chips once they are in. Units and zone come from
- * /api/me, which the authenticated loader caches before any tab renders.
+ * their own in their section, and the rows get their PB chips once they are in. Neither holds for a first
+ * answer this version cannot read: like any first load, it throws to the route's boundary
+ * (throwOnFirstLoadMismatch), since only a reload into the server's version can show it. Units and zone
+ * come from /api/me, which the authenticated loader caches before any tab renders.
  */
 export function useProgressScreen() {
   const weeks = useActivityWeeks();

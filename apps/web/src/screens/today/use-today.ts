@@ -16,8 +16,10 @@ import { syncOutcomeLine } from "./today-copy";
  * and whether the Garmin login expired, which turns Sync now into Reconnect Garmin. Units and the login
  * come from /api/me, which the authenticated route's loader caches before any tab renders; until they are
  * known the screen keeps its skeleton rather than flash the wrong unit. The bests only add
- * the PB chip: the run shows without it while they load, poll after a sync or fail. The sync's progress
- * and outcome come from the mutation cache, so leaving Today mid-sync and coming back still shows
+ * the PB chip: the run shows without it while they load, poll after a sync or fail, unless their first
+ * answer is one this version cannot read, which throws to the route's boundary like any first load
+ * (throwOnFirstLoadMismatch), since only a reload into the server's version can show it. The sync's
+ * progress and outcome come from the mutation cache, so leaving Today mid-sync and coming back still shows
  * "Syncing…", then its result. The next 7 days come from the calendar, today to six days on in the
  * runner's time zone, with Send to Garmin and Unschedule for the workouts the app did not create.
  */

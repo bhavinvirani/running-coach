@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, Link, Outlet } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { describe, expect, it, vi } from "vitest";
-import { versionMismatchMessage } from "@/lib/errors";
+import { networkErrorMessage, versionMismatchMessage } from "@/lib/errors";
 import { AppUpdatesContext } from "./app-update";
 import { lazyScreen, ScreenLoadError } from "./lazy-screen";
 import { ScreenErrorBoundary } from "./screen-error-boundary";
@@ -16,6 +16,7 @@ function Shell() {
     <>
       <Outlet />
       <nav aria-label="Tabs">
+        <Link to="/">Today</Link>
         <Link to="/plan">Plan</Link>
       </nav>
     </>
@@ -71,14 +72,15 @@ describe("lazyScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(versionMismatchMessage);
     expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
     expect(
-      within(screen.getByRole("navigation", { name: "Tabs" })).getByRole("link"),
+      within(screen.getByRole("navigation", { name: "Tabs" })).getByRole("link", { name: "Plan" }),
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/plan");
     const [[reported]] = onError.mock.calls as [[Error]];
     expect(reported).toBeInstanceOf(ScreenLoadError);
     expect(reported.cause).toBeInstanceOf(TypeError);
-    // The screen is gone: app-update.ts may reload into the server's version.
-    expect(appUpdates.versionMismatch).toHaveBeenCalledWith(true);
+    // The screen is gone: app-update.ts may reload into the server's version. The boundary reports from an
+    // effect, which a busy machine can run after the alert is on screen.
+    await vi.waitFor(() => expect(appUpdates.versionMismatch).toHaveBeenCalledWith(true));
   });
 
   it("shows the route's error when the first screen of the app does not load, never a blank page", async () => {
@@ -86,6 +88,25 @@ describe("lazyScreen", () => {
     renderRoutes("/plan", gone);
     expect(await screen.findByRole("alert")).toHaveTextContent(versionMismatchMessage);
     expect(screen.getByRole("navigation", { name: "Tabs" })).toBeInTheDocument();
+  });
+
+  it("keeps saying the connection failed once the device is back online, since the failure stays for the page", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const load = vi.fn(gone);
+    renderRoutes("/", load);
+    await userEvent.click(await screen.findByRole("link", { name: "Plan" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(networkErrorMessage);
+
+    onLine.mockReturnValue(true);
+    await userEvent.click(screen.getByRole("link", { name: "Today" }));
+    expect(await screen.findByRole("heading", { name: "Today" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Plan" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(networkErrorMessage);
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    // React Router never imports the screen again in this page: the second visit shows the first failure.
+    expect(load).toHaveBeenCalledOnce();
   });
 
   it("reloads the page on Reload", async () => {

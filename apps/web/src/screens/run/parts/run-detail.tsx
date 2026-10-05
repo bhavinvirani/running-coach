@@ -8,7 +8,7 @@ import { toSeriesPoints } from "@/charts/series-point";
 import { SplitBars } from "@/charts/split-bars";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
+import { errorMessage, isVersionMismatch } from "@/lib/errors";
 import type { DetailState } from "../use-run";
 import { RouteSection } from "./route-section";
 import { Note, RunSection } from "./run-section";
@@ -33,14 +33,19 @@ export function RunDetail({ state, activity, units, onRetry }: RunDetailProps) {
   }
 
   if (state.status === "error") {
-    // A run deleted on Garmin Connect answers 404 every time: Retry would only ask again.
+    // A run deleted on Garmin Connect answers 404 every time: Retry would only ask again. Asking again for a
+    // detail this version cannot read only answers the one the API stored, so that gets Reload instead.
     const gone = isApiError(state.error) && state.error.status === 404;
     return (
       <div className="flex flex-col items-start gap-4 border-t border-line pt-4">
         <p role="alert" className="text-body text-ink">
           {errorMessage(state.error)}
         </p>
-        {gone ? null : (
+        {gone ? null : isVersionMismatch(state.error) ? (
+          <Button variant="secondary" onClick={() => window.location.reload()}>
+            Reload
+          </Button>
+        ) : (
           <Button variant="secondary" onClick={onRetry}>
             Retry
           </Button>

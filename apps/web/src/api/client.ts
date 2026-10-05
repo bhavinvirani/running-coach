@@ -14,8 +14,8 @@ type ApiErrorInit = {
 };
 
 /**
- * Which request got a 2xx this version of the app cannot read: a read (GET), or a write the server may have
- * carried out.
+ * Which request got a 2xx this version of the app cannot read: a read (GET, or a request marked idempotent),
+ * or a write the server may have carried out.
  */
 type ContractMismatch = "read" | "write";
 
@@ -89,6 +89,11 @@ export type ApiRequest<T> = {
   /** The zod contract from @running-coach/shared that the response must satisfy. */
   schema: z.ZodType<T>;
   signal?: AbortSignal;
+  /**
+   * Asking again only answers again (a run's detail: fetched from Garmin once, then read back), so a 2xx this
+   * version cannot read is a read mismatch, not a write the server may have carried out.
+   */
+  idempotent?: boolean;
 };
 
 function newRequestId(): string {
@@ -176,7 +181,7 @@ export async function apiFetch<T>(path: string, request: ApiRequest<T>): Promise
       code: ErrorCode.internal,
       detail: "The server response did not match the contract.",
       requestId: responseRequestId,
-      contractMismatch: method === "GET" ? "read" : "write",
+      contractMismatch: method === "GET" || request.idempotent ? "read" : "write",
       cause: parsed.error,
     });
   }

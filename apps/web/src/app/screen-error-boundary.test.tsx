@@ -36,7 +36,8 @@ describe("ScreenErrorBoundary", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(versionMismatchMessage);
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
-    expect(appUpdates.versionMismatch).toHaveBeenCalledWith(true);
+    // It reports from an effect, which a busy machine can run after the alert is on screen.
+    await vi.waitFor(() => expect(appUpdates.versionMismatch).toHaveBeenCalledWith(true));
     await userEvent.click(screen.getByRole("button", { name: "Reload" }));
     expect(reload).toHaveBeenCalledOnce();
   });

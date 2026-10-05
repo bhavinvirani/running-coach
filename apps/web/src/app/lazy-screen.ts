@@ -3,6 +3,11 @@ import type { ComponentType } from "react";
 /** A screen's code did not load: a deploy since this page loaded removed its file, or the device is offline. */
 export class ScreenLoadError extends Error {
   override readonly name = "ScreenLoadError";
+  /**
+   * Read when the import failed, not when the error shows: React Router keeps this failure for the rest of
+   * the page, so a screen that failed offline still says so once the device is back online.
+   */
+  readonly offline = !navigator.onLine;
 }
 
 /**

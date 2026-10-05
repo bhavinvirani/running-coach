@@ -34,8 +34,10 @@ function shouldRetry(failureCount: number, error: unknown): boolean {
 
 /**
  * A first load whose answer this version cannot read throws to the route's ScreenErrorBoundary, which offers
- * Reload and lets app-update.ts reload into the server's version: the screen had nothing to show yet. Once a
- * query holds data, a failed refetch keeps it on screen, with Reload in RetryAlert.
+ * Reload and lets app-update.ts reload into the server's version. That includes the first load of a section
+ * that otherwise loads and fails on its own, so the whole screen goes: the section's Retry would get the
+ * same answer, and only a reload into the server's version can show it. Once a query holds data, a failed
+ * refetch keeps it on screen, with Reload in RetryAlert.
  */
 export function throwOnFirstLoadMismatch(
   error: Error,

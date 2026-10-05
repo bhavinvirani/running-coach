@@ -24,8 +24,7 @@ import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
 import { backgroundAndReturn, settle } from "@/test/lifecycle";
 
-function renderApp(path: string) {
-  const queryClient = testQueryClient();
+function renderApp(path: string, queryClient = testQueryClient()) {
   const router = createMemoryRouter(appRoutes(queryClient), { initialEntries: [path] });
   render(
     <QueryClientProvider client={queryClient}>
@@ -322,24 +321,33 @@ describe("app routes", () => {
   });
 
   it("keeps the screen, its tabs and what is typed when the sync on open gets an answer this version cannot read", async () => {
-    const calls = stubFetch((request) => {
+    let answerSync!: () => void;
+    const syncAnswered = new Promise<void>((resolve) => {
+      answerSync = resolve;
+    });
+    const calls = stubFetch(async (request) => {
       if (request.path === "/api/me") {
         const anHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
         return json(meFixture({ garmin: { status: "ok", lastSyncAt: anHourAgo } }));
       }
       if (request.method === "POST" && request.path === "/api/sync") {
+        // The sync takes seconds: its answer lands on a form the runner has filled in.
+        await syncAnswered;
         // A field renamed by a newer API: this version cannot read the answer.
         return json({ lastSyncAt: new Date().toISOString(), runsWritten: 0, activitiesRemoved: 0 });
       }
       return signedIn(request);
     });
-    renderApp("/plan/goal");
+    const queryClient = testQueryClient();
+    renderApp("/plan/goal", queryClient);
     const raceDate = await screen.findByLabelText("Race date");
     await userEvent.clear(raceDate);
     await userEvent.type(raceDate, "2027-04-18");
     await vi.waitFor(() =>
       expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(1),
     );
+    answerSync();
+    await vi.waitFor(() => expect(queryClient.isMutating()).toBe(0));
     await settle();
 
     expect(screen.getByLabelText("Race date")).toHaveValue("2027-04-18");

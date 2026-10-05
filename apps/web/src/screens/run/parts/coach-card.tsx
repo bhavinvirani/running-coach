@@ -11,7 +11,7 @@ import type { ScreenState } from "@/api/screen-state";
 import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
+import { errorMessage, isVersionMismatch } from "@/lib/errors";
 import { formatDayTime } from "@/lib/format";
 import { Note, RunSection } from "./run-section";
 
@@ -37,9 +37,10 @@ type CoachCardProps = {
 /**
  * The coach's review of the run, right under the stats: what happened, what it means, what to do next.
  * Loads beside the run and has its own loading and error states, so a slow or failed coach never hides
- * the run. Without a credential (no key, and not the owner's Claude plan) a run with no card is one sentence
- * and the way to add a key, nothing else; a stored card keeps its text, and a fallback card offers only that
- * same way to add one.
+ * the run, except a first answer this version cannot read: that goes to the route's boundary
+ * (throwOnFirstLoadMismatch), since only the server's version of the app can show it. Without a credential
+ * (no key, and not the owner's Claude plan) a run with no card is one sentence and the way to add a key,
+ * nothing else; a stored card keeps its text, and a fallback card offers only that same way to add one.
  */
 export function CoachCard({ state, ...actions }: CoachCardProps) {
   if (state.status === "pending") {
@@ -169,14 +170,25 @@ function AddKeyLink() {
 /**
  * A failed Ask the coach or Try again: 429, or the API down. A 409 claude_key_missing shows here only until
  * the card and /api/me are read again (useAskCoach): a run without a card then answers no_key, and a fallback
- * card, told there is no key, swaps this and Try again for Add Claude key.
+ * card, told there is no key, swaps this and Try again for Add Claude key. An answer this version cannot read
+ * gets Reload beside it: asking again gets the same answer, and only the server's version can show where the
+ * coach stands.
  */
 function AskAlert({ error }: { error: Error | null }) {
   if (error === null) return null;
-  return (
+  const alert = (
     <p role="alert" className="text-body text-ink">
       {errorMessage(error)}
     </p>
+  );
+  if (!isVersionMismatch(error)) return alert;
+  return (
+    <div className="flex items-center justify-between gap-3">
+      {alert}
+      <Button variant="ghost" onClick={() => window.location.reload()}>
+        Reload
+      </Button>
+    </div>
   );
 }
 
