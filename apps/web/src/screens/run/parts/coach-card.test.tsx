@@ -3,7 +3,7 @@ import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorMessages } from "@/lib/errors";
+import { errorMessages, unreadWriteMessage } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
 import {
   activityDetailFixture,
@@ -610,7 +610,39 @@ describe("CoachCard", () => {
     expect(alert).toHaveTextContent(errorMessages.rate_limited);
     expect(alert).toHaveClass("text-body", "text-ink");
     expect(within(coach()).getByRole("button", { name: "Ask the coach" })).toBeEnabled();
+    expect(within(coach()).queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
   });
+
+  it.each<{ card: string; reads: InsightResponse[]; action: string }>([
+    { card: "a run without a card", reads: [{ state: "none" }], action: "Ask the coach" },
+    {
+      card: "a fallback card",
+      reads: [insightReadyFixture(fallbackCardFixture("timeout"))],
+      action: "Try again",
+    },
+    {
+      card: "the plan's usage limit",
+      reads: [{ state: "retrying", resumesAt: "2026-10-04T13:00:00.000Z" }],
+      action: "Try now",
+    },
+  ])(
+    "says $action may have gone through and offers Reload when this version cannot read the answer, keeping $action ($card)",
+    async ({ reads, action }) => {
+      // A newer API answers with a state this version does not know; asking again gets it again.
+      const calls = fakeCoachApi({ reads, ask: () => json({ state: "queued" }) });
+      renderRun();
+
+      await userEvent.click(await within(await findCoach()).findByRole("button", { name: action }));
+
+      expect(await within(coach()).findByRole("alert")).toHaveTextContent(unreadWriteMessage);
+      expect(within(coach()).getByRole("button", { name: action })).toBeEnabled();
+      const reload = vi.fn();
+      vi.stubGlobal("location", { ...window.location, reload });
+      await userEvent.click(within(coach()).getByRole("button", { name: "Reload" }));
+      expect(reload).toHaveBeenCalledOnce();
+      expect(asks(calls)).toHaveLength(1);
+    },
+  );
 
   it("switches to the one Add Claude key action when Ask the coach finds the key removed on another device (409 claude_key_missing)", async () => {
     const calls = fakeCoachApi({

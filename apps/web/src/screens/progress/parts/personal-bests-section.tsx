@@ -20,9 +20,11 @@ type PersonalBestsSectionProps = {
  * The runner's best time at each of the eleven distances, as one row of tiles that scrolls sideways at
  * the top of Progress, so the bests take one tile's height instead of the screen: the distances with a
  * best longest first, then the ones no run has reached yet. It loads and fails on its own, so the weeks
- * below stay usable whatever happens here. While runs wait for their best efforts, a line under the
- * heading says how many are being checked, or why none are and what to do. Garmin's own records are not
- * shown: comparing with them was a one-time check of the numbers, and the tiles read cleaner without.
+ * below stay usable whatever happens here, except a first answer this version cannot read: like any first
+ * load, that throws to the route's boundary (throwOnFirstLoadMismatch), since only a reload into the
+ * server's version can show it. While runs wait for their best efforts, a line under the heading says how
+ * many are being checked, or why none are and what to do. Garmin's own records are not shown: comparing
+ * with them was a one-time check of the numbers, and the tiles read cleaner without.
  */
 export function PersonalBestsSection({ state, checkedAt }: PersonalBestsSectionProps) {
   return (

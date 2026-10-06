@@ -12,7 +12,7 @@ import { paths } from "./lib/paths";
 import { registerRoutes } from "./routes";
 
 // Files the browser must revalidate on every load so a deploy reaches installed PWAs.
-const NO_CACHE_FILES = new Set(["index.html", "sw.js", "registerSW.js", "manifest.webmanifest"]);
+const NO_CACHE_FILES = new Set(["index.html", "sw.js", "manifest.webmanifest"]);
 
 function serveWebApp(app: Express, webDist: string): void {
   const indexHtml = path.join(webDist, "index.html");

@@ -217,7 +217,18 @@ jobs:
           test "$(cache_control /)" = "no-cache"
           test "$(cache_control "$asset")" = "public, max-age=31536000, immutable"
           test "$(cache_control /sw.js)" = "no-cache"
+          test "$(cache_control /index.html)" = "no-cache"
           curl -fsS -o /dev/null "$base/manifest.webmanifest"
+          # The app registers /sw.js itself (src/app/app-update.ts), and a new worker must take over open apps
+          # at once. vite-plugin-pwa sets neither workbox.skipWaiting nor clientsClaim with injectRegister: false,
+          # so vite.config.ts sets both. Without skipWaiting, Workbox still writes skipWaiting(), inside a listener
+          # for a SKIP_WAITING message no page sends. The negative checks use if: set -e never exits on `! grep`.
+          html="$(curl -fsS "$base/")"
+          if grep -q registerSW <<<"$html"; then echo "index.html still loads registerSW.js"; exit 1; fi
+          sw="$(curl -fsS "$base/sw.js")"
+          grep -qF 'skipWaiting()' <<<"$sw"
+          if grep -qF SKIP_WAITING <<<"$sw"; then echo "sw.js waits for a SKIP_WAITING message no page sends"; exit 1; fi
+          grep -qF 'clientsClaim()' <<<"$sw"
 
           # The owner seeded at boot signs in through Better Auth (Origin must equal APP_URL).
           curl -fsS -o /dev/null -c "$cookies" -H "Origin: $base" -H "Content-Type: application/json" \

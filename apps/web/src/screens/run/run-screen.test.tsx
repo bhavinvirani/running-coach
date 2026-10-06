@@ -5,7 +5,7 @@ import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { detailKey } from "@/api/query-keys";
-import { errorMessages } from "@/lib/errors";
+import { errorMessages, versionMismatchMessage } from "@/lib/errors";
 import { MISSING } from "@/lib/format";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import {
@@ -433,6 +433,26 @@ describe("RunScreen", () => {
       expect(detailFetches(calls)).toHaveLength(2);
     },
   );
+
+  it("offers Reload, not Retry, when the fetched detail comes in a shape this version cannot read, and keeps the stats (version mismatch)", async () => {
+    const detail = activityDetailFixture();
+    // A newer API renamed a lap field; asking again answers the detail it stored, in the same shape.
+    const laps = detail.laps.map(({ avgCadence, ...lap }) => ({ ...lap, cadenceAvg: avgCadence }));
+    const calls = fakeRunApi({
+      fetchDetail: () => json({ ...activityResponseFixture(), detail: { ...detail, laps } }),
+    });
+    renderRun();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(versionMismatchMessage);
+    expect(figure("Distance")).toHaveTextContent("10.0km");
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(reload).toHaveBeenCalledOnce();
+    expect(detailFetches(calls)).toHaveLength(1);
+  });
 
   it("says a run deleted on Garmin Connect is gone, keeps the stats and offers no Retry (deleted on Garmin)", async () => {
     const calls = fakeRunApi({ fetchDetail: () => problem(404, ErrorCode.notFound) });

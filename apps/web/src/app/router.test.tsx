@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorMessages } from "@/lib/errors";
+import { errorMessages, unreadWriteMessage, versionMismatchMessage } from "@/lib/errors";
 import { json, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
 import {
   activityDetailFixture,
@@ -22,10 +22,9 @@ import {
 } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
-import { backgroundAndReturn } from "@/test/lifecycle";
+import { backgroundAndReturn, settle } from "@/test/lifecycle";
 
-function renderApp(path: string) {
-  const queryClient = testQueryClient();
+function renderApp(path: string, queryClient = testQueryClient()) {
   const router = createMemoryRouter(appRoutes(queryClient), { initialEntries: [path] });
   render(
     <QueryClientProvider client={queryClient}>
@@ -81,6 +80,37 @@ describe("app routes", () => {
     expect(await screen.findByRole("button", { name: "Log in" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/login");
     expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(1);
+  });
+
+  it("offers Reload, not Retry, when /api/me answers in a shape this version cannot read, and asks once", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const me = meFixture();
+    // A coach detail this version does not know, as a newer API would send it.
+    const calls = stubFetch(() =>
+      json({ ...me, settings: { ...me.settings, coachDetail: "brief" } }),
+    );
+    renderApp("/");
+    expect(await screen.findByRole("alert")).toHaveTextContent(versionMismatchMessage);
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(calls.filter((call) => call.path === "/api/me")).toHaveLength(1);
+  });
+
+  it("shows a screen whose first load this version cannot read as the route's error inside the tabs", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const plan = planResponseFixture();
+    const unreadable = structuredClone(plan) as unknown as {
+      plan: { weeks: { sessions: { status: string }[] }[] };
+    };
+    unreadable.plan.weeks[0]!.sessions[0]!.status = "archived";
+    const calls = stubFetch((request) =>
+      request.path === "/api/plan" ? json(unreadable) : signedIn(request),
+    );
+    renderApp("/plan");
+    expect(await screen.findByRole("alert")).toHaveTextContent(versionMismatchMessage);
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Tabs" })).toBeInTheDocument();
+    expect(calls.filter((call) => call.path === "/api/plan")).toHaveLength(1);
   });
 
   it("opens Today at / inside the tab shell, as the first and selected tab", async () => {
@@ -288,6 +318,43 @@ describe("app routes", () => {
     expect(await screen.findByRole("heading", { name: "Progress" })).toBeInTheDocument();
 
     expect(syncs()).toHaveLength(1);
+  });
+
+  it("keeps the screen, its tabs and what is typed when the sync on open gets an answer this version cannot read", async () => {
+    let answerSync!: () => void;
+    const syncAnswered = new Promise<void>((resolve) => {
+      answerSync = resolve;
+    });
+    const calls = stubFetch(async (request) => {
+      if (request.path === "/api/me") {
+        const anHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+        return json(meFixture({ garmin: { status: "ok", lastSyncAt: anHourAgo } }));
+      }
+      if (request.method === "POST" && request.path === "/api/sync") {
+        // The sync takes seconds: its answer lands on a form the runner has filled in.
+        await syncAnswered;
+        // A field renamed by a newer API: this version cannot read the answer.
+        return json({ lastSyncAt: new Date().toISOString(), runsWritten: 0, activitiesRemoved: 0 });
+      }
+      return signedIn(request);
+    });
+    const queryClient = testQueryClient();
+    renderApp("/plan/goal", queryClient);
+    const raceDate = await screen.findByLabelText("Race date");
+    await userEvent.clear(raceDate);
+    await userEvent.type(raceDate, "2027-04-18");
+    await vi.waitFor(() =>
+      expect(calls.filter((call) => call.path === "/api/sync")).toHaveLength(1),
+    );
+    answerSync();
+    await vi.waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    await settle();
+
+    expect(screen.getByLabelText("Race date")).toHaveValue("2027-04-18");
+    expect(screen.getByRole("navigation", { name: "Tabs" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Today" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(unreadWriteMessage);
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
   });
 
   it.each([

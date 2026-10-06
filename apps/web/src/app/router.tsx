@@ -3,6 +3,7 @@ import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { isApiError } from "@/api/client";
 import { meQueryOptions } from "@/api/me";
 import { AppPending } from "./app-pending";
+import { lazyScreen } from "./lazy-screen";
 import { bootRetry } from "./query-client";
 import { ScreenErrorBoundary } from "./screen-error-boundary";
 import { TabShell } from "./tab-shell";
@@ -34,7 +35,9 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
           path: "/login",
           ErrorBoundary: ScreenErrorBoundary,
           lazy: {
-            Component: async () => (await import("@/screens/login/login-screen")).LoginScreen,
+            Component: lazyScreen(
+              async () => (await import("@/screens/login/login-screen")).LoginScreen,
+            ),
           },
         },
         {
@@ -47,14 +50,18 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               index: true,
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () => (await import("@/screens/today/today-screen")).TodayScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/today/today-screen")).TodayScreen,
+                ),
               },
             },
             {
               path: "plan",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () => (await import("@/screens/plan/plan-screen")).PlanScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/plan/plan-screen")).PlanScreen,
+                ),
               },
             },
             {
@@ -62,15 +69,18 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               path: "plan/goal",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () => (await import("@/screens/goal/goal-screen")).GoalScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/goal/goal-screen")).GoalScreen,
+                ),
               },
             },
             {
               path: "plan/weeks/:number",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () =>
-                  (await import("@/screens/plan-week/plan-week-screen")).PlanWeekScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/plan-week/plan-week-screen")).PlanWeekScreen,
+                ),
               },
             },
             {
@@ -78,34 +88,40 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               path: "plan/sessions/new",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () =>
-                  (await import("@/screens/workout-builder/workout-builder-screen"))
-                    .WorkoutBuilderScreen,
+                Component: lazyScreen(
+                  async () =>
+                    (await import("@/screens/workout-builder/workout-builder-screen"))
+                      .WorkoutBuilderScreen,
+                ),
               },
             },
             {
               path: "plan/sessions/:id",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () =>
-                  (await import("@/screens/session/session-screen")).SessionScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/session/session-screen")).SessionScreen,
+                ),
               },
             },
             {
               path: "plan/sessions/:id/edit",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () =>
-                  (await import("@/screens/workout-builder/workout-builder-screen"))
-                    .WorkoutBuilderScreen,
+                Component: lazyScreen(
+                  async () =>
+                    (await import("@/screens/workout-builder/workout-builder-screen"))
+                      .WorkoutBuilderScreen,
+                ),
               },
             },
             {
               path: "progress",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () =>
-                  (await import("@/screens/progress/progress-screen")).ProgressScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/progress/progress-screen")).ProgressScreen,
+                ),
               },
             },
             {
@@ -113,15 +129,18 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               path: "runs/:id",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () => (await import("@/screens/run/run-screen")).RunScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/run/run-screen")).RunScreen,
+                ),
               },
             },
             {
               path: "settings",
               ErrorBoundary: ScreenErrorBoundary,
               lazy: {
-                Component: async () =>
-                  (await import("@/screens/settings/settings-screen")).SettingsScreen,
+                Component: lazyScreen(
+                  async () => (await import("@/screens/settings/settings-screen")).SettingsScreen,
+                ),
               },
             },
           ],

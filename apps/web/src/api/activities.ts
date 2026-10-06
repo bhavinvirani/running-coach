@@ -93,13 +93,18 @@ export function useActivity(id: string) {
 /**
  * POST /api/activities/:id/detail: fetches the run's detail from Garmin once, stores it and answers with the
  * whole run, which replaces the cached GET, so no second request follows. Never retried, like Sync now: a 429
- * from Garmin must not be repeated, and the runner decides when to try again.
+ * from Garmin must not be repeated, and the runner decides when to try again. Idempotent: once stored, the
+ * detail is answered without Garmin, so asking again only reads it back.
  */
 export function useFetchActivityDetail(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      apiFetch(activityPath(id, "/detail"), { method: "POST", schema: activityResponseSchema }),
+      apiFetch(activityPath(id, "/detail"), {
+        method: "POST",
+        schema: activityResponseSchema,
+        idempotent: true,
+      }),
     onSuccess: (response: ActivityResponse) =>
       queryClient.setQueryData(detailKey("activities", id), response),
   });

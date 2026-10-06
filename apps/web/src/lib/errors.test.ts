@@ -1,13 +1,17 @@
 import { ErrorCode } from "@running-coach/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
+import { ScreenLoadError } from "@/app/lazy-screen";
 import {
   errorCodeMessage,
   errorMessage,
   errorMessages,
   logInErrorMessage,
+  isVersionMismatch,
   networkErrorMessage,
   unknownErrorMessage,
+  unreadWriteMessage,
+  versionMismatchMessage,
 } from "./errors";
 
 describe("errorMessage", () => {
@@ -20,6 +24,32 @@ describe("errorMessage", () => {
 
   it("has no message for a code that does not exist", () => {
     expect(Object.keys(errorMessages).sort()).toEqual(Object.values(ErrorCode).sort());
+  });
+
+  it("says this version does not match the server for an answer it cannot read and a screen whose code is gone", () => {
+    const read = new ApiError({ status: 200, code: ErrorCode.internal, contractMismatch: "read" });
+    expect(errorMessage(read)).toBe(versionMismatchMessage);
+    expect(errorMessage(new ScreenLoadError("gone"))).toBe(versionMismatchMessage);
+    expect(isVersionMismatch(read)).toBe(true);
+    expect(isVersionMismatch(new ScreenLoadError("gone"))).toBe(true);
+    expect(isVersionMismatch(new ApiError({ status: 500, code: ErrorCode.internal }))).toBe(false);
+  });
+
+  it("says a write it could not read may have gone through, so the runner checks before repeating it", () => {
+    const write = new ApiError({
+      status: 200,
+      code: ErrorCode.internal,
+      contractMismatch: "write",
+    });
+    expect(errorMessage(write)).toBe(unreadWriteMessage);
+  });
+
+  it("asks to check the connection when a screen's code did not load offline, also once back online", () => {
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const offline = new ScreenLoadError("offline");
+    expect(errorMessage(offline)).toBe(networkErrorMessage);
+    onLine.mockReturnValue(true);
+    expect(errorMessage(offline)).toBe(networkErrorMessage);
   });
 
   it("tells the user to reconnect when the Garmin login expired", () => {

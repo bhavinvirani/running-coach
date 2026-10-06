@@ -3,10 +3,17 @@ import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
+import { throwOnFirstLoadMismatch } from "@/app/query-client";
 
 export function testQueryClient(): QueryClient {
   return new QueryClient({
-    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    defaultOptions: {
+      queries: {
+        retry: false,
+        refetchOnWindowFocus: false,
+        throwOnError: throwOnFirstLoadMismatch,
+      },
+    },
   });
 }
 
