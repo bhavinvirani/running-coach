@@ -53,7 +53,8 @@ describe("SettingsScreen", () => {
       expect(card?.children).toHaveLength(rows);
       for (const row of Array.from(card?.children ?? [])) expect(row).toHaveClass("min-h-12");
     }
-    expect(account).toHaveClass("rounded-md", "border", "bg-surface-1");
+    // The account sits on the same kind of card, its email row then Log out.
+    expect(account?.lastElementChild).toHaveClass("rounded-md", "bg-surface-1", "divide-y");
     expect(screen.queryByRole("link", { name: /^Units/ })).not.toBeInTheDocument();
   });
 

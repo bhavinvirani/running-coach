@@ -101,7 +101,7 @@ test("each row opens its own screen inside the Settings tab, and Back returns to
       shows: () =>
         expect(
           page.getByText(
-            "No run with heart rate yet, so no zones. Sync a run recorded with heart rate.",
+            "No run with heart rate yet: sync one recorded with heart rate to see your zones.",
             { exact: true },
           ),
         ).toBeVisible(),

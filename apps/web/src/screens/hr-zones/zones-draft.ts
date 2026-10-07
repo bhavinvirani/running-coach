@@ -8,12 +8,16 @@ import {
 } from "@running-coach/shared";
 import { formatBpmRange } from "@/lib/format";
 
-/** One zone's lower bound as typed, both ways: a whole percent of max HR and whole bpm. */
-export type ZoneDraft = { percent: string; bpm: string };
+/**
+ * One zone's lower bound as typed, both ways: a whole percent of max HR and whole bpm. share is its exact
+ * share of max HR, so a new max HR moves the bpm without the rounding of the whole percent (a floor at
+ * 134 of 196 is 68.4%, not 68%); null while unknown, after a bpm typed with no max HR to divide by.
+ */
+export type ZoneDraft = { percent: string; bpm: string; share: number | null };
 
 /**
  * The zones form as typed: text, so a field can be empty or half typed. The bpm are what gets saved; each
- * percent follows its bpm, and a new max HR keeps the percents and moves the bpm.
+ * percent follows its bpm, and a new max HR keeps the shares and moves the bpm.
  */
 export type ZonesDraft = { maxHr: string; zones: readonly ZoneDraft[] };
 
@@ -29,27 +33,41 @@ function percentBase(maxHr: string): number | null {
   return max > 0 ? max : null;
 }
 
+/** The zone at an exact share of max HR: whole bpm and whole percent, both from the share. */
+function atShare(share: number, max: number): ZoneDraft {
+  return {
+    share,
+    percent: String(Math.round(share * 100)),
+    bpm: String(bpmAtPercentOfMaxHr(share * 100, max)),
+  };
+}
+
 export function draftFromZones(zones: HrZones): ZonesDraft {
   return {
     maxHr: String(zones.maxHr),
     zones: zones.lowBpm.map((bpm) => ({
+      share: bpm / zones.maxHr,
       percent: String(percentOfMaxHr(bpm, zones.maxHr)),
       bpm: String(bpm),
     })),
   };
 }
 
-/** A new max HR keeps each zone's percent and moves its bpm to that share of the new max. */
+/**
+ * A new max HR keeps each zone's share and moves its bpm to that share of the new max, so typing the old
+ * max again gives the old bpm back. A zone whose share is unknown takes it from its bpm.
+ */
 export function withMaxHr(draft: ZonesDraft, maxHr: string): ZonesDraft {
   const max = percentBase(maxHr);
   if (max === null) return { ...draft, maxHr };
   return {
     maxHr,
     zones: draft.zones.map((zone) => {
-      const percent = parseWhole(zone.percent);
-      return Number.isNaN(percent)
+      if (zone.share !== null) return atShare(zone.share, max);
+      const bpm = parseWhole(zone.bpm);
+      return Number.isNaN(bpm)
         ? zone
-        : { ...zone, bpm: String(bpmAtPercentOfMaxHr(percent, max)) };
+        : { ...zone, share: bpm / max, percent: String(percentOfMaxHr(bpm, max)) };
     }),
   };
 }
@@ -58,21 +76,26 @@ export function withMaxHr(draft: ZonesDraft, maxHr: string): ZonesDraft {
 export function withPercent(draft: ZonesDraft, index: number, percent: string): ZonesDraft {
   const max = percentBase(draft.maxHr);
   const value = parseWhole(percent);
-  return withZone(draft, index, (zone) => ({
-    percent,
-    bpm: max === null || Number.isNaN(value) ? zone.bpm : String(bpmAtPercentOfMaxHr(value, max)),
-  }));
+  return withZone(draft, index, (zone) => {
+    if (Number.isNaN(value)) return { ...zone, percent };
+    const share = value / 100;
+    return {
+      share,
+      percent,
+      bpm: max === null ? zone.bpm : String(bpmAtPercentOfMaxHr(value, max)),
+    };
+  });
 }
 
 /** A zone's bpm, and its percent of max HR. */
 export function withBpm(draft: ZonesDraft, index: number, bpm: string): ZonesDraft {
   const max = percentBase(draft.maxHr);
   const value = parseWhole(bpm);
-  return withZone(draft, index, (zone) => ({
-    bpm,
-    percent:
-      max === null || Number.isNaN(value) ? zone.percent : String(percentOfMaxHr(value, max)),
-  }));
+  return withZone(draft, index, (zone) => {
+    if (Number.isNaN(value)) return { ...zone, bpm };
+    if (max === null) return { ...zone, bpm, share: null };
+    return { bpm, share: value / max, percent: String(percentOfMaxHr(value, max)) };
+  });
 }
 
 function withZone(
@@ -109,9 +132,19 @@ export function checkDraft(draft: ZonesDraft): DraftCheck {
     maxHr: parseWhole(draft.maxHr),
     lowBpm: draft.zones.map((zone) => parseWhole(zone.bpm)),
   });
-  if (parsed.success) return { success: true, zones: parsed.data };
-  const issue = parsed.error.issues[0];
-  return { success: false, message: issue ? issueMessage(issue) : invalidMaxHr };
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return { success: false, message: issue ? issueMessage(issue) : invalidMaxHr };
+  }
+  // The bpm are saved, but a percent that is not whole would leave the screen showing what was not saved.
+  const halfTyped = draft.zones.findIndex((zone) => Number.isNaN(parseWhole(zone.percent)));
+  if (halfTyped >= 0) {
+    return {
+      success: false,
+      message: `Zone ${halfTyped + 1} starts at a whole percent of max HR.`,
+    };
+  }
+  return { success: true, zones: parsed.data };
 }
 
 const invalidMaxHr = `Max HR is a whole number from ${MIN_MAX_HR} to ${MAX_MAX_HR} bpm.`;

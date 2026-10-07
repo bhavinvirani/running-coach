@@ -116,14 +116,14 @@ function SkeletonGroup({ rows }: { rows: number }) {
   );
 }
 
-/** The Account card: its title inside, the email row, then Log out. */
+/** The Account card like the list cards: heading above, then the email row and Log out. */
 function AccountSkeleton() {
   return (
-    <div className="rounded-md border border-line bg-surface-1 px-4">
-      <div className="mt-4 flex h-5.5 items-center">
+    <div className="flex flex-col gap-2">
+      <div className="flex h-5.5 items-center">
         <div className="h-4 w-20 rounded-sm bg-surface-2" />
       </div>
-      <div className="flex flex-col divide-y divide-line">
+      <div className="flex flex-col divide-y divide-line rounded-md bg-surface-1 px-4">
         <div className="flex min-h-12 items-center justify-between py-3">
           <div className="h-4 w-12 rounded-sm bg-surface-2" />
           <div className="h-4 w-40 rounded-sm bg-surface-2" />

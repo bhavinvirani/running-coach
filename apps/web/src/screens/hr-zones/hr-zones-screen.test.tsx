@@ -122,7 +122,7 @@ describe("HrZonesScreen", () => {
 
     expect(
       await screen.findByText(
-        "No run with heart rate yet, so no zones. Sync a run recorded with heart rate.",
+        "No run with heart rate yet: sync one recorded with heart rate to see your zones.",
       ),
     ).toHaveClass("text-body", "text-ink-2");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();

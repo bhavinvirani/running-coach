@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 
 /**
- * A card of related settings with its title inside, rows divided by hairlines: Account on Settings, and
- * the Garmin and Claude screens until they are rebuilt (#51).
+ * A card of related settings with its title inside, rows divided by hairlines: the Garmin and Claude
+ * screens until they are rebuilt (#51). SettingsRow is also Account's email row on Settings.
  */
 export function SettingsCard({ title, children }: { title?: string; children: ReactNode }) {
   return (

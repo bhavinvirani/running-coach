@@ -28,34 +28,34 @@ describe("draftFromZones", () => {
 describe("withPercent", () => {
   it("moves the zone's bpm to that share of max HR and leaves the other zones", () => {
     const draft = withPercent(garmin(), 1, "65");
-    expect(draft.zones[1]).toEqual({ percent: "65", bpm: "127" });
+    expect(draft.zones[1]).toMatchObject({ percent: "65", bpm: "127" });
     expect(bpms(draft)).toEqual(["98", "127", "137", "157", "176"]);
   });
 
   it("keeps the bpm while the percent is empty or not a whole number", () => {
-    expect(withPercent(garmin(), 1, "").zones[1]).toEqual({ percent: "", bpm: "118" });
-    expect(withPercent(garmin(), 1, "6.5").zones[1]).toEqual({ percent: "6.5", bpm: "118" });
+    expect(withPercent(garmin(), 1, "").zones[1]).toMatchObject({ percent: "", bpm: "118" });
+    expect(withPercent(garmin(), 1, "6.5").zones[1]).toMatchObject({ percent: "6.5", bpm: "118" });
   });
 
   it("keeps the bpm while there is no max HR to take a share of", () => {
     const draft = withPercent(withMaxHr(garmin(), ""), 1, "65");
-    expect(draft.zones[1]).toEqual({ percent: "65", bpm: "118" });
+    expect(draft.zones[1]).toMatchObject({ percent: "65", bpm: "118" });
   });
 });
 
 describe("withBpm", () => {
   it("moves the zone's percent to the new bpm's share of max HR", () => {
     const draft = withBpm(garmin(), 3, "167");
-    expect(draft.zones[3]).toEqual({ percent: "85", bpm: "167" });
+    expect(draft.zones[3]).toMatchObject({ percent: "85", bpm: "167" });
   });
 
   it("keeps the percent while the bpm is half typed", () => {
-    expect(withBpm(garmin(), 3, "").zones[3]).toEqual({ percent: "80", bpm: "" });
+    expect(withBpm(garmin(), 3, "").zones[3]).toMatchObject({ percent: "80", bpm: "" });
   });
 
   it("keeps the percent at a max HR of 0 instead of dividing by it", () => {
     const draft = withBpm(withMaxHr(garmin(), "0"), 3, "167");
-    expect(draft.zones[3]).toEqual({ percent: "80", bpm: "167" });
+    expect(draft.zones[3]).toMatchObject({ percent: "80", bpm: "167" });
   });
 });
 
@@ -72,9 +72,27 @@ describe("withMaxHr", () => {
     expect(bpms(withMaxHr(typing, "196"))).toEqual(["98", "118", "137", "157", "176"]);
   });
 
-  it("keeps a zone's bpm whose percent is not a whole number", () => {
+  it("moves a zone whose percent is half typed by its share and fills the percent back in", () => {
     const draft = withMaxHr(withPercent(garmin(), 0, ""), "200");
-    expect(draft.zones[0]).toEqual({ percent: "", bpm: "98" });
+    expect(draft.zones[0]).toMatchObject({ percent: "50", bpm: "100" });
+  });
+
+  it("gives floors that are not whole percents back exactly when the same max HR is typed again", () => {
+    const lthr = () => draftFromZones({ maxHr: 196, lowBpm: [120, 134, 148, 162, 176] });
+    const retyped = withMaxHr(withMaxHr(withMaxHr(lthr(), "1"), "19"), "196");
+    expect(bpms(retyped)).toEqual(["120", "134", "148", "162", "176"]);
+    const awayAndBack = withMaxHr(withMaxHr(lthr(), "190"), "196");
+    expect(bpms(awayAndBack)).toEqual(["120", "134", "148", "162", "176"]);
+  });
+
+  it("keeps a typed bpm when max HR moves away and back", () => {
+    const typed = withBpm(garmin(), 1, "130");
+    expect(bpms(withMaxHr(withMaxHr(typed, "190"), "196"))[1]).toBe("130");
+  });
+
+  it("takes the share from a bpm typed while there was no max HR", () => {
+    const draft = withMaxHr(withBpm(withMaxHr(garmin(), ""), 1, "120"), "200");
+    expect(draft.zones[1]).toMatchObject({ percent: "60", bpm: "120" });
   });
 });
 
@@ -125,6 +143,12 @@ describe("checkDraft", () => {
     const message = "Max HR is a whole number from 100 to 240 bpm.";
     expect(checkDraft(withMaxHr(garmin(), "250"))).toEqual({ success: false, message });
     expect(checkDraft({ ...garmin(), maxHr: "" })).toEqual({ success: false, message });
+  });
+
+  it("names a zone whose percent is empty or not whole, so nothing unseen is saved (invalid zones)", () => {
+    const message = "Zone 2 starts at a whole percent of max HR.";
+    expect(checkDraft(withPercent(garmin(), 1, ""))).toEqual({ success: false, message });
+    expect(checkDraft(withPercent(garmin(), 1, "62.5"))).toEqual({ success: false, message });
   });
 
   it("names the zone whose bpm is not a whole number (invalid zones)", () => {

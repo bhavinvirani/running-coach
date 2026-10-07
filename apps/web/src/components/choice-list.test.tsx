@@ -39,10 +39,10 @@ describe("ChoiceList", () => {
     expect(screen.getByText("Large")).toHaveClass("text-body", "text-ink");
   });
 
-  it("marks the checked radio with accent and the others with ink-3", () => {
+  it("marks the checked radio with ink and the others with ink-3", () => {
     renderList();
 
-    expect(screen.getByRole("radio", { name: "Medium" })).toHaveClass("aria-checked:border-accent");
+    expect(screen.getByRole("radio", { name: "Medium" })).toHaveClass("aria-checked:border-ink");
     expect(screen.getByRole("radio", { name: "Small" })).toHaveClass("border-ink-3");
   });
 

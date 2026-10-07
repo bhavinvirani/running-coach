@@ -3,7 +3,7 @@ import type { HrZonesSource } from "@running-coach/shared";
 export const hrZonesCopy = {
   title: "Heart-rate zones",
   loading: "Loading heart-rate zones",
-  empty: "No run with heart rate yet, so no zones. Sync a run recorded with heart rate.",
+  empty: "No run with heart rate yet: sync one recorded with heart rate to see your zones.",
   openToday: "Open Today",
   zones: "Zones",
   maxHr: "Max HR",
