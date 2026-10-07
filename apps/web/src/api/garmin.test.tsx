@@ -17,7 +17,14 @@ import {
 import { settle } from "@/test/lifecycle";
 import { testQueryClient } from "@/test/render";
 import { calendarKey } from "./calendar";
-import { SentOnce, useDisconnectGarmin, useFinishGarminLogin, useStartGarminLogin } from "./garmin";
+import {
+  SentOnce,
+  useDisconnectGarmin,
+  useFinishGarminLogin,
+  useGarminDisconnecting,
+  useGarminLogin,
+  useStartGarminLogin,
+} from "./garmin";
 import { useGarminConnection } from "./me";
 import { planKey } from "./plan";
 import { actionKey, detailKey } from "./query-keys";
@@ -53,7 +60,9 @@ function renderGarminHooks(handler: Handler, me: MeResponse = meWithStatus("expi
       return {
         start: useStartGarminLogin(),
         finish: useFinishGarminLogin(),
+        login: useGarminLogin(),
         disconnect: useDisconnectGarmin(),
+        disconnecting: useGarminDisconnecting(),
         syncNow: useSyncNow(),
         latest: useLatestSync(),
         status: useGarminConnection().data?.status,
@@ -177,6 +186,46 @@ describe("useStartGarminLogin and useFinishGarminLogin", () => {
   });
 });
 
+describe("useGarminLogin", () => {
+  it("keeps the login waiting through a wrong code and a Garmin outage, drops it on Garmin's 429 on the code, and forgets it on Start again (2FA)", async () => {
+    let codeAnswer = problem(422, ErrorCode.garminMfaRejected);
+    const { result } = renderGarminHooks(({ path }) => {
+      if (path === "/api/garmin/login") return json(codeNeededFixture());
+      if (path === "/api/garmin/login/code") return codeAnswer;
+      return json(meWithStatus("expired"));
+    });
+    // The cache tells its readers a tick after the answer, so each step waits for that tick.
+    const sendCode = async () => {
+      await act(() =>
+        result.current.finish
+          .mutateAsync(new SentOnce({ mfaCode: FIXTURE_CODE }))
+          .catch(() => undefined),
+      );
+      await settle();
+    };
+
+    expect(result.current.login).toMatchObject({ pending: false, waiting: null });
+    await act(() => result.current.start.mutateAsync(credentials()));
+    await waitFor(() => expect(result.current.login.waiting).not.toBeNull());
+    const waiting = result.current.login.waiting;
+
+    await sendCode();
+    codeAnswer = problem(502, ErrorCode.garminUnavailable);
+    await sendCode();
+    expect(result.current.login.pending).toBe(false);
+    expect(result.current.login.waiting).toEqual(waiting);
+
+    codeAnswer = problem(429, ErrorCode.garminRateLimited);
+    await sendCode();
+    await waitFor(() => expect(result.current.login.waiting).toBeNull());
+
+    await act(() => result.current.start.mutateAsync(credentials()));
+    await waitFor(() => expect(result.current.login.waiting).not.toBeNull());
+    act(() => result.current.login.forget());
+    await waitFor(() => expect(result.current.login.waiting).toBeNull());
+  });
+});
+
 describe("useDisconnectGarmin", () => {
   it("shows not connected at once and reads /api/me and every session view again", async () => {
     const { result, calls, queryClient, invalidated } = renderGarminHooks(
@@ -190,6 +239,7 @@ describe("useDisconnectGarmin", () => {
     const answer = await act(() => result.current.disconnect.mutateAsync({ workouts: "remove" }));
 
     expect(answer).toEqual({ removedWorkouts: 2 });
+    expect(result.current.disconnecting).toEqual({ pending: false, removing: false });
     expect(status(queryClient)).toBe("not_connected");
     expect(invalidated()).toEqual({ calendar: true, plan: true, session: true });
     const sent = calls.find((call) => call.method === "DELETE");

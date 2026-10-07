@@ -19,11 +19,13 @@ type DisconnectGarminProps = {
 
 /**
  * Disconnect Garmin, confirmed in place (never a browser dialog), as SessionActions confirms a skip: the
- * question, the choice to remove the app's workouts from Garmin first (on by default), then Disconnect
- * Garmin and Cancel. A failure keeps the login and the step. Garmin turning the removal down means the login
- * expired: the choice turns to keep, and /api/me read again drops it once it says expired. Swapping the
- * button for the step takes away the focused control, so focus follows: to the question, back to
- * Disconnect Garmin on Cancel.
+ * question, the choice to remove the app's upcoming workouts from Garmin first (on by default), then
+ * Disconnect Garmin and Cancel. A failure keeps the login and the step. Garmin turning the removal down
+ * means the login expired: the choice turns to keep, and /api/me read again drops it once it says expired;
+ * a reconnect after that brings the choice back on and drops the refusal. Opened again while a disconnect
+ * still runs (the screen was left and came back), the step shows it running. Swapping the button for the
+ * step takes away the focused control, so focus follows: to the question, back to Disconnect Garmin on
+ * Cancel.
  */
 export function DisconnectGarmin({
   canRemove,
@@ -31,8 +33,9 @@ export function DisconnectGarmin({
   onStart,
   onDisconnected,
 }: DisconnectGarminProps) {
-  const [confirming, setConfirming] = useState(false);
-  const [removeWorkouts, setRemoveWorkouts] = useState(true);
+  const { pending, removing } = disconnect;
+  const [confirming, setConfirming] = useState(pending);
+  const [removeWorkouts, setRemoveWorkouts] = useState(!pending || removing);
   const [problem, setProblem] = useState<string | null>(null);
   const questionId = useId();
   const checkboxId = useId();
@@ -40,7 +43,17 @@ export function DisconnectGarmin({
   const disconnectButton = useRef<HTMLButtonElement>(null);
   // Set with the swap, so only a render the runner caused moves focus, never a refetch.
   const focusAfterSwap = useRef<"question" | "disconnect" | null>(null);
-  const { pending, removing } = disconnect;
+
+  // Reconnected: removal works again, so the choice is back on and the refusal no longer holds. Without
+  // this the cleared box would send keep after the reconnect the refusal asked for.
+  const [couldRemove, setCouldRemove] = useState(canRemove);
+  if (canRemove !== couldRemove) {
+    setCouldRemove(canRemove);
+    if (canRemove) {
+      setRemoveWorkouts(true);
+      setProblem(null);
+    }
+  }
 
   useEffect(() => {
     const target = focusAfterSwap.current;
@@ -69,6 +82,7 @@ export function DisconnectGarmin({
   const workouts = canRemove && removeWorkouts ? "remove" : "keep";
 
   const confirm = () => {
+    if (pending) return;
     setProblem(null);
     onStart();
     disconnect.disconnect(

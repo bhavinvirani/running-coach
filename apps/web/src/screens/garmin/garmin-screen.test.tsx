@@ -8,8 +8,9 @@ import type { QueryClient } from "@tanstack/react-query";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { LOGIN_WAITS_MS } from "@/api/garmin";
 import { detailKey } from "@/api/query-keys";
-import { errorMessages } from "@/lib/errors";
+import { errorMessages, networkErrorMessage } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch, type FakeRequest } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
 import {
@@ -103,6 +104,10 @@ function fakeGarminApi(initial: MeResponse, overrides: Overrides = {}) {
     forgetLogin: () => {
       pendingLogin = null;
     },
+    /** Garmin sent a code for a start the test answered itself (a held login). */
+    awaitCode: () => {
+      pendingLogin = { wrongCodes: 0 };
+    },
     /** What the API says from now on, as after Garmin turned a removal down. */
     serverSays: (next: MeResponse) => {
       me = next;
@@ -122,6 +127,8 @@ function renderGarmin(me: MeResponse = meFixture(), overrides: Overrides = {}) {
 const garmin = () => screen.getByRole("region", { name: "Garmin" });
 const findGarmin = () => screen.findByRole("region", { name: "Garmin" });
 const requests = (calls: FakeRequest[]) => calls.map((call) => `${call.method} ${call.path}`);
+const sent = (calls: FakeRequest[], request: string) =>
+  requests(calls).filter((each) => each === request).length;
 const meReads = (calls: FakeRequest[]) => calls.filter((call) => call.path === "/api/me").length;
 
 /** Holds one answer until the test gives it. */
@@ -229,11 +236,21 @@ describe("GarminScreen", () => {
     expect(within(card).getByText(garminCopy.connectIntro)).toHaveClass("text-body", "text-ink-2");
     const email = within(card).getByLabelText(garminCopy.email);
     expect(email).toHaveAttribute("type", "email");
-    expect(email).toHaveAttribute("autocomplete", "username");
     const password = within(card).getByLabelText(garminCopy.password);
     expect(password).toHaveAttribute("type", "password");
-    expect(password).toHaveAttribute("autocomplete", "current-password");
     expect(password).toHaveAccessibleDescription(garminCopy.passwordHelp);
+    // A third party's login on the app's origin: password managers must neither offer the app's own login
+    // (username, current-password on the login screen) nor save the Garmin password over it.
+    for (const [field, name] of [
+      [email, "garmin-email"],
+      [password, "garmin-password"],
+    ] as const) {
+      expect(field).toHaveAttribute("name", name);
+      expect(field).toHaveAttribute("autocomplete", "off");
+      expect(field).toHaveAttribute("data-1p-ignore");
+      expect(field).toHaveAttribute("data-lpignore", "true");
+      expect(field).toHaveAttribute("data-bwignore");
+    }
     const help = within(card).getByText("pnpm garmin:connect").closest("p");
     expect(help).toHaveTextContent(
       /^If signing in here does not work, run pnpm garmin:connect with this app's address on your laptop\.$/,
@@ -277,7 +294,8 @@ describe("GarminScreen", () => {
     login.give(json(codeNeededFixture()));
 
     const code = await within(card).findByLabelText(garminCopy.code);
-    expect(within(card).getByText(garminCopy.codeSent)).toBeInTheDocument();
+    // Focus lands in the field, so the field itself says where the code comes from.
+    expect(code).toHaveAccessibleDescription(garminCopy.codeSent);
     expect(code).toHaveAttribute("autocomplete", "one-time-code");
     expect(code).toHaveAttribute("inputmode", "numeric");
     await vi.waitFor(() => expect(code).toHaveFocus());
@@ -386,8 +404,8 @@ describe("GarminScreen", () => {
     expect(within(garmin()).getByRole("alert")).toHaveTextContent(errorMessages.garmin_login_lost);
   });
 
-  it("starts again on step 1 with the email kept and the password cleared", async () => {
-    const { calls } = renderGarmin(notConnected());
+  it("starts again on step 1 with the email kept and the password cleared, also after leaving and coming back", async () => {
+    const { calls, router } = renderGarmin(notConnected());
 
     await signIn();
     await within(garmin()).findByLabelText(garminCopy.code);
@@ -399,6 +417,147 @@ describe("GarminScreen", () => {
     expect(password).toHaveValue("");
     await vi.waitFor(() => expect(password).toHaveFocus());
     expect(requests(calls)).toEqual(["GET /api/me", "POST /api/garmin/login"]);
+
+    await act(() => router.navigate("/settings"));
+    await act(() => router.navigate("/settings/garmin"));
+
+    expect(
+      await within(await findGarmin()).findByLabelText(garminCopy.password),
+    ).toBeInTheDocument();
+    expect(within(garmin()).queryByLabelText(garminCopy.code)).not.toBeInTheDocument();
+  });
+
+  it("goes back to step 1 with Garmin's limit sentence when Garmin answers the code with a 429, which drops the login (Garmin 429 on the code)", async () => {
+    const { calls } = renderGarmin(notConnected(), {
+      code: () => problem(429, ErrorCode.garminRateLimited),
+    });
+
+    await signIn();
+    await sendCode(FIXTURE_CODE);
+
+    expect(await within(garmin()).findByRole("alert")).toHaveTextContent(
+      garminCopy.loginRateLimited,
+    );
+    expect(within(garmin()).queryByLabelText(garminCopy.code)).not.toBeInTheDocument();
+    expect(within(garmin()).getByLabelText(garminCopy.email)).toHaveValue(FIXTURE_EMAIL);
+    const password = within(garmin()).getByLabelText(garminCopy.password);
+    expect(password).toHaveValue("");
+    await vi.waitFor(() => expect(password).toHaveFocus());
+    expect(sent(calls, "POST /api/garmin/login/code")).toBe(1);
+  });
+
+  it("goes back to step 1 with its message when the API's proof of the new login fails after the code (proof failure)", async () => {
+    renderGarmin(notConnected(), { code: () => problem(409, ErrorCode.garminAuthExpired) });
+
+    await signIn();
+    await sendCode(FIXTURE_CODE);
+
+    expect(await within(garmin()).findByRole("alert")).toHaveTextContent(
+      errorMessages.garmin_auth_expired,
+    );
+    expect(within(garmin()).queryByLabelText(garminCopy.code)).not.toBeInTheDocument();
+    expect(within(garmin()).getByLabelText(garminCopy.email)).toHaveValue(FIXTURE_EMAIL);
+    expect(within(garmin()).getByLabelText(garminCopy.password)).toHaveValue("");
+    expect(within(garmin()).getByText("Not connected")).toBeInTheDocument();
+  });
+
+  it("keeps the code step when the code did not reach Garmin, got no answer or met the app's own limit, and the same login then connects (Garmin outage)", async () => {
+    let answer: () => Answer | undefined = () => problem(502, ErrorCode.garminUnavailable);
+    const { calls } = renderGarmin(notConnected(), { code: () => answer() });
+    const connect = () =>
+      userEvent.click(within(garmin()).getByRole("button", { name: "Connect Garmin" }));
+    const expectCodeStep = async (message: string) => {
+      await vi.waitFor(() =>
+        expect(within(garmin()).getByRole("alert")).toHaveTextContent(message),
+      );
+      expect(within(garmin()).getByLabelText(garminCopy.code)).toHaveValue(FIXTURE_CODE);
+    };
+
+    await signIn();
+    await sendCode(FIXTURE_CODE);
+    await expectCodeStep(errorMessages.garmin_unavailable);
+
+    answer = () => Promise.reject(new TypeError("Failed to fetch"));
+    await connect();
+    await expectCodeStep(networkErrorMessage);
+
+    answer = () => problem(429, ErrorCode.rateLimited);
+    await connect();
+    await expectCodeStep(errorMessages.rate_limited);
+
+    answer = () => undefined;
+    await connect();
+
+    expect(await within(garmin()).findByText("Garmin connected.")).toBeInTheDocument();
+    expect(sent(calls, "POST /api/garmin/login")).toBe(1);
+    expect(sent(calls, "POST /api/garmin/login/code")).toBe(4);
+  });
+
+  it("still reads Connecting Garmin…, held, after leaving mid-sign-in and coming back, sends no second start, and swaps to the code once Garmin sends it (navigation)", async () => {
+    const login = held();
+    const { calls, router, awaitCode } = renderGarmin(notConnected(), {
+      login: () => login.answer,
+    });
+
+    await signIn();
+    await act(() => router.navigate("/settings"));
+    expect(screen.getByText("Route not under test")).toBeInTheDocument();
+    await act(() => router.navigate("/settings/garmin"));
+
+    const card = await findGarmin();
+    const pending = within(card).getByRole("button", { name: "Connecting Garmin…" });
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(within(card).getByLabelText(garminCopy.email)).toHaveAttribute("readonly");
+    expect(within(card).getByLabelText(garminCopy.password)).toHaveAttribute("readonly");
+
+    awaitCode();
+    login.give(json(codeNeededFixture()));
+
+    const code = await within(garmin()).findByLabelText(garminCopy.code);
+    await vi.waitFor(() => expect(code).toHaveFocus());
+    expect(sent(calls, "POST /api/garmin/login")).toBe(1);
+    await sendCode(FIXTURE_CODE);
+    expect(await within(garmin()).findByText("Garmin connected.")).toBeInTheDocument();
+  });
+
+  it("opens on the code step when Garmin sent the code while the screen was left, and that code connects (navigation, 2FA)", async () => {
+    const login = held();
+    const { calls, router, queryClient, awaitCode } = renderGarmin(notConnected(), {
+      login: () => login.answer,
+    });
+
+    await signIn();
+    await act(() => router.navigate("/settings"));
+    awaitCode();
+    login.give(json(codeNeededFixture()));
+    await vi.waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    await act(() => router.navigate("/settings/garmin"));
+
+    const code = await within(await findGarmin()).findByLabelText(garminCopy.code);
+    expect(code).toHaveAccessibleDescription(garminCopy.codeSent);
+    expect(within(garmin()).queryByLabelText(garminCopy.password)).not.toBeInTheDocument();
+    await sendCode(FIXTURE_CODE);
+
+    expect(await within(garmin()).findByText("Garmin connected.")).toBeInTheDocument();
+    expect(sent(calls, "POST /api/garmin/login")).toBe(1);
+  });
+
+  it("opens on the code step while Garmin waits for it, and on step 1 once its 5 minutes have passed (navigation, lost login)", async () => {
+    const { router } = renderGarmin(notConnected());
+
+    await signIn();
+    await within(garmin()).findByLabelText(garminCopy.code);
+    await act(() => router.navigate("/settings"));
+    await act(() => router.navigate("/settings/garmin"));
+    expect(await within(await findGarmin()).findByLabelText(garminCopy.code)).toBeInTheDocument();
+
+    await act(() => router.navigate("/settings"));
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + LOGIN_WAITS_MS);
+    await act(() => router.navigate("/settings/garmin"));
+
+    expect(await within(await findGarmin()).findByLabelText(garminCopy.password)).toHaveValue("");
+    expect(within(garmin()).queryByLabelText(garminCopy.code)).not.toBeInTheDocument();
   });
 
   it("says to wait about an hour or use the laptop when Garmin limits sign-ins, and sends it once (Garmin 429)", async () => {
@@ -463,7 +622,7 @@ describe("GarminScreen", () => {
     expect(keptByTheApp(queryClient, router.state.location)).not.toContain(FIXTURE_PASSWORD);
   });
 
-  it("says the login expired and reconnects with the same form, the code step keeping Reconnect Garmin (token expiry)", async () => {
+  it("says the login expired and reconnects with the same form, the code step and the line after keeping its verb (token expiry)", async () => {
     const { calls } = renderGarmin(expired());
 
     const card = await findGarmin();
@@ -476,7 +635,10 @@ describe("GarminScreen", () => {
     await signIn(FIXTURE_EMAIL, FIXTURE_PASSWORD, "Reconnect Garmin");
     await sendCode(FIXTURE_CODE, "Reconnect Garmin");
 
-    expect(await within(garmin()).findByText("Garmin connected.")).toBeInTheDocument();
+    // The flow's verb to its end: a reconnect says reconnected.
+    const line = await within(garmin()).findByRole("status");
+    expect(line).toHaveTextContent(/^Garmin reconnected\.$/);
+    await vi.waitFor(() => expect(line).toHaveFocus());
     expect(within(garmin()).getByText("Connected")).toBeInTheDocument();
     await vi.waitFor(() => expect(requests(calls)).toContain("POST /api/sync"));
   });
@@ -515,7 +677,10 @@ describe("GarminScreen", () => {
     await vi.waitFor(() =>
       expect(within(step).getByText(garminCopy.disconnectQuestion)).toHaveFocus(),
     );
-    const remove = within(step).getByRole("checkbox", { name: garminCopy.removeWorkouts });
+    // Upcoming: the API takes off only the sessions still to run, from today on.
+    const remove = within(step).getByRole("checkbox", {
+      name: "Also remove this app's upcoming workouts from Garmin",
+    });
     expect(remove).toBeChecked();
     await userEvent.click(within(step).getByRole("button", { name: "Disconnect Garmin" }));
 
@@ -528,7 +693,7 @@ describe("GarminScreen", () => {
     removal.give(json(disconnectedFixture(REMOVED)));
 
     const line = await within(garmin()).findByText(
-      "Garmin disconnected. Removed 3 workouts this app made from Garmin.",
+      "Garmin disconnected. Removed 3 upcoming workouts this app made from Garmin.",
     );
     await vi.waitFor(() => expect(line).toHaveFocus());
     expect(within(garmin()).getByText("Not connected")).toBeInTheDocument();
@@ -538,6 +703,57 @@ describe("GarminScreen", () => {
     const deletes = calls.filter((call) => call.method === "DELETE");
     expect(deletes.map((call) => call.path)).toEqual(["/api/garmin/connection"]);
     expect(deletes.map((call) => call.query.toString())).toEqual(["workouts=remove"]);
+  });
+
+  it("says no upcoming workouts were on Garmin when the removal found none", async () => {
+    const { serverSays } = renderGarmin(meFixture(), {
+      disconnect: () => {
+        serverSays(notConnected());
+        return json(disconnectedFixture(0));
+      },
+    });
+
+    await userEvent.click(
+      within(await findGarmin()).getByRole("button", { name: "Disconnect Garmin" }),
+    );
+    await userEvent.click(within(garmin()).getByRole("button", { name: "Disconnect Garmin" }));
+
+    expect(
+      await within(garmin()).findByText(
+        "Garmin disconnected. No upcoming workouts from this app were on Garmin.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("still reads Disconnecting Garmin… and the removal after leaving mid-disconnect and coming back, and sends no second (navigation)", async () => {
+    const removal = held();
+    const { calls, router, serverSays } = renderGarmin(meFixture(), {
+      disconnect: () => removal.answer,
+    });
+
+    await userEvent.click(
+      within(await findGarmin()).getByRole("button", { name: "Disconnect Garmin" }),
+    );
+    await userEvent.click(within(garmin()).getByRole("button", { name: "Disconnect Garmin" }));
+    await act(() => router.navigate("/settings"));
+    await act(() => router.navigate("/settings/garmin"));
+
+    const step = within(await findGarmin()).getByRole("group", {
+      name: garminCopy.disconnectQuestion,
+    });
+    const pending = within(step).getByRole("button", { name: "Disconnecting Garmin…" });
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(within(step).getByRole("status")).toHaveTextContent(garminCopy.removing);
+    expect(within(step).getByRole("checkbox")).toBeChecked();
+    expect(within(step).getByRole("checkbox")).toBeDisabled();
+    expect(within(step).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    serverSays(notConnected());
+    removal.give(json(disconnectedFixture(REMOVED)));
+
+    expect(await within(garmin()).findByText("Not connected")).toBeInTheDocument();
+    expect(calls.filter((call) => call.method === "DELETE")).toHaveLength(1);
   });
 
   it("keeps the app's workouts on Garmin when the box is cleared", async () => {
@@ -624,6 +840,42 @@ describe("GarminScreen", () => {
     ).toBeInTheDocument();
     const deletes = calls.filter((call) => call.method === "DELETE");
     expect(deletes.map((call) => call.query.get("workouts"))).toEqual(["remove", "keep"]);
+  });
+
+  it("brings removal back on and drops the refusal after the reconnect it asked for, so the next disconnect removes (token expiry during disconnect, then reconnect)", async () => {
+    let refused = false;
+    const { calls, serverSays } = renderGarmin(meFixture(), {
+      disconnect: (workouts) => {
+        if (workouts !== "remove" || refused) return undefined;
+        refused = true;
+        serverSays(expired());
+        return problem(409, ErrorCode.garminAuthExpired);
+      },
+    });
+
+    await userEvent.click(
+      within(await findGarmin()).getByRole("button", { name: "Disconnect Garmin" }),
+    );
+    const step = within(garmin()).getByRole("group", { name: garminCopy.disconnectQuestion });
+    await userEvent.click(within(step).getByRole("button", { name: "Disconnect Garmin" }));
+    expect(await within(step).findByRole("alert")).toHaveTextContent(garminCopy.removalNeedsLogin);
+    expect(await within(garmin()).findByText("Login expired")).toBeInTheDocument();
+
+    await signIn(NO_CODE_EMAIL, FIXTURE_PASSWORD, "Reconnect Garmin");
+
+    expect(await within(garmin()).findByText("Garmin reconnected.")).toBeInTheDocument();
+    expect(within(garmin()).getByText("Connected")).toBeInTheDocument();
+    expect(within(step).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(step).getByRole("checkbox")).toBeChecked();
+    await userEvent.click(within(step).getByRole("button", { name: "Disconnect Garmin" }));
+
+    expect(
+      await within(garmin()).findByText(
+        "Garmin disconnected. Removed 3 upcoming workouts this app made from Garmin.",
+      ),
+    ).toBeInTheDocument();
+    const deletes = calls.filter((call) => call.method === "DELETE");
+    expect(deletes.map((call) => call.query.get("workouts"))).toEqual(["remove", "remove"]);
   });
 
   it("goes back to Settings", async () => {

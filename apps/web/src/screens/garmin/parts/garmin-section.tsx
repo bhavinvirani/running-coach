@@ -61,7 +61,7 @@ export function GarminSection({ garmin, timeZone, login, disconnect }: GarminSec
           mode={garmin.status === "expired" ? "reconnect" : "connect"}
           login={login}
           onStart={clear}
-          onConnected={() => show(garminCopy.connected)}
+          onConnected={show}
         />
       )}
       {garmin.status === "not_connected" ? null : (

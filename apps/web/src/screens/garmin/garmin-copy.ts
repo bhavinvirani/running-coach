@@ -21,20 +21,26 @@ export const garminCopy = {
   code: "Code",
   // The code step keeps the verb: it finishes the same connect, so a new verb ("Verify") would read as a
   // separate action (web-ui.md: the same verb stays through the flow).
-  connect: { idle: "Connect Garmin", pending: "Connecting Garmin…" },
-  reconnect: { idle: "Reconnect Garmin", pending: "Reconnecting Garmin…" },
+  // done is the line the flow ends with, in its own verb: a reconnect says reconnected.
+  connect: { idle: "Connect Garmin", pending: "Connecting Garmin…", done: "Garmin connected." },
+  reconnect: {
+    idle: "Reconnect Garmin",
+    pending: "Reconnecting Garmin…",
+    done: "Garmin reconnected.",
+  },
   startAgain: "Start again",
   badEmail: "Type the email you sign in to Garmin with.",
   badCode: "Type the code Garmin sent: 4 to 10 digits.",
   loginRateLimited:
     "Garmin is limiting sign-ins. Wait about an hour, then try again, or connect from your laptop with pnpm garmin:connect.",
-  connected: "Garmin connected.",
   disconnect: { idle: "Disconnect Garmin", pending: "Disconnecting Garmin…" },
   disconnectQuestion:
     "Disconnect Garmin? The app stops bringing in runs and sending workouts. Your runs and plan stay here.",
-  removeWorkouts: "Also remove this app's workouts from Garmin",
+  // Upcoming: the API takes off only the sessions from today on that are still to run (planned, moved or
+  // skipped); a done or missed session keeps its workout on Garmin.
+  removeWorkouts: "Also remove this app's upcoming workouts from Garmin",
   keepOnly: "Workouts this app sent stay on Garmin: removing them needs a working login.",
-  removing: "Removing this app's workouts from Garmin. This can take a minute.",
+  removing: "Removing this app's upcoming workouts from Garmin. This can take a minute.",
   removalNeedsLogin:
     "Removing workouts needs a working Garmin login, and this one has expired. Disconnect without removing them, or reconnect first.",
   cancel: "Cancel",
@@ -62,7 +68,7 @@ export function disconnectedLine(
 ): string {
   if (workouts === "keep") return "Garmin disconnected. Workouts this app sent stay on Garmin.";
   if (removedWorkouts === 0) {
-    return "Garmin disconnected. No workouts from this app were on Garmin.";
+    return "Garmin disconnected. No upcoming workouts from this app were on Garmin.";
   }
-  return `Garmin disconnected. Removed ${formatCount(removedWorkouts, "workout", "workouts")} this app made from Garmin.`;
+  return `Garmin disconnected. Removed ${formatCount(removedWorkouts, "upcoming workout", "upcoming workouts")} this app made from Garmin.`;
 }

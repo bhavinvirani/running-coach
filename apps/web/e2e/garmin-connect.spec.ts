@@ -151,7 +151,7 @@ test("connects with email, password and Garmin's code after a wrong one, syncs, 
   const syncSent = page.waitForRequest(isSyncPost);
   const synced = page.waitForResponse((response) => isSyncPost(response.request()));
   expect((await sendCode(page, fixtureGarminLogin.code)).ok()).toBe(true);
-  await expect(card.getByText(garminCopy.connected, { exact: true })).toBeFocused();
+  await expect(card.getByText(garminCopy.connect.done, { exact: true })).toBeFocused();
   await expect(figure(card, garminCopy.status)).toHaveText("Connected");
   await expect(card.getByRole("alert")).toHaveCount(0);
   await expect(card.getByLabel(garminCopy.code, { exact: true })).toHaveCount(0);
@@ -210,7 +210,7 @@ test("an expired login reconnects from Today's Reconnect Garmin without a code, 
   expect((await signIn(page, fixtureGarminLogin.noCodeEmail, garminCopy.reconnect.idle)).ok()).toBe(
     true,
   );
-  await expect(card.getByText(garminCopy.connected, { exact: true })).toBeFocused();
+  await expect(card.getByText(garminCopy.reconnect.done, { exact: true })).toBeFocused();
   await expect(figure(card, garminCopy.status)).toHaveText("Connected");
   await expect(card.getByLabel(garminCopy.code, { exact: true })).toHaveCount(0);
   await expect(card.getByLabel(garminCopy.email, { exact: true })).toHaveCount(0);
@@ -300,7 +300,7 @@ function sessionLink(page: Page, session: StoredSession): Locator {
     .getByRole("link", { name: new RegExp(`^${sessionTypeName(session.type)},`) });
 }
 
-test("disconnecting a working login takes the app's workouts off Garmin first and says how many", async ({
+test("disconnecting a working login takes the app's upcoming workouts off Garmin first and says how many", async ({
   page,
 }) => {
   // Connected first: the first connect of a worker goes through the API, whose push must not send these.
