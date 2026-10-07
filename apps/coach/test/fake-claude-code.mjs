@@ -4,13 +4,18 @@
 // rate_limit_event and result frames shaped like Claude Code 2.1.288's, sanitized, with fake run data.
 //
 // The plan token picks the scenario: CLAUDE_CODE_OAUTH_TOKEN=test-<scenario>.<nonce>; any other value is
-// rejected the way Claude rejects a bad token. Each process appends JSON lines to
-// ${os.tmpdir()}/fake-claude-code-<nonce>.jsonl: its argv and the NAMES of its env vars (never values,
-// except the non-secret flags below), which earlier processes of the token were still alive when it
-// started, the initialize request, the user message, an ignored SIGTERM and its exit, so tests assert
-// the flags, the env allowlist and that runs never overlap.
+// rejected the way Claude rejects a bad token. The scenarios that answer write the output fixture in
+// test/fixtures whose top-level keys are the properties of the request's JSON Schema, so a new prompt adds
+// a fixture there instead of a change here; none or several end the run like a crash. The schema picks
+// the fixture, not the token, because e2e runs one coach service on one token for every prompt.
+//
+// Each process appends JSON lines to ${os.tmpdir()}/fake-claude-code-<nonce>.jsonl: its argv and the
+// NAMES of its env vars (never values, except the non-secret flags below), which earlier processes of the
+// token were still alive when it started, the initialize request, the user message, an ignored SIGTERM
+// and its exit, with the reason when no fixture answered, so tests assert the flags, the env allowlist
+// and that runs never overlap.
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -77,18 +82,8 @@ record({
   ),
 });
 
-// A run-insight v2 output of fake data that passes runInsightOutputSchema in packages/shared.
-const CARD = {
-  headline: "Easy 8.0 km at 5:30 per km, heart rate 146 bpm",
-  whatHappened:
-    "You ran 8.0 km in 44:00 at an even 5:30 per km. Average heart rate 146 bpm, in your easy zone.",
-  whatItMeans:
-    "Pace and heart rate matched the easy run planned for today. Aerobic work with no extra fatigue.",
-  nextStep: "Rest tomorrow. Thursday's 6 x 800 m intervals stay as planned.",
-  caution: "none",
-  // run-insight v2's proposed change to the next session: none, as most runs.
-  adjustment: { kind: "none", factor: null, nextStep: null },
-};
+// Next to this script, not the cwd: the service starts each run in an empty temp folder.
+const FIXTURES = path.join(import.meta.dirname, "fixtures");
 
 const ZERO_USAGE = {
   input_tokens: 0,
@@ -262,10 +257,34 @@ function failWith(text, error, status, extra = {}) {
   exitCode = 1;
 }
 
+/** The output fixture whose sorted top-level keys equal the schema's properties, or why there is none. */
+function outputFor(schema) {
+  const keys = Object.keys(schema?.properties ?? {}).sort();
+  const matches = readdirSync(FIXTURES)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({
+      name: path.basename(file, ".json"),
+      output: JSON.parse(readFileSync(path.join(FIXTURES, file), "utf8")),
+    }))
+    .filter(({ output }) => Object.keys(output).sort().join() === keys.join());
+  if (matches.length === 1) return { output: matches[0].output };
+  const which =
+    matches.length === 0
+      ? "no output fixture in test/fixtures has"
+      : `several output fixtures in test/fixtures (${matches.map(({ name }) => name).join(", ")}) have`;
+  return { problem: `fake Claude Code: ${which} the schema's properties [${keys.join(", ")}]` };
+}
+
 // As Claude Code 2.1.288 answered a real run: the StructuredOutput call, its tool result, the plan's
 // rate-limit status (utilization only inside unifiedWindows), then a result counting two turns.
 function succeed(answeredBy = model) {
-  const toolUseId = structuredOutputCall(CARD, answeredBy);
+  const { output, problem } = outputFor(jsonSchema);
+  if (problem !== undefined) {
+    // No result, like crash: the service sees only the exit and the stderr size.
+    process.stderr.write(`${problem}\n`, () => exit({ code: 1, reason: problem }));
+    return;
+  }
+  const toolUseId = structuredOutputCall(output, answeredBy);
   toolResult(toolUseId, "Structured output provided successfully");
   const resetsAt = nowSeconds() + 3 * 3600;
   rateLimit({
@@ -283,8 +302,8 @@ function succeed(answeredBy = model) {
   result({
     num_turns: 2,
     api_error_status: null,
-    result: JSON.stringify(CARD),
-    structured_output: CARD,
+    result: JSON.stringify(output),
+    structured_output: output,
     usage: usage(6, 210, 0, 1890),
     modelUsage: modelUsage(answeredBy, 6, 210, 0, 1890),
   });
@@ -432,6 +451,8 @@ const INITIALIZE_RESPONSE = {
 
 let exitCode = 0;
 let answered = false;
+// The request's JSON Schema, from initialize: it picks the output fixture.
+let jsonSchema;
 const stubborn = scenario === "hang-stubborn" && earlier.length === 0;
 
 // Fake stderr text, which the service may count but never log.
@@ -495,6 +516,7 @@ function listen() {
     if (message.type === "control_request") {
       const { subtype } = message.request;
       if (subtype === "initialize") {
+        jsonSchema = message.request.jsonSchema;
         record({
           event: "initialize",
           systemPrompt: message.request.systemPrompt,

@@ -6,9 +6,11 @@ import {
   type CoachRunResponse,
 } from "@running-coach/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   type Coach,
   INPUT,
+  outputFixture,
   postRun,
   runRequest,
   SECRET,
@@ -45,6 +47,8 @@ describe("POST /v1/run", () => {
 
     expect(response.ok).toBe(true);
     if (!response.ok) return;
+    // The fixture whose keys are run-insight's schema properties, still a valid run-insight output.
+    expect(response.output).toEqual(outputFixture("run-insight"));
     expect(runInsightOutputSchema.parse(response.output).adjustment.kind).toBe("none");
     expect(response.model).toBe("claude-opus-5-5");
     // Input counts cache writes too (6 + 1890), so it compares with an API-key call.
@@ -234,6 +238,33 @@ describe("POST /v1/run", () => {
     expect(line).toMatchObject({ level: "warn", outcome: "unavailable" });
     expect(line.stderrBytes).toBeGreaterThan(0);
     expect(JSON.stringify(coach!.logs)).not.toContain("fake unexpected failure");
+  });
+
+  it("no output fixture for the request's schema: the fake exits without a result and the run answers unavailable like a crash", async () => {
+    coach = await startCoach("success");
+    const jsonSchema = z.toJSONSchema(z.object({ summary: z.string() }).strict(), {
+      target: "draft-7",
+    });
+
+    const res = await postRun(coach, runRequest({ jsonSchema }));
+
+    expect(res.status).toBe(200);
+    const response = failureOf(coachRunResponseSchema.parse(await res.json()));
+    expect(response).toMatchObject({ failure: "unavailable", usage: null });
+    const exit = coach.events().find((event) => event.event === "exit");
+    expect(exit).toMatchObject({
+      code: 1,
+      reason:
+        "fake Claude Code: no output fixture in test/fixtures has the schema's properties [summary]",
+    });
+    const line = await waitFor(
+      () => coach!.logs.find((entry) => entry.msg === "coach run crashed"),
+      5_000,
+      "crash log",
+    );
+    expect(line).toMatchObject({ level: "warn", outcome: "unavailable" });
+    expect(line.stderrBytes).toBeGreaterThan(0);
+    expect(JSON.stringify(coach.logs)).not.toContain("output fixture");
   });
 
   it("startup failure: answers unavailable and logs the reason and the stderr size at warn, never the text", async () => {
