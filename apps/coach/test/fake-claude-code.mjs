@@ -77,7 +77,7 @@ record({
   ),
 });
 
-// A run-insight card of fake data that passes runInsightSchema in packages/shared.
+// A run-insight v2 output of fake data that passes runInsightOutputSchema in packages/shared.
 const CARD = {
   headline: "Easy 8.0 km at 5:30 per km, heart rate 146 bpm",
   whatHappened:
@@ -86,6 +86,8 @@ const CARD = {
     "Pace and heart rate matched the easy run planned for today. Aerobic work with no extra fatigue.",
   nextStep: "Rest tomorrow. Thursday's 6 x 800 m intervals stay as planned.",
   caution: "none",
+  // run-insight v2's proposed change to the next session: none, as most runs.
+  adjustment: { kind: "none", factor: null, nextStep: null },
 };
 
 const ZERO_USAGE = {

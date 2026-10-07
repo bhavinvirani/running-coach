@@ -1,0 +1,31 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "text",
+            "json": {
+              "headline": "10.0 km at 5:00 /km, 2.0 km over the planned 8.0 km.",
+              "whatHappened": "10.0 km in 50:00 at 5:00 /km against a planned easy 8.0 km.",
+              "whatItMeans": "2.0 km over the plan adds load the week did not plan for.",
+              "nextStep": "Run Thursday's easy run as written: 8.0 km.",
+              "caution": "easy_next",
+              "adjustment": {
+                "kind": "scale",
+                "factor": 0.8,
+                "nextStep": "Run Thursday's easy run shorter than planned, so the legs recover from today's extra distance."
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1240,
+          "output_tokens": 212
+        }
+      }
+    }
+  ]
+}

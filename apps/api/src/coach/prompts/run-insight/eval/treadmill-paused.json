@@ -1,0 +1,54 @@
+{
+  "input": {
+    "activity": {
+      "type": "treadmill_running",
+      "startLocal": "2026-09-24 18:30:00",
+      "distanceM": 8000,
+      "durationS": 2700,
+      "avgHr": null,
+      "maxHr": null,
+      "cadence": 172,
+      "calories": 520,
+      "elevationGainM": null,
+      "isIndoor": true,
+      "isManual": false
+    },
+    "settings": {
+      "units": "km",
+      "coachDetail": "short"
+    },
+    "plan": {
+      "planned": [],
+      "next": {
+        "date": "2026-09-26",
+        "type": "tempo",
+        "title": null,
+        "distanceM": 7000,
+        "durationS": 2100
+      }
+    },
+    "context": {
+      "previousRunDays": 3,
+      "pause": {
+        "reason": "break",
+        "startDate": "2026-09-23"
+      },
+      "planChange": {
+        "allowed": false,
+        "reason": "paused"
+      }
+    }
+  },
+  "output": {
+    "headline": "8.0 km on the treadmill in 45:00, the day after your training break began.",
+    "whatHappened": "You ran 8.0 km on the treadmill in 45:00 at about 5:38 /km with a cadence of 172, while training is paused for a break.",
+    "whatItMeans": "With no heart rate recorded and distance from the watch's estimate, the effort is unknown.",
+    "nextStep": "Keep any run easy and short until you tap I'm back on Today; the plan holds Saturday's tempo until then.",
+    "caution": "none",
+    "adjustment": {
+      "kind": "none",
+      "factor": null,
+      "nextStep": null
+    }
+  }
+}

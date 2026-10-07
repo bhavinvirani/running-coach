@@ -16,6 +16,9 @@ import { logger } from "../lib/logger";
 import { queueBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
 import { queueRunInsights } from "./insights";
+import { gapReEntry } from "./re-entry";
+import { matchPlanSessions } from "./session-match";
+import { queueWorkoutPush } from "./workout-push";
 
 const log = logger.child({ module: "garmin-sync" });
 
@@ -262,6 +265,22 @@ async function saveChunk(
   });
 }
 
+/**
+ * The plan after a sync (slice 9): sessions matched with the runs on their dates, then the re-entry when
+ * the newest run inserted ends 7 or more days without one, and a workout push for what that changed.
+ * Never throws, so a stored run never fails the sync over it: matching is recomputed by the next sync, and
+ * the error is logged.
+ */
+async function adaptPlan(userId: string, insertedIds: string[], now: Date): Promise<void> {
+  try {
+    await matchPlanSessions(userId, now);
+    const eased = await gapReEntry(userId, insertedIds, now);
+    if (eased !== null && eased.sessionsChanged > 0) await queueWorkoutPush(userId);
+  } catch (err) {
+    log.error({ err, userId }, "plan not adapted after the sync; the next sync matches again");
+  }
+}
+
 // The sync running in this process for each user; an entry leaves when its sync settles.
 const inFlight = new Map<string, Promise<SyncGarminResult>>();
 
@@ -295,9 +314,10 @@ export function syncGarmin(input: SyncGarminInput): Promise<SyncGarminResult> {
  * user. Each chunk commits on its own connection (not the lock's transaction): a kill or an error keeps
  * the finished chunks and the cursor, and the next run resumes there. A bundle Garmin rotated is written
  * back the moment the client hands it over, before the call returns or throws, because the old refresh
- * token no longer works. A finished sync then queues the user's best efforts when runs are pending,
- * outside the lock the batch also takes, and the coach's card for each run it inserted that started in
- * the last INSIGHT_WINDOW_DAYS, when the user has a Claude key (queueRunInsights).
+ * token no longer works. Finished or not, the sync then adapts the plan to the runs stored (adaptPlan)
+ * and queues the coach's card for each run it inserted that started in the last INSIGHT_WINDOW_DAYS,
+ * when the user has a Claude key (queueRunInsights). A finished sync then queues the user's best efforts
+ * when runs are pending, outside the lock the batch also takes.
  */
 async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGarminResult> {
   // Runs new to the app across chunks, and the clock the sync read today from, for the coach below.
@@ -352,8 +372,10 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
     log.info({ userId, ...result }, "garmin sync finished");
     return result;
   }).finally(async () => {
-    // The coach for the runs this sync inserted, never one it updated; the history import queues none.
     // Also after a failed chunk: the runs the chunks before it stored would not be new to the next sync.
+    // The plan first, so the coach reads fresh statuses and the next session as eased.
+    await adaptPlan(userId, insertedIds, clock);
+    // The coach for the runs this sync inserted, never one it updated; the history import queues none.
     await queueRunInsights(userId, insertedIds, clock);
   });
   // Also when this sync wrote nothing: runs left pending by an earlier stop (an expired login since

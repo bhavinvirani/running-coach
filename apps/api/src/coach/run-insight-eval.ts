@@ -10,25 +10,62 @@ import {
 import {
   buildRunInsightInput,
   type InsightActivity,
+  type InsightContext,
   type InsightPlan,
   type InsightSettings,
 } from "./prompts/run-insight/input";
-import { runInsightSchema } from "./prompts/run-insight/schema";
+import { type RunInsightOutput, runInsightOutputSchema } from "./prompts/run-insight/schema";
 import { RUN_INSIGHT_PROMPT, RUN_INSIGHT_VERSION } from "./run-insight";
 import { voiceProblems } from "./voice";
 
 // The run-insight eval against the live API, on a key or on the owner's Claude plan through the coach
 // service (pnpm coach:eval [--plan], src/scripts/coach-eval.ts): every case's input goes through
-// callCoach exactly as the job sends it, and the answer is checked for its schema (callCoach parses it)
-// and the voice. With write, an answer that passes both becomes the case's
-// recorded output, which eval.test.ts then checks on every `pnpm test`.
+// callCoach exactly as the job sends it, and the answer is checked for its schema (callCoach parses it),
+// the voice and the plan change's rules (runInsightOutputProblems). With write, an answer that passes
+// all of them becomes the case's recorded output, which eval.test.ts then checks on every `pnpm test`.
 
 export const RUN_INSIGHT_EVAL_DIR = path.join(import.meta.dirname, "prompts/run-insight/eval");
 
-/** One eval case file: what the service would pass in, and the card recorded for it. */
+/** One eval case file: what the service would pass in, and the output recorded for it. */
 export interface RunInsightEvalCase {
-  input: { activity: InsightActivity; settings: InsightSettings; plan: InsightPlan | null };
+  input: {
+    activity: InsightActivity;
+    settings: InsightSettings;
+    plan: InsightPlan | null;
+    context: InsightContext;
+  };
   output: unknown;
+}
+
+const FACTOR_MIN = 0.5;
+const FACTOR_MAX = 1.1;
+// The app shows the engine's numbers for a change, which may differ from the coach's after clamping.
+const DISTANCE_OR_TIME =
+  /\b\d+(?:[.,]\d+)?\s?(?:km|kilomet(?:er|re)s?|mi|miles?|m|met(?:er|re)s?|min|minutes?|h|hours?)\b|\b\d{1,2}:\d{2}\b/i;
+
+/**
+ * What breaks the voice or the plan change's rules in a v2 output, one line per problem: the voice over
+ * every text field (adjustment.nextStep included), a factor for scale alone and within 0.5 to 1.1, a
+ * next step for a change and none without one, and no distance or time in the change's next step.
+ */
+export function runInsightOutputProblems(output: RunInsightOutput): string[] {
+  const problems = voiceProblems(output, runInsightOutputSchema);
+  const { kind, factor, nextStep } = output.adjustment;
+  if (kind === "scale") {
+    if (factor === null) problems.push("adjustment.factor: missing for scale");
+    else if (factor < FACTOR_MIN || factor > FACTOR_MAX) {
+      problems.push(`adjustment.factor: ${factor}, outside ${FACTOR_MIN} to ${FACTOR_MAX}`);
+    }
+  } else if (factor !== null) {
+    problems.push(`adjustment.factor: set for ${kind}`);
+  }
+  if (kind === "none" && nextStep !== null) problems.push("adjustment.nextStep: set for none");
+  if (kind !== "none" && nextStep === null)
+    problems.push(`adjustment.nextStep: missing for ${kind}`);
+  if (nextStep !== null && DISTANCE_OR_TIME.test(nextStep)) {
+    problems.push("adjustment.nextStep: names a distance or time");
+  }
+  return problems;
 }
 
 export interface RunInsightEvalResult {
@@ -38,7 +75,7 @@ export interface RunInsightEvalResult {
   usage: CoachUsage | null;
   /** Why there is no card: invalid_output covers a broken schema; null when the card parsed. */
   failure: CoachFailure | null;
-  /** The voice check on the card; empty when it passes or there is no card. */
+  /** The voice and plan change checks on the output; empty when they pass or there is no output. */
   voiceProblems: string[];
   /** True when the card passed both checks and was saved as the case's output. */
   written: boolean;
@@ -71,13 +108,13 @@ export async function runRunInsightEval({
 }): Promise<RunInsightEvalResult[]> {
   const results: RunInsightEvalResult[] = [];
   for (const { name, file, evalCase } of await readRunInsightEvalCases(dir)) {
-    const { activity, settings, plan } = evalCase.input;
+    const { activity, settings, plan, context } = evalCase.input;
     const result = await callCoach({
       credential,
       prompt: RUN_INSIGHT_PROMPT,
       version: RUN_INSIGHT_VERSION,
-      input: buildRunInsightInput(activity, settings, plan),
-      schema: runInsightSchema,
+      input: buildRunInsightInput(activity, settings, plan, context),
+      schema: runInsightOutputSchema,
       maxTokens: INSIGHT_MAX_TOKENS,
     });
     if (!result.ok) {
@@ -91,7 +128,7 @@ export async function runRunInsightEval({
       });
       continue;
     }
-    const problems = voiceProblems(result.output, runInsightSchema);
+    const problems = runInsightOutputProblems(result.output);
     const written = write && problems.length === 0;
     if (written) {
       const updated: RunInsightEvalCase = { input: evalCase.input, output: result.output };

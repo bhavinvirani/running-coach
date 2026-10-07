@@ -1,6 +1,8 @@
 import {
   type CoachDetail,
+  type DeltaRejection,
   isGpsGlitch,
+  type PauseReason,
   SESSION_TYPE_NAMES,
   type SessionType,
   type Units,
@@ -14,10 +16,11 @@ import {
   formatPace,
 } from "../../format";
 
-// The user message for run-insight: the run's numbers in the user's units, the detail level, and the
-// sessions planned that day and next, so "what to do next" can name the session. Built only from the
-// activity row, two settings and the user's own sessions, so it cannot carry the API key, Garmin
-// tokens, the email or another user's data.
+// The user message for run-insight: the run's numbers in the user's units, the detail level, the
+// sessions planned that day and next, so "what to do next" can name the session, and since v2 the days
+// since the previous run, an open training pause and whether the coach may change the next session.
+// Built only from the activity row, two settings, the user's own sessions and pause, and the change
+// check, so it cannot carry the API key, Garmin tokens, the email or another user's data.
 
 /** The run as the coach sees it, SI units; an `activity` row satisfies it. */
 export interface InsightActivity {
@@ -57,7 +60,36 @@ export interface InsightPlan {
   next: InsightSession | null;
 }
 
+/** What the coach knows beyond the run and the plan (run-insight v2). */
+export interface InsightContext {
+  /** Local days from the runner's previous run to this one (0: the same day); null with none on record. */
+  previousRunDays: number | null;
+  /** The runner's open training pause; null while training runs. */
+  pause: { reason: PauseReason; startDate: string } | null;
+  /** Whether the coach may change the next session, from coachChangeTarget; reason null when allowed. */
+  planChange: { allowed: boolean; reason: DeltaRejection | null };
+}
+
 const NOT_RECORDED = "not recorded";
+
+const PAUSE_WORDS: Record<PauseReason, string> = {
+  sick: "sick",
+  injured: "pain or injury",
+  break: "a break",
+};
+
+// Why the coach may not change the next session, in the prompt's words.
+const REFUSAL_WORDS: Record<DeltaRejection, string> = {
+  race: "the next session is a race",
+  custom: "the next session is the runner's own workout",
+  locked: "the next session is done, missed or past",
+  adjusted: "the coach already changed the next session",
+  paused: "training is paused",
+  stale_run: "only the newest run of the last 7 days can change the plan",
+  no_session: "nothing is planned after this run",
+  no_change: "the next session cannot change",
+  invalid: "the next session cannot change",
+};
 
 function kindOf(activity: InsightActivity): string {
   if (activity.isManual) return "entered by hand";
@@ -98,10 +130,28 @@ function planLines(plan: InsightPlan | null, units: Units): string[] {
   ];
 }
 
+function previousRunLine(days: number | null): string {
+  if (days === null) return "Previous run: none on record";
+  if (days === 0) return "Previous run: the same day";
+  return `Previous run: ${days} ${days === 1 ? "day" : "days"} before`;
+}
+
+function contextLines(context: InsightContext): { before: string[]; after: string[] } {
+  const before = [previousRunLine(context.previousRunDays)];
+  if (context.pause) {
+    const { reason, startDate } = context.pause;
+    before.push(`Training pause: ${PAUSE_WORDS[reason]} since ${formatLocalDate(startDate)}`);
+  }
+  const { allowed, reason } = context.planChange;
+  const change = allowed ? "allowed" : `not allowed (${REFUSAL_WORDS[reason ?? "no_change"]})`;
+  return { before, after: [`Plan change for the next session: ${change}`] };
+}
+
 export function buildRunInsightInput(
   activity: InsightActivity,
   settings: InsightSettings,
   plan: InsightPlan | null,
+  context: InsightContext,
 ): string {
   const { units } = settings;
   const glitch = isGpsGlitch(activity.distanceM, activity.durationS);
@@ -124,6 +174,7 @@ export function buildRunInsightInput(
   ];
   const notes = dataNotes(activity);
   if (notes.length > 0) lines.push(`Data notes: ${notes.join(" ")}`);
-  lines.push(...planLines(plan, units));
+  const { before, after } = contextLines(context);
+  lines.push(...before, ...planLines(plan, units), ...after);
   return lines.join("\n");
 }

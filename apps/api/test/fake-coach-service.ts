@@ -7,7 +7,13 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { type CoachRunFailure, coachRunRequestSchema } from "@running-coach/shared";
+import {
+  type CoachRunFailure,
+  coachRunRequestSchema,
+  type RunInsight,
+  type RunInsightOutput,
+  runInsightOutputSchema,
+} from "@running-coach/shared";
 import { type Config, config } from "../src/lib/config";
 
 // A local stand-in for the coach service (services/coach) that runs the owner's coach on their Claude
@@ -21,12 +27,27 @@ export const FAKE_COACH_SECRET = "test-only-coach-service-secret-0123456789";
 /** The owner in these tests: createUser's and signedInAgent's default email. */
 export const PLAN_OWNER_EMAIL = "runner@example.com";
 
-/** The card the fake Claude's "valid" fixture answers, so plan and key cards compare alike. */
-export const VALID_OUTPUT = (
-  JSON.parse(
-    readFileSync(path.join(import.meta.dirname, "fixtures/claude/valid.json"), "utf8"),
-  ) as { responses: [{ body: { content: [{ json: unknown }] } }] }
-).responses[0].body.content[0].json;
+/** The output a fake Claude fixture answers first: run-insight v2's, the card plus its adjustment. */
+export function fixtureOutput(fixture: string): RunInsightOutput {
+  const file = path.join(import.meta.dirname, `fixtures/claude/${fixture}.json`);
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+    responses: [{ body: { content: [{ json: unknown }] } }];
+  };
+  return runInsightOutputSchema.parse(parsed.responses[0].body.content[0].json);
+}
+
+/** The card as stored from a v2 output: the adjustment never reaches the stored card. */
+export function cardOf(output: RunInsightOutput): RunInsight {
+  const { adjustment: _adjustment, ...card } = output;
+  return card;
+}
+
+/** The output the fake Claude's "valid" fixture answers (no change), so plan and key cards compare alike. */
+export const VALID_OUTPUT = fixtureOutput("valid");
+/** VALID_OUTPUT as the stored card. */
+export const VALID_CARD = cardOf(VALID_OUTPUT);
+/** The "adjust-scale" fixture's output: the next session at 0.8, for the change scenario. */
+export const CHANGE_OUTPUT = fixtureOutput("adjust-scale");
 
 /** Tokens of a plan run, unlike the key fixtures' 1180 / 164 so a test sees which path answered. */
 export const PLAN_USAGE = { inputTokens: 2310, outputTokens: 188 } as const;
@@ -44,6 +65,8 @@ export type WakeScenario =
 export type RunScenario =
   /** The card, written by the request's model, or its fallback model when Claude Code switched. */
   | { kind: "valid"; by?: "model" | "fallbackModel" }
+  /** CHANGE_OUTPUT: the card with a change to the next session (scale 0.8). */
+  | { kind: "change" }
   /** A card missing its fields: the API's schema parse must catch it. */
   | { kind: "schema-invalid" }
   /** The service's failure answer; usage when a model answered, unusably. */
@@ -104,6 +127,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function answer(scenario: RunScenario, body: Record<string, unknown>, call: number): unknown {
   const claudeRequestId = `req_plan_${call}`;
   switch (scenario.kind) {
+    case "change":
+      return {
+        ok: true,
+        output: CHANGE_OUTPUT,
+        model: body.model,
+        usage: PLAN_USAGE,
+        claudeRequestId,
+      };
     case "valid":
     case "slow":
       return {

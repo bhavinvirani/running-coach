@@ -1,10 +1,10 @@
+import type { AdjustedSession } from "@running-coach/engine";
 import { planDeltaSchema, sessionSnapshotSchema, sessionStepsSchema } from "@running-coach/shared";
 import { asc, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
 import {
   activity,
-  type AdjustedSession,
   coachMessage,
   type NewPlanAdjustmentRow,
   type NewTrainingPauseRow,

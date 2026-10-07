@@ -1,15 +1,21 @@
 import {
+  type CoachAdjustment,
   type CoachCredentialChoice,
   type CoachFallbackReason,
   type CoachFeedback,
   ErrorCode,
   type InsightResponse,
+  type PlanDelta,
   type RunInsight,
 } from "@running-coach/shared";
-import { and, asc, eq, gt, gte, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, notExists, or, sql } from "drizzle-orm";
 import type { CoachCallCredential } from "../coach/client";
 import { runInsight } from "../coach/run-insight";
-import type { InsightPlan, InsightSession } from "../coach/prompts/run-insight/input";
+import type {
+  InsightContext,
+  InsightPlan,
+  InsightSession,
+} from "../coach/prompts/run-insight/input";
 import { db } from "../db/client";
 import {
   activity,
@@ -27,14 +33,26 @@ import {
 } from "../jobs/analyze-run-queue";
 import { decrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
-import { localDateOf } from "../lib/local-date";
+import { daysBetween, localDateOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
+import {
+  applyCoachChange,
+  type CoachChangeResult,
+  type CoachChangeTarget,
+  coachChangeTarget,
+  nextSessionAfter,
+  planChangesFor,
+} from "./coach-change";
 import { coachCredentialOf, effectiveCoachCredential } from "./coach-credential";
+import { runDate } from "./run-dates";
+import { openPause } from "./runner-state";
+import { queueWorkoutPush } from "./workout-push";
 
 // The coach's card for a run: its state for the run screen, Ask the coach, thumbs, the analyze-run job's
 // work and the queueing after a sync. Each follows the user's coach credential (coach-credential.ts): the
 // Claude plan for the owner who chose it, else a saved key. The key is decrypted only in analyzeRun, for
-// its one call on the key.
+// its one call on the key. Since run-insight v2 the coach may also propose a change to the next session,
+// which the engine accepts, clamps or rejects (coach-change.ts) in the card's own transaction.
 
 const log = logger.child({ module: "insights" });
 
@@ -66,7 +84,9 @@ async function readCard(activityId: string): Promise<CoachMessage | undefined> {
   return row;
 }
 
-function ready(card: CoachMessage): InsightResponse {
+/** The stored card as the run screen reads it, with the plan change it made as the engine applied it. */
+async function ready(card: CoachMessage): Promise<InsightResponse> {
+  const changes = await planChangesFor([card.id]);
   return {
     state: "ready",
     insight: {
@@ -75,8 +95,7 @@ function ready(card: CoachMessage): InsightResponse {
       content: card.content as RunInsight,
       fallbackReason: card.fallbackReason,
       feedback: card.feedback,
-      // filled in by slice 9's adaptation service
-      planChange: null,
+      planChange: changes.get(card.id) ?? null,
       createdAt: card.createdAt.toISOString(),
     },
   };
@@ -94,9 +113,9 @@ export async function getInsight(userId: string, activityId: string): Promise<In
   // then seen by the card read. The other way round it is seen by neither, and the answer is none.
   const live = await analyzeRunState(activityId);
   const card = await readCard(activityId);
-  if (card && card.model !== null) return ready(card);
+  if (card && card.model !== null) return await ready(card);
   if (live) return live;
-  if (card) return ready(card);
+  if (card) return await ready(card);
   return { state: (await coachCredentialOf(userId)) === "none" ? "no_key" : "none" };
 }
 
@@ -111,7 +130,7 @@ export async function getInsight(userId: string, activityId: string): Promise<In
 export async function askCoach(userId: string, activityId: string): Promise<InsightResponse> {
   await ownRun(userId, activityId);
   const card = await readCard(activityId);
-  if (card && card.model !== null) return ready(card);
+  if (card && card.model !== null) return await ready(card);
   if ((await coachCredentialOf(userId)) === "none") {
     throw new DomainError(
       ErrorCode.claudeKeyMissing,
@@ -152,7 +171,7 @@ export async function setInsightFeedback(
     )
     .returning();
   if (!card) throw new DomainError(ErrorCode.notFound, 404, "That coach review does not exist.");
-  return ready(card);
+  return await ready(card);
 }
 
 function toInsightSession(row: {
@@ -173,9 +192,10 @@ function toInsightSession(row: {
 /**
  * The sessions of the run's local date and the next one, from the active plan and the runner's custom
  * workouts (the calendar's sources), plan sessions first on a day. Null without an active plan, and for
- * a run from before the active plan started, which the plan says nothing about. The next session is
- * after the run's date and not before the user's today: nothing marks a session missed until slice 9,
- * so a past session still reads planned.
+ * a run from before the active plan started, which the plan says nothing about. The next session is the
+ * one the coach's change is for (nextSessionAfter in coach-change.ts): after the run's date, not before
+ * the user's today, planned or moved. Run matching marks a past session without a run missed; the bound
+ * on today also covers one it has not marked yet, before the next sync.
  */
 async function insightPlan(
   userId: string,
@@ -205,20 +225,66 @@ async function insightPlan(
     .where(and(sources, eq(planSession.date, date), ne(planSession.status, "skipped")))
     .orderBy(...order)
     .limit(PLANNED_SESSIONS_MAX);
-  const [next] = await db
-    .select(columns)
-    .from(planSession)
+  const next = await nextSessionAfter(db, {
+    userId,
+    activePlanId: active.id,
+    runDate: date,
+    today,
+  });
+  return { planned: planned.map(toInsightSession), next: next ? toInsightSession(next) : null };
+}
+
+/**
+ * What the coach knows beyond the run and the plan: the local days since the runner's previous run (by
+ * UTC start, either way of a zone change), the open pause, and whether the plan may change.
+ */
+async function insightContext(
+  userId: string,
+  run: { id: string; startUtc: Date; startLocal: string },
+  target: CoachChangeTarget,
+): Promise<InsightContext> {
+  const [previous] = await db
+    .select({ date: runDate })
+    .from(activity)
     .where(
       and(
-        sources,
-        gt(planSession.date, date),
-        gte(planSession.date, today),
-        inArray(planSession.status, ["planned", "moved"]),
+        eq(activity.userId, userId),
+        ne(activity.id, run.id),
+        lt(activity.startUtc, run.startUtc),
       ),
     )
-    .orderBy(...order)
+    .orderBy(desc(activity.startUtc), desc(activity.id))
     .limit(1);
-  return { planned: planned.map(toInsightSession), next: next ? toInsightSession(next) : null };
+  const pause = await openPause(db, userId);
+  const runDay = run.startLocal.slice(0, "YYYY-MM-DD".length);
+  return {
+    // A previous run in a zone ahead can carry a later local date: the same day, never negative.
+    previousRunDays: previous ? Math.max(0, daysBetween(previous.date, runDay)) : null,
+    pause: pause ? { reason: pause.reason, startDate: pause.startedOn } : null,
+    planChange: { allowed: target.allowed, reason: target.reason },
+  };
+}
+
+/**
+ * The coach's proposal as the engine takes it; null for none. A scale without a usable factor stays a
+ * scale, with NaN, so the engine rejects it as invalid and the log keeps the proposal.
+ */
+function deltaOf(adjustment: CoachAdjustment): PlanDelta | null {
+  switch (adjustment.kind) {
+    case "none":
+      return null;
+    case "scale": {
+      const { factor } = adjustment;
+      return {
+        kind: "scale",
+        factor: factor !== null && Number.isFinite(factor) ? factor : Number.NaN,
+      };
+    }
+    case "easy":
+      return { kind: "easy" };
+    case "rest":
+      return { kind: "rest" };
+  }
 }
 
 /**
@@ -257,7 +323,7 @@ export type AnalyzeRunOutcome =
 export interface AnalyzeRunOptions {
   /** The job's last try: a timeout or Claude down then stores the fallback card instead of throwing. */
   lastAttempt: boolean;
-  /** The clock the user's today is read from, for the next planned session; tests pin it. */
+  /** The clock the user's today is read from, for the next planned session and its change; tests pin it. */
   now?: Date;
 }
 
@@ -272,12 +338,17 @@ function isForeignKeyViolation(error: unknown): boolean {
 
 /**
  * The analyze-run job's work: writes the coach's card for one run and stores it, replacing a fallback
- * card but never the coach's own, so a double fire makes no second call and never two cards. The plan
- * lines come from the run's own local date (start_local), never its UTC date. A timeout or Claude down
- * before the last attempt stores nothing and throws claude_unavailable, so pg-boss retries with backoff;
- * the plan's usage limit stores nothing and throws claude_plan_limited with the seconds to its reset on
- * any attempt, for the job to defer itself; a refusal, max_tokens, invalid output, a rejected key or plan
- * token, or a request Claude turned down store the fallback card at once.
+ * card but never the coach's own, so a double fire makes no second call, never two cards and never a
+ * second plan change. The plan lines come from the run's own local date (start_local), never its UTC
+ * date. Whether the coach may change the next session is asked before the call (coachChangeTarget). The
+ * card and the change its output proposes are stored in one transaction: applyCoachChange decides again,
+ * logs the proposal and writes an accepted one to the session, and the card's nextStep is the change's
+ * own when the engine applied or clamped it, else the next session as written (a rejected change drops
+ * its text). A change queues a workout push after the commit. A timeout or Claude down before the last
+ * attempt stores nothing and throws claude_unavailable, so pg-boss retries with backoff; the plan's
+ * usage limit stores nothing and throws claude_plan_limited with the seconds to its reset on any attempt,
+ * for the job to defer itself; a refusal, max_tokens, invalid output, a rejected key or plan token, or a
+ * request Claude turned down store the fallback card at once, which never changes the plan.
  */
 export async function analyzeRun(
   userId: string,
@@ -306,6 +377,7 @@ export async function analyzeRun(
   const credential = settings ? callCredential(userId, settings) : null;
   if (!settings || !credential) return { status: "skipped", reason: "no_key" };
 
+  const target = await coachChangeTarget(userId, activityId, now);
   const result = await runInsight({
     credential,
     activity: run,
@@ -315,6 +387,7 @@ export async function analyzeRun(
       run.startLocal.slice(0, "YYYY-MM-DD".length),
       localDateOf(now, settings.timezone),
     ),
+    context: await insightContext(userId, run, target),
   });
   if (result.limited) {
     log.warn(
@@ -359,32 +432,66 @@ export async function analyzeRun(
     usage: result.usage,
     fallbackReason: result.fallbackReason,
   };
-  let stored: { id: string }[];
+  const delta = result.adjustment ? deltaOf(result.adjustment) : null;
+  const changedStep = result.adjustment?.nextStep ?? null;
+  let stored: { id: string; change: CoachChangeResult | null } | null;
   try {
-    stored = await db
-      .insert(coachMessage)
-      .values({ userId, kind: "insight", activityId, ...card })
-      .onConflictDoUpdate({
-        target: coachMessage.activityId,
-        targetWhere: sql`${coachMessage.kind} = 'insight'`,
-        // A new card: new thumbs, new date.
-        set: { ...card, feedback: null, createdAt: sql`now()`, updatedAt: sql`now()` },
-        // Only over a fallback card: the coach's card stays whatever finished second.
-        setWhere: sql`${sql.identifier("coach_message")}.${sql.identifier("model")} is null`,
-      })
-      .returning({ id: coachMessage.id });
+    stored = await db.transaction(async (tx) => {
+      const [message] = await tx
+        .insert(coachMessage)
+        .values({ userId, kind: "insight", activityId, ...card })
+        .onConflictDoUpdate({
+          target: coachMessage.activityId,
+          targetWhere: sql`${coachMessage.kind} = 'insight'`,
+          // A new card: new thumbs, new date.
+          set: { ...card, feedback: null, createdAt: sql`now()`, updatedAt: sql`now()` },
+          // Only over a fallback card: the coach's card stays whatever finished second.
+          setWhere: sql`${sql.identifier("coach_message")}.${sql.identifier("model")} is null`,
+        })
+        .returning({ id: coachMessage.id });
+      if (!message) return null;
+      if (!delta) return { id: message.id, change: null };
+      const change = await applyCoachChange(tx, {
+        userId,
+        activityId,
+        coachMessageId: message.id,
+        delta,
+        now,
+      });
+      if (change.outcome !== "rejected" && changedStep !== null) {
+        await tx
+          .update(coachMessage)
+          .set({ content: { ...result.content, nextStep: changedStep } })
+          .where(eq(coachMessage.id, message.id));
+      }
+      return { id: message.id, change };
+    });
   } catch (error) {
     // The run was deleted (a Garmin delete synced) while Claude wrote: nothing to attach the card to.
     if (isForeignKeyViolation(error)) return { status: "skipped", reason: "run_missing" };
     throw error;
   }
-  const [message] = stored;
-  if (!message) {
+  if (!stored) {
     log.info(context, "coach card kept; another job stored it first");
     return { status: "skipped", reason: "has_card" };
   }
-  log.info({ ...context, coachMessageId: message.id }, "run insight stored");
-  return { status: "stored", coachMessageId: message.id, fallbackReason: result.fallbackReason };
+  const { id: coachMessageId, change } = stored;
+  log.info(
+    { ...context, coachMessageId, planChange: change?.outcome ?? null },
+    "run insight stored",
+  );
+  if (change?.changed) {
+    try {
+      await queueWorkoutPush(userId);
+    } catch (err) {
+      // The change is stored: the daily push sends it, so the card does not fail over the queue.
+      log.error(
+        { err, userId, activityId, coachMessageId },
+        "workout push not queued after a coach change",
+      );
+    }
+  }
+  return { status: "stored", coachMessageId, fallbackReason: result.fallbackReason };
 }
 
 /**

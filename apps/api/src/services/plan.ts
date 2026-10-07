@@ -28,7 +28,7 @@ import {
   type SaveGoalResponse,
   type VdotSource,
 } from "@running-coach/shared";
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, max, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, max, ne, or, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
 import {
   activity,
@@ -43,7 +43,8 @@ import {
 } from "../db/schema";
 import { addDays, daysBetween, localDateOf, mondayOf } from "../lib/local-date";
 import { counted } from "./best-efforts";
-import { toPlanSession } from "./session-view";
+import { runDate, runDateUpTo, runDateWithin } from "./run-dates";
+import { readSessionContext, type SessionContext, toPlanSession } from "./session-view";
 import { queueWorkoutPush } from "./workout-push";
 
 // The goal and its plans (SPEC: Plan engine). Saving the goal measures the runner (VDOT source and
@@ -58,17 +59,6 @@ const RACE_MIN_DISTANCE_M = DISTANCE_METERS["1k"];
 const BEST_EFFORT_KEYS = distanceKeySchema.options.filter(
   (key) => DISTANCE_METERS[key] >= BEST_EFFORT_MIN_DISTANCE_M,
 );
-
-/** A run's own wall-clock date: the day the runner lived, whatever zone the run was in. */
-const runDate = sql<string>`to_char(${activity.startLocal}, 'YYYY-MM-DD')`;
-
-/** Runs whose local date is in [from, to]. start_local is a timestamp without zone, so no zone math. */
-function runDateWithin(from: string, to: string) {
-  return and(
-    gte(activity.startLocal, `${from} 00:00:00`),
-    lt(activity.startLocal, `${addDays(to, 1)} 00:00:00`),
-  );
-}
 
 /** The last `days` local dates, today included. */
 function lastDays(today: string, days: number): [from: string, to: string] {
@@ -118,9 +108,7 @@ async function readBaseline(userId: string, today: string): Promise<PlanBaseline
   const [last] = await db
     .select({ date: sql<string | null>`to_char(max(${activity.startLocal}), 'YYYY-MM-DD')` })
     .from(activity)
-    .where(
-      and(eq(activity.userId, userId), lt(activity.startLocal, `${addDays(today, 1)} 00:00:00`)),
-    );
+    .where(and(eq(activity.userId, userId), runDateUpTo(today)));
   const lastDate = last?.date ?? null;
   return {
     weeklyVolumesM: weeklyVolumesM.map(Math.round),
@@ -281,7 +269,12 @@ function weekCount(row: PlanRow): number {
  * after it for the first week, since the engine sets phases in runs of whole weeks. A week's distance
  * leaves skipped sessions out.
  */
-function toWeeks(row: PlanRow, sessions: PlanSessionRow[], units: Units): PlanWeek[] {
+function toWeeks(
+  row: PlanRow,
+  sessions: PlanSessionRow[],
+  units: Units,
+  context: SessionContext,
+): PlanWeek[] {
   const weeks = Array.from({ length: weekCount(row) }, (_, index) => ({
     number: index + 1,
     startDate: addDays(row.startDate, 7 * index),
@@ -295,7 +288,7 @@ function toWeeks(row: PlanRow, sessions: PlanSessionRow[], units: Units): PlanWe
     if (session.phase !== null) week.phase ??= session.phase;
     if (session.status !== "skipped") week.distanceM += session.target.distanceM;
     // A custom workout reads the active plan's paces, which a plan shown here always is.
-    week.sessions.push(toPlanSession(session, row.paces, units));
+    week.sessions.push(toPlanSession(session, row.paces, units, context));
   }
   return weeks.map((week, index) => {
     const phase =
@@ -334,6 +327,11 @@ async function loadPlan(executor: Db | DbTransaction, row: PlanRow): Promise<Pla
       ),
     )
     .orderBy(asc(planSession.date), sql`${planSession.planId} is null`, asc(planSession.id));
+  const context = await readSessionContext(
+    executor,
+    row.userId,
+    sessions.map((session) => session.id),
+  );
   return {
     id: row.id,
     goalId: row.goalId,
@@ -346,7 +344,7 @@ async function loadPlan(executor: Db | DbTransaction, row: PlanRow): Promise<Pla
     vdotSource: row.vdotSource,
     paces: row.paces,
     warnings: row.warnings,
-    weeks: toWeeks(row, sessions, settings.units),
+    weeks: toWeeks(row, sessions, settings.units, context),
     createdAt: row.createdAt.toISOString(),
   };
 }

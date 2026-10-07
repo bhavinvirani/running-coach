@@ -101,7 +101,7 @@ describe("analyze-run job", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({
       activityId: run.id,
-      promptVersion: "run-insight/v1",
+      promptVersion: "run-insight/v2",
       model: config.COACH_MODEL,
       usage: { inputTokens: 1180, outputTokens: 164 },
     });

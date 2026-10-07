@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { runInsightSchema } from "../../src/coach/prompts/run-insight/schema";
+import {
+  runInsightOutputSchema,
+  runInsightSchema,
+} from "../../src/coach/prompts/run-insight/schema";
 import { voiceProblems } from "../../src/coach/voice";
 
 const card = {
@@ -49,5 +52,23 @@ describe("voiceProblems", () => {
     );
 
     expect(problems).toEqual(["headline: 123 characters, max 120"]);
+  });
+
+  it("checks the nested adjustment's next step like any field, and skips it when null", () => {
+    const none = { ...card, adjustment: { kind: "none", factor: null, nextStep: null } };
+    expect(voiceProblems(none, runInsightOutputSchema)).toEqual([]);
+
+    const problems = voiceProblems(
+      {
+        ...card,
+        adjustment: { kind: "easy", factor: null, nextStep: `Amazing ${"x".repeat(400)}` },
+      },
+      runInsightOutputSchema,
+    );
+
+    expect(problems).toEqual([
+      "adjustment.nextStep: praise or hype word",
+      "adjustment.nextStep: 408 characters, max 400",
+    ]);
   });
 });

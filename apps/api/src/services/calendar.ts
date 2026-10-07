@@ -3,7 +3,7 @@ import { and, asc, eq, gte, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { plan, planSession, userSettings } from "../db/schema";
 import { addDays, daysBetween } from "../lib/local-date";
-import { toPlanSession } from "./session-view";
+import { readSessionContext, toPlanSession } from "./session-view";
 import { readPushStatus } from "./workout-push";
 
 // The runner's days between two local dates: the active plan's sessions and the runner's custom workouts,
@@ -45,12 +45,19 @@ export async function getCalendar(
     .orderBy(asc(planSession.date), sql`${planSession.planId} is null`, asc(planSession.id));
 
   const paces = active?.paces ?? null;
+  const context = await readSessionContext(
+    db,
+    userId,
+    rows.map((row) => row.id),
+  );
   const days: CalendarDay[] = Array.from({ length: daysBetween(from, to) + 1 }, (_, index) => ({
     date: addDays(from, index),
     sessions: [],
   }));
   for (const row of rows) {
-    days[daysBetween(from, row.date)]?.sessions.push(toPlanSession(row, paces, settings.units));
+    days[daysBetween(from, row.date)]?.sessions.push(
+      toPlanSession(row, paces, settings.units, context),
+    );
   }
   return { days, paces, garmin: await readPushStatus(userId, now) };
 }

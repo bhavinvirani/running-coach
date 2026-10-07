@@ -109,6 +109,8 @@ export interface PushPlanInput {
   sessions: readonly PushSession[];
   /** The active plan; without one nothing is wanted on Garmin, since custom workouts read its paces. */
   activePlan: { id: string; paces: PlanPaces } | null;
+  /** The open pause's start: sessions from it on leave the watch until it ends. Null while training runs. */
+  pausedFrom: string | null;
   units: Units;
 }
 
@@ -116,17 +118,21 @@ function garminId(id: string): number {
   return Number(id);
 }
 
-/** The session is wanted on Garmin: in the window, of the active plan or custom, planned or moved. */
+/**
+ * The session is wanted on Garmin: in the window, of the active plan or custom, planned or moved, and
+ * before the open pause's start.
+ */
 function isWanted(
   session: PushSession,
   window: PushWindow,
-  activePlan: PushPlanInput["activePlan"],
+  { activePlan, pausedFrom }: Pick<PushPlanInput, "activePlan" | "pausedFrom">,
 ): boolean {
   return (
     activePlan !== null &&
     inWindow(session.date, window) &&
     (session.planId === null || session.planId === activePlan.id) &&
-    WANTED_STATUSES.has(session.status)
+    WANTED_STATUSES.has(session.status) &&
+    (pausedFrom === null || session.date < pausedFrom)
   );
 }
 
@@ -140,12 +146,14 @@ const byDate = (a: PlannedAction, b: PlannedAction, date: (p: PlannedAction) => 
  * one sits on a past day, which is never touched. Same content, not scheduled on its date: move (the old
  * scheduled instance is unscheduled unless it is in the past). Not wanted but holding a workout, planned,
  * moved or skipped, scheduled today or later: remove (a superseded plan's session, a skipped one, one moved
- * out of the window). Done and missed sessions and anything before today are never touched.
+ * out of the window, one the open pause holds). Done and missed sessions and anything before today are
+ * never touched.
  */
 export function planWorkoutPush({
   window,
   sessions,
   activePlan,
+  pausedFrom,
   units,
 }: PushPlanInput): PlannedAction[] {
   const removes: PlannedAction[] = [];
@@ -168,7 +176,7 @@ export function planWorkoutPush({
     // The day Garmin shows the workout on, or would: a past one stays as it is.
     const heldFromToday = (session.garminDate ?? session.date) >= window.start;
     const desired =
-      activePlan !== null && isWanted(session, window, activePlan)
+      activePlan !== null && isWanted(session, window, { activePlan, pausedFrom })
         ? desiredWorkout(session, activePlan.paces, units)
         : null;
 

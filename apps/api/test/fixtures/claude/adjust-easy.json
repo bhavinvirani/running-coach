@@ -1,0 +1,31 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "text",
+            "json": {
+              "headline": "10.0 km at 5:00 /km with heart rate averaging 168 bpm.",
+              "whatHappened": "10.0 km in 50:00 at 5:00 /km, average heart rate 168 bpm, max 181 bpm.",
+              "whatItMeans": "168 bpm is high for a 5:00 /km easy run, a sign of fatigue.",
+              "nextStep": "Run Thursday's tempo as written: 20:00 at threshold.",
+              "caution": "easy_next",
+              "adjustment": {
+                "kind": "easy",
+                "factor": null,
+                "nextStep": "Run Thursday's tempo as an easy run, so your heart rate settles before the next hard day."
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1240,
+          "output_tokens": 212
+        }
+      }
+    }
+  ]
+}

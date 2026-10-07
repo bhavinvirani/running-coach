@@ -61,11 +61,15 @@ function pushed(base: PushSession, ids = { workoutId: "900", scheduleId: "800" }
   };
 }
 
-function plan(sessions: PushSession[], values: { activePlan?: typeof ACTIVE | null } = {}) {
+function plan(
+  sessions: PushSession[],
+  values: { activePlan?: typeof ACTIVE | null; pausedFrom?: string | null } = {},
+) {
   return planWorkoutPush({
     window: WINDOW,
     sessions,
     activePlan: values.activePlan === undefined ? ACTIVE : values.activePlan,
+    pausedFrom: values.pausedFrom ?? null,
     units: "km",
   });
 }
@@ -304,6 +308,29 @@ describe("planWorkoutPush", () => {
 
     expect(actionsOf(plan([custom, held], { activePlan: null }))).toEqual([
       { action: "remove", ref: held.id, workoutId: 900, scheduleId: 800 },
+    ]);
+  });
+
+  it("takes the sessions of an open pause off the watch from its start, custom ones too, and keeps the days before it (illness or injury pause)", () => {
+    const before = pushed(session(TODAY));
+    const start = pushed(session("2026-10-02"));
+    const custom = pushed(session("2026-10-04", { planId: null, title: "Strides" }));
+    const notPushed = session("2026-10-05");
+
+    expect(
+      actionsOf(plan([before, start, custom, notPushed], { pausedFrom: "2026-10-02" })),
+    ).toEqual([
+      { action: "remove", ref: start.id, workoutId: 900, scheduleId: 800 },
+      { action: "remove", ref: custom.id, workoutId: 900, scheduleId: 800 },
+    ]);
+  });
+
+  it("puts the paused sessions back on the watch once the pause has ended (illness or injury pause)", () => {
+    const later = session("2026-10-03");
+
+    expect(plan([later], { pausedFrom: TODAY })).toEqual([]);
+    expect(actionsOf(plan([later], { pausedFrom: null }))).toEqual([
+      expect.objectContaining({ action: "create", ref: later.id, date: "2026-10-03" }),
     ]);
   });
 

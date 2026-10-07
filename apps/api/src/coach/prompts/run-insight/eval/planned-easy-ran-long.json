@@ -34,6 +34,14 @@
         "distanceM": 6000,
         "durationS": 2160
       }
+    },
+    "context": {
+      "previousRunDays": 1,
+      "pause": null,
+      "planChange": {
+        "allowed": true,
+        "reason": null
+      }
     }
   },
   "output": {
@@ -41,6 +49,11 @@
     "whatHappened": "You ran 12.4 km in 1:12:20 on Thursday morning. The plan was an easy 8.0 km in 48:00. Your average pace was 5:50 /km, a little quicker than the planned 6:00 /km. Average heart rate was 152 bpm, max 165 bpm, with 60 m of climbing.",
     "whatItMeans": "The run was about 55% longer than planned and a bit faster. A 152 bpm average over 1:12:20 is on the upper side for an easy day, so this load was more than the plan intended.",
     "nextStep": "Run Saturday's easy session as written: 6.0 km in 36:00. Keep it truly easy and don't add distance.",
-    "caution": "easy_next"
+    "caution": "easy_next",
+    "adjustment": {
+      "kind": "scale",
+      "factor": 0.8,
+      "nextStep": "Run Saturday's easy session shorter than planned and keep it truly easy, so your legs absorb Thursday's extra distance."
+    }
   }
 }

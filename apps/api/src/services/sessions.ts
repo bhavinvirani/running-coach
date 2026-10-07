@@ -13,7 +13,8 @@ import { db } from "../db/client";
 import { plan, planSession, type PlanSessionRow, userSettings } from "../db/schema";
 import { DomainError } from "../lib/errors";
 import { addDays, localDateOf, mondayOf } from "../lib/local-date";
-import { toPlanSession } from "./session-view";
+import { isPaused, openPause } from "./runner-state";
+import { readSessionContext, toPlanSession } from "./session-view";
 import { queueWorkoutPush, readPushStatus } from "./workout-push";
 
 // One session of the runner's calendar: reading it, building a custom workout, moving, editing and
@@ -87,10 +88,14 @@ async function detail(
   row: PlanSessionRow,
   now: Date,
 ): Promise<SessionDetailResponse> {
-  const [settings, active] = await Promise.all([settingsOf(userId), activePlanOf(userId)]);
+  const [settings, active, context] = await Promise.all([
+    settingsOf(userId),
+    activePlanOf(userId),
+    readSessionContext(db, userId, [row.id]),
+  ]);
   const paces = await pacesFor(row, active);
   return {
-    session: toPlanSession(row, paces, settings.units),
+    session: toPlanSession(row, paces, settings.units, context),
     paces,
     garmin: await readPushStatus(userId, now),
   };
@@ -107,9 +112,14 @@ export async function getSession(
 
 /**
  * Refuses a change to a session the runner can no longer change: another plan version's, one that is not
- * planned or moved, or one dated before today.
+ * planned or moved, one dated before today, or one the open pause holds: "I'm back" skips or eases those,
+ * so a move or a skip during the pause would be undone or doubled by it.
  */
-function assertChangeable(row: PlanSessionRow, activePlanId: string | null, today: string): void {
+async function assertChangeable(
+  row: PlanSessionRow,
+  activePlanId: string | null,
+  today: string,
+): Promise<void> {
   if (row.planId !== null && row.planId !== activePlanId) {
     throw locked("This session belongs to an earlier version of your plan.");
   }
@@ -117,6 +127,10 @@ function assertChangeable(row: PlanSessionRow, activePlanId: string | null, toda
     throw locked(`This session is ${row.status} and can no longer change.`);
   }
   if (row.date < today) throw locked("This session is in the past and can no longer change.");
+  const pause = await openPause(db, row.userId);
+  if (isPaused(row, pause?.startedOn ?? null)) {
+    throw locked("Training is paused. Tap I'm back on Today before changing this session.");
+  }
 }
 
 /** Writes a change only while the session is still planned or moved, so a concurrent change wins once. */
@@ -199,7 +213,7 @@ export async function updateCustomSession(
   const today = localDateOf(now, settings.timezone);
   if (row.planId !== null) throw locked("A plan session's steps come from the plan.");
   const active = await activePlanOf(userId);
-  assertChangeable(row, active?.id ?? null, today);
+  await assertChangeable(row, active?.id ?? null, today);
   if (input.date < today) throw locked("A workout cannot move to a day before today.");
   if (!active) throw planMissing();
   const updated = await updateChangeable(userId, id, customColumns(input, active.paces));
@@ -251,7 +265,7 @@ export async function moveSession(
   const settings = await settingsOf(userId);
   const today = localDateOf(now, settings.timezone);
   const active = await activePlanOf(userId);
-  assertChangeable(row, active?.id ?? null, today);
+  await assertChangeable(row, active?.id ?? null, today);
   if (mondayOf(date) !== mondayOf(row.date)) {
     throw locked("A session moves within its own week, Monday to Sunday.");
   }
@@ -276,7 +290,7 @@ export async function skipSession(
   const settings = await settingsOf(userId);
   const today = localDateOf(now, settings.timezone);
   const active = await activePlanOf(userId);
-  assertChangeable(row, active?.id ?? null, today);
+  await assertChangeable(row, active?.id ?? null, today);
   const skipped = await updateChangeable(userId, id, { status: "skipped" });
   await queueWorkoutPush(userId);
   return detail(userId, skipped, now);

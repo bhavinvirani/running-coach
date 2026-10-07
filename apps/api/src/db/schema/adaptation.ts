@@ -1,3 +1,4 @@
+import type { AdjustedSession } from "@running-coach/engine";
 import {
   type AdjustmentKind,
   type AdjustmentOutcome,
@@ -11,8 +12,6 @@ import {
   type PlanDelta,
   pauseReasonSchema,
   type ReEntry,
-  type SessionSnapshot,
-  type SessionSteps,
 } from "@running-coach/shared";
 import { sql } from "drizzle-orm";
 import { check, date, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
@@ -60,8 +59,6 @@ export const trainingPause = pgTable(
 
 /** What a re-entry was asked to do, stored in requested and applied. */
 export type ReEntryRequest = Pick<ReEntry, "factor" | "walkRun" | "daysOff">;
-/** A session as it stood before or after a change, with its steps so the change can be shown or undone. */
-export type AdjustedSession = SessionSnapshot & { steps: SessionSteps };
 
 // Every change made to a session after its plan was made, and every coach proposal the engine rejected.
 // The unique indexes make each writer idempotent: a sync or "I'm back" firing twice logs nothing new.
@@ -85,6 +82,8 @@ export const planAdjustment = pgTable(
     requested: jsonb("requested").$type<PlanDelta | ReEntryRequest>(),
     // The same after the engine clamped it; null when rejected.
     applied: jsonb("applied").$type<PlanDelta | ReEntryRequest>(),
+    // The session as it stood before and after (the engine's AdjustedSession), steps included so the change
+    // can be shown or undone.
     before: jsonb("before").$type<AdjustedSession>(),
     after: jsonb("after").$type<AdjustedSession>(),
     // The reviewed run (coach) or the run that ended the gap (gap); outlives the run, unlinked.
