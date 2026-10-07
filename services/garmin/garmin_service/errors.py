@@ -11,6 +11,9 @@ A refresh inside login rotates the refresh token, and the old one stops working.
 of the same request fails, the error must still hand the new bundle back, or the runner has to
 reconnect with 2FA. login() therefore registers its session with the request (track_logins) before
 it runs, and make_problem adds the session's rotated bundle to every error response.
+
+A password login (/connect, /connect/mfa, the laptop CLI) has no saved token to expire, so the same
+chains read differently there: from_login_exception and from_code_exception.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 import traceback
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from http import HTTPStatus
@@ -98,6 +101,37 @@ def not_found() -> ServiceError:
     return ServiceError(404, ErrorCode.NOT_FOUND, "Garmin has no such item.")
 
 
+def credentials_rejected() -> ServiceError:
+    return ServiceError(
+        422, ErrorCode.GARMIN_CREDENTIALS_REJECTED, "Garmin did not accept the email and password."
+    )
+
+
+def mfa_rejected() -> ServiceError:
+    return ServiceError(
+        422,
+        ErrorCode.GARMIN_MFA_REJECTED,
+        "Garmin did not accept the code. The same login takes another one.",
+    )
+
+
+def login_lost(
+    detail: str = "No Garmin login is waiting for a code under this id.",
+) -> ServiceError:
+    return ServiceError(
+        409, ErrorCode.GARMIN_LOGIN_LOST, f"{detail} Start again with the email and password."
+    )
+
+
+def no_reusable_login() -> ServiceError:
+    # The library's web-cookie fallback, used when the DI token exchange fails, dumps null tokens.
+    return ServiceError(
+        502,
+        ErrorCode.GARMIN_UNAVAILABLE,
+        "Garmin signed in without a token the app can reuse. Wait a few minutes, then try again.",
+    )
+
+
 def _chain(exc: BaseException) -> Iterator[BaseException]:
     seen: set[int] = set()
     current: BaseException | None = exc
@@ -161,14 +195,43 @@ def _from_garmin_or_network(exc: BaseException) -> ServiceError | None:
     return None
 
 
-def from_login_exception(exc: BaseException) -> ServiceError | None:
-    """Map a failed password login (connect_cli); None when it is neither Garmin nor the network.
+def _from_password_login(
+    exc: BaseException, rejected: Callable[[], ServiceError]
+) -> ServiceError | None:
+    """A password login has no token to expire: an auth error with no other explanation is Garmin
+    turning down what the runner typed. Only a 429 and that refusal keep their meaning; anything
+    else, a 404 or 403 in a strategy's text too, is Garmin not finishing the login.
 
     Garmin.resume_login lets a network error out with no library exception around it. During a
     login nothing else is on the wire, so that is Garmin not answering. The read routes keep
     from_garmin_exception, which leaves such an error unmapped.
     """
-    return _from_garmin_or_network(exc)
+    error = _from_garmin_or_network(exc)
+    if error is None or error.code is ErrorCode.GARMIN_RATE_LIMITED:
+        return error
+    if error.code is ErrorCode.GARMIN_AUTH_EXPIRED:
+        return rejected()
+    return unavailable()
+
+
+def from_login_exception(exc: BaseException) -> ServiceError | None:
+    """Map a failed Garmin(email, password).login(); None when it is neither Garmin nor the network.
+
+    A wrong email or password is GarminConnectAuthenticationError("401 Unauthorized (Invalid
+    Username or Password)"), a locked account in the widget flow "Widget authentication failed":
+    both are garmin_credentials_rejected.
+    """
+    return _from_password_login(exc, credentials_rejected)
+
+
+def from_code_exception(exc: BaseException) -> ServiceError | None:
+    """Map a failed resume_login(code); None when it is neither Garmin nor the network.
+
+    A refused code is GarminConnectAuthenticationError("MFA verification failed: ...") or "Widget
+    MFA failed: ...": garmin_mfa_rejected. Whether the login can take another code is not in the
+    exception but in the instance (password_login.code_refused).
+    """
+    return _from_password_login(exc, mfa_rejected)
 
 
 def from_write_exception(exc: BaseException) -> ServiceError | None:

@@ -7,7 +7,6 @@ Render. Garmin failures are raised the way garminconnect raises them from a pass
 from __future__ import annotations
 
 import json
-import os
 import socket
 import ssl
 import subprocess
@@ -15,7 +14,7 @@ import sys
 import threading
 import time
 import urllib.request
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,7 +22,6 @@ from typing import Any
 
 import pytest
 from garminconnect import (
-    Garmin,
     GarminConnectAuthenticationError,
     GarminConnectConnectionError,
     GarminConnectTooManyRequestsError,
@@ -47,13 +45,10 @@ from garmin_service.connect_cli import (
     WAKING,
     AppAnswer,
     AppClient,
-    GarminFactory,
     app_origin,
-    real_garmin,
     run,
 )
-from garmin_service.fake_client import FakeTokenStore
-from tests.helpers import JSON_SCHEMA_DIR, assert_valid
+from tests.helpers import JSON_SCHEMA_DIR, LOGIN_BUNDLE, FakeLogin, assert_valid
 
 APP_EMAIL = "runner@example.com"
 APP_PASSWORD = "app-password-not-real"
@@ -61,20 +56,14 @@ GARMIN_EMAIL = "garmin-runner@example.com"
 GARMIN_PASSWORD = "garmin-password-not-real"
 MFA_CODE = "418093"
 WRONG_CODE = "418039"
-BUNDLE = json.dumps(
-    {
-        "di_token": "laptop-di-token-not-real",
-        "di_refresh_token": "laptop-refresh-token-not-real",
-        "di_client_id": "laptop-client-not-real",
-    }
-)
+BUNDLE = LOGIN_BUNDLE
 SECRETS = (
     APP_PASSWORD,
     GARMIN_PASSWORD,
     MFA_CODE,
     WRONG_CODE,
-    "laptop-di-token",
-    "laptop-refresh-token",
+    "login-di-token",
+    "login-refresh-token",
 )
 SESSION_COOKIE = "better-auth.session_token=fake-session"
 
@@ -192,62 +181,6 @@ def fake_app() -> Iterator[FakeApp]:
     app.start()
     yield app
     app.stop()
-
-
-class FakeLogin:
-    """Implements PasswordLogin with scripted outcomes and records every call."""
-
-    def __init__(
-        self,
-        *,
-        needs_mfa: bool = False,
-        login_error: BaseException | None = None,
-        resume_errors: Sequence[BaseException] = (),
-        accepts_code_before_error: bool = False,
-        bundle: str = BUNDLE,
-    ) -> None:
-        self._tokens = FakeTokenStore()
-        self._needs_mfa = needs_mfa
-        self._login_error = login_error
-        # The n-th resume_login raises the n-th error; calls past the list accept the code.
-        self._resume_errors = list(resume_errors)
-        # Garmin.resume_login loads the profile after the code is accepted, so it can fail after
-        # the tokens are in place.
-        self._accepts_code_before_error = accepts_code_before_error
-        self._bundle = bundle
-        self.calls: list[str] = []
-        self.credentials: list[tuple[str, str]] = []
-        self.codes: list[str] = []
-
-    @property
-    def client(self) -> FakeTokenStore:
-        return self._tokens
-
-    def login(self) -> tuple[str | None, Any]:
-        self.calls.append("login")
-        if self._login_error is not None:
-            raise self._login_error
-        if self._needs_mfa:
-            return "needs_mfa", None
-        self._tokens.bundle = self._bundle
-        return None, None
-
-    def resume_login(self, client_state: dict[str, Any], mfa_code: str) -> tuple[Any, Any]:
-        self.calls.append("resume_login")
-        self.codes.append(mfa_code)
-        if self._accepts_code_before_error:
-            self._tokens.bundle = self._bundle
-        if self._resume_errors:
-            raise self._resume_errors.pop(0)
-        self._tokens.bundle = self._bundle
-        return None, None
-
-    def factory(self) -> GarminFactory:
-        def make(email: str, password: str) -> FakeLogin:
-            self.credentials.append((email, password))
-            return self
-
-        return make
 
 
 class Console:
@@ -843,18 +776,6 @@ def test_rejects_other_app_urls_with_exit_2_before_any_prompt(
     err = capsys.readouterr().err
     assert err.strip() == BAD_APP_URL
     assert "secret" not in err
-
-
-def test_real_garmin_ignores_garmintokens_and_returns_on_mfa(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("GARMINTOKENS", str(SERVICE_DIR / "not-a-token-file"))
-
-    garmin = real_garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-
-    assert "GARMINTOKENS" not in os.environ
-    assert isinstance(garmin, Garmin)
-    assert garmin.return_on_mfa is True
 
 
 def test_running_the_module_without_an_app_url_prints_the_usage_and_exits_2() -> None:

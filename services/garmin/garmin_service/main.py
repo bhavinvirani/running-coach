@@ -3,6 +3,8 @@
     .venv/bin/uvicorn garmin_service.main:app --host 127.0.0.1 --port $GARMIN_SERVICE_PORT
 
 with GARMIN_SERVICE_SECRET, GARMIN_FIXTURES, LOG_LEVEL and GARMIN_PARENT_PID in the environment.
+One process, never --workers (nor WEB_CONCURRENCY, which uvicorn reads as its default): a login
+waiting for its 2FA code lives in this process's memory (pending_logins).
 """
 
 from __future__ import annotations
@@ -32,10 +34,13 @@ from garmin_service.errors import (
     unauthorized_response,
 )
 from garmin_service.log import configure_logging, request_id_var
+from garmin_service.password_login import GarminFactory, factory_for
+from garmin_service.pending_logins import PendingLogins
 from garmin_service.routes import (
     activity_detail,
     activity_series,
     history,
+    login,
     profile,
     sync,
     workouts,
@@ -160,7 +165,14 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def create_app(settings: Settings, *, connect: Connect | None = None) -> FastAPI:
+def create_app(
+    settings: Settings,
+    *,
+    connect: Connect | None = None,
+    password_login: GarminFactory | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> FastAPI:
+    """The app. Tests pass fakes for the token login, the password login and the logins' clock."""
     configure_logging(settings.log_level)
     app = FastAPI(
         title="garmin-service",
@@ -170,6 +182,9 @@ def create_app(settings: Settings, *, connect: Connect | None = None) -> FastAPI
         lifespan=_lifespan(settings),
     )
     app.state.connect = connect or connector_for(fixtures=settings.fixtures)
+    app.state.password_login = password_login or factory_for(fixtures=settings.fixtures)
+    # Per app, so a restart (and each test's app) starts with no login waiting for a code.
+    app.state.pending_logins = PendingLogins(clock=clock)
     install_error_handlers(app)
     app.add_api_route("/health", health, methods=["GET"])
     app.include_router(profile.router)
@@ -178,6 +193,7 @@ def create_app(settings: Settings, *, connect: Connect | None = None) -> FastAPI
     app.include_router(activity_detail.router)
     app.include_router(activity_series.router)
     app.include_router(workouts.router)
+    app.include_router(login.router)
     app.add_middleware(GuardMiddleware, secret=settings.secret)
     return app
 

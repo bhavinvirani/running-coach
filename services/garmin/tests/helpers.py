@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from jsonschema import Draft202012Validator
 
 from garmin_service.client import GARMIN_RETRY_ATTEMPTS, Connect, GarminSession, login
 from garmin_service.fake_client import FakeGarmin, FakeTokenStore
+from garmin_service.password_login import GarminFactory
 
 TEST_SECRET = "test-secret-not-real"
 BASE_BUNDLE: dict[str, str] = {
@@ -18,6 +20,15 @@ BASE_BUNDLE: dict[str, str] = {
     "di_refresh_token": "fixture-refresh",
     "di_client_id": "fixture-client",
 }
+# What a scripted password login (FakeLogin) dumps once Garmin let it in.
+LOGIN_BUNDLE = json.dumps(
+    {
+        "di_token": "login-di-token-not-real",
+        "di_refresh_token": "login-refresh-token-not-real",
+        "di_client_id": "login-client-not-real",
+    }
+)
+NO_TOKENS = json.dumps({"di_token": None, "di_refresh_token": None, "di_client_id": None})
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 JSON_SCHEMA_DIR = (
     Path(__file__).resolve().parents[3] / "packages" / "shared" / "src" / "json-schema"
@@ -314,3 +325,92 @@ class ScriptedGarmin:
             return login(self, token_bundle, gap_s=0.0)
 
         return connect
+
+
+class Clock:
+    """A monotonic clock the test moves by hand."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class FakeLogin:
+    """Implements PasswordLogin with scripted outcomes and records every call.
+
+    Failures are raised the way garminconnect raises them from a password login.
+    """
+
+    def __init__(
+        self,
+        *,
+        needs_mfa: bool = False,
+        login_error: BaseException | None = None,
+        resume_errors: Sequence[BaseException] = (),
+        accepts_code_before_error: bool = False,
+        bundle: str = LOGIN_BUNDLE,
+        on_resume: Callable[[], None] | None = None,
+    ) -> None:
+        self._tokens = FakeTokenStore()
+        self._tokens.bundle = NO_TOKENS
+        self._needs_mfa = needs_mfa
+        self._login_error = login_error
+        # The n-th resume_login raises the n-th error; calls past the list accept the code.
+        self._resume_errors = list(resume_errors)
+        # Garmin.resume_login loads the profile after the code is accepted, so it can fail after
+        # the tokens are in place.
+        self._accepts_code_before_error = accepts_code_before_error
+        self._bundle = bundle
+        # Runs inside every resume_login, before its outcome: a slow Garmin, for concurrency tests.
+        self._on_resume = on_resume
+        self.password: str | None = None
+        self.calls: list[str] = []
+        self.credentials: list[tuple[str, str]] = []
+        self.codes: list[str] = []
+
+    @property
+    def client(self) -> FakeTokenStore:
+        return self._tokens
+
+    def login(self) -> tuple[str | None, Any]:
+        self.calls.append("login")
+        if self._login_error is not None:
+            raise self._login_error
+        if self._needs_mfa:
+            return "needs_mfa", None
+        self._tokens.bundle = self._bundle
+        return None, None
+
+    def resume_login(self, client_state: dict[str, Any], mfa_code: str) -> tuple[Any, Any]:
+        self.calls.append("resume_login")
+        self.codes.append(mfa_code)
+        if self._on_resume is not None:
+            self._on_resume()
+        if self._accepts_code_before_error:
+            self._tokens.bundle = self._bundle
+        if self._resume_errors:
+            raise self._resume_errors.pop(0)
+        self._tokens.bundle = self._bundle
+        return None, None
+
+    def factory(self) -> GarminFactory:
+        """A factory that hands out this one login for every start."""
+        return logins_in_order(self)
+
+
+def logins_in_order(*logins: FakeLogin) -> GarminFactory:
+    """A factory that hands out these logins, one per start, recording what each was given."""
+    remaining = list(logins)
+
+    def make(email: str, password: str) -> FakeLogin:
+        garmin = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        garmin.credentials.append((email, password))
+        garmin.password = password
+        return garmin
+
+    return make

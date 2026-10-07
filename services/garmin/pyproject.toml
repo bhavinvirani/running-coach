@@ -1,7 +1,7 @@
 [project]
 name = "garmin-service"
 version = "0.1.0"
-description = "Stateless FastAPI wrapper around garminconnect, spawned by the API on 127.0.0.1"
+description = "FastAPI wrapper around garminconnect, spawned by the API on 127.0.0.1; stateless but for a pending 2FA login"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # Pinned exactly and excluded from Dependabot auto-merge: Garmin breaks the client without notice.
