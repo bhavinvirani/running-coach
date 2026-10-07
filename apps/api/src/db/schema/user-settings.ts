@@ -3,6 +3,7 @@ import {
   coachCredentialChoiceSchema,
   type CoachDetail,
   coachDetailSchema,
+  type HrZones,
   type Units,
   unitsSchema,
 } from "@running-coach/shared";
@@ -25,7 +26,9 @@ export const userSettings = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     units: text("units").$type<Units>().notNull().default("km"),
     timezone: text("timezone").notNull().default("UTC"),
-    hrZones: jsonb("hr_zones"),
+    // The runner's own zones (hrZonesSchema), null for Garmin's. Typed, not checked: readers parse it
+    // (services/hr-zones.ts), so a value that no longer fits the contract never breaks run detail.
+    hrZones: jsonb("hr_zones").$type<HrZones>(),
     coachDetail: text("coach_detail").$type<CoachDetail>().notNull().default("standard"),
     // "v1:" ciphertext from src/lib/crypto.ts; never returned by a route.
     claudeKeyEnc: text("claude_key_enc"),

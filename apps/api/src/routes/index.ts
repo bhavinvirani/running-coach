@@ -7,6 +7,7 @@ import { cronRouter } from "./cron";
 import { garminRouter } from "./garmin";
 import { goalRouter } from "./goal";
 import { healthRouter } from "./health";
+import { hrZonesRouter } from "./hr-zones";
 import { importRouter } from "./import";
 import { insightsRouter } from "./insights";
 import { meRouter } from "./me";
@@ -29,6 +30,7 @@ export function registerRoutes(app: Express): void {
   api.use(cronRouter);
   api.use(requireUser);
   api.use(meRouter);
+  api.use(hrZonesRouter);
   api.use(garminRouter);
   api.use(syncRouter);
   api.use(activitiesRouter);
