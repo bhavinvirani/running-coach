@@ -12,7 +12,17 @@ export function moveDays(session: Pick<PlanSession, "date">, today: string): str
   );
 }
 
-/** Whether the runner can still change a session: dated today or later, and neither run nor dropped. */
-export function canChange(session: Pick<PlanSession, "date" | "status">, today: string): boolean {
-  return session.date >= today && (session.status === "planned" || session.status === "moved");
+/**
+ * Whether the runner can still change a session: dated today or later, neither run nor dropped, and not
+ * in an open pause, which skips it when the runner is back (a move would only carry it into the pause).
+ */
+export function canChange(
+  session: Pick<PlanSession, "date" | "status" | "paused">,
+  today: string,
+): boolean {
+  return (
+    !session.paused &&
+    session.date >= today &&
+    (session.status === "planned" || session.status === "moved")
+  );
 }

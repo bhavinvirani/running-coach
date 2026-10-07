@@ -1,4 +1,6 @@
+import type { SessionStatus } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
+import { coachRestSessionFixture } from "@/test/fixtures";
 import { moveWarningSentence, repeatLabel, statusWord } from "./session-copy";
 
 describe("moveWarningSentence", () => {
@@ -28,12 +30,24 @@ describe("moveWarningSentence", () => {
 });
 
 describe("statusWord", () => {
+  const as = (status: SessionStatus, paused = false) => ({ status, paused, adjustment: null });
+
   it("says nothing for a planned session and names every other status", () => {
-    expect(statusWord("planned")).toBeNull();
-    expect(statusWord("moved")).toBe("Moved");
-    expect(statusWord("skipped")).toBe("Skipped");
-    expect(statusWord("missed")).toBe("Missed");
-    expect(statusWord("done")).toBe("Done");
+    expect(statusWord(as("planned"))).toBeNull();
+    expect(statusWord(as("moved"))).toBe("Moved");
+    expect(statusWord(as("skipped"))).toBe("Skipped");
+    expect(statusWord(as("missed"))).toBe("Missed");
+    expect(statusWord(as("done"))).toBe("Done");
+  });
+
+  it("says Paused for a session to come in an open pause, planned or moved (paused session)", () => {
+    expect(statusWord(as("planned", true))).toBe("Paused");
+    expect(statusWord(as("moved", true))).toBe("Paused");
+    expect(statusWord(as("skipped", true))).toBe("Skipped");
+  });
+
+  it("leaves a coach rest to its adjustment line (coach rest)", () => {
+    expect(statusWord(coachRestSessionFixture())).toBeNull();
   });
 });
 

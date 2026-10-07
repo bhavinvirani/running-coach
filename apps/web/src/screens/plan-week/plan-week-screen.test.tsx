@@ -1,4 +1,4 @@
-import type { MeResponse, PlanResponse } from "@running-coach/shared";
+import type { MeResponse, PlanResponse, PlanSession } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,8 +7,14 @@ import { planKey } from "@/api/plan";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import {
+  coachEasySessionFixture,
+  coachRestSessionFixture,
   customSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
   meFixture,
+  missedSessionFixture,
+  pausedSessionFixture,
   planFixture,
   planResponseFixture,
   planSessionId,
@@ -289,4 +295,81 @@ describe("PlanWeekScreen", () => {
     expect(untitled).toHaveAccessibleName("Long run, Sat 10 Oct, 7.1 km, 41:04");
     expect(within(untitled).getAllByText(/Long run/)).toHaveLength(1);
   });
+
+  it("reads a done, missed or paused session as such beside its distance and time (session status)", async () => {
+    fakePlanApi({
+      plan: withSessions([
+        doneSessionFixture("2026-10-06"),
+        missedSessionFixture("2026-10-07"),
+        pausedSessionFixture("2026-10-09"),
+      ]),
+    });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    const done = within(rows[1]!).getByRole("link");
+    expect(done).toHaveAccessibleName("Easy, Tue 6 Oct, Done, 7.5 km, 45:00");
+    expect(done).toHaveAttribute("href", `/plan/sessions/${planSessionId("2026-10-06")}`);
+    expect(within(rows[2]!).getByRole("link")).toHaveAccessibleName(
+      "Strength, Wed 7 Oct, Missed, 30:00",
+    );
+    expect(within(rows[4]!).getByRole("link")).toHaveAccessibleName(
+      "Easy, Fri 9 Oct, Paused, 5.0 km, 30:00",
+    );
+    expect(rows[4]).toHaveTextContent(/^Fri 9 OctEasyPaused5\.0 km30:00/);
+  });
+
+  it("says what a session the coach or a return changed was, on a line under its steps (adjusted session)", async () => {
+    fakePlanApi({
+      plan: withSessions([
+        coachEasySessionFixture(),
+        coachRestSessionFixture(),
+        easedSessionFixture("pause"),
+      ]),
+    });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    const coach = within(rows[3]!).getByRole("link");
+    expect(coach).toHaveAccessibleName(
+      "Easy, Thu 8 Oct, 10.6 km, 1:04:00, Changed by the coach, was Intervals 11.6 km",
+    );
+    expect(within(coach).getByText("Changed by the coach, was Intervals 11.6 km")).toHaveClass(
+      "text-caption",
+      "text-ink-2",
+    );
+    // A coach rest says it was skipped once, in its own words.
+    const rest = within(rows[4]!).getByRole("link");
+    expect(rest).toHaveAccessibleName("Easy, Fri 9 Oct, Skipped by the coach");
+    expect(rest).toHaveTextContent(/^EasySkipped by the coach$/);
+    expect(within(rows[6]!).getByRole("link")).toHaveAccessibleName(
+      "Long run, Sun 11 Oct, 9.8 km, 59:09, Eased for your return, was 14.0 km",
+    );
+  });
+
+  it("gives what an eased session was in mi when the runner uses miles (unit conversion)", async () => {
+    fakePlanApi({
+      me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }),
+      plan: withSessions([easedSessionFixture("gap")]),
+    });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    expect(within(rows[6]!).getByText("Eased for your return, was 8.7 mi")).toBeInTheDocument();
+  });
 });
+
+/** planResponseFixture with week 1's sessions on the dates of `sessions` replaced by them. */
+function withSessions(sessions: PlanSession[]): PlanResponse {
+  const plan = planFixture();
+  const byDate = new Map(sessions.map((session) => [session.date, session]));
+  const weeks = plan.weeks.map((week) =>
+    week.number === 1
+      ? {
+          ...week,
+          sessions: week.sessions.map((session) => byDate.get(session.date) ?? session),
+        }
+      : week,
+  );
+  return planResponseFixture({ plan: { ...plan, weeks } });
+}

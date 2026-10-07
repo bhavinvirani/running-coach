@@ -28,15 +28,23 @@ describe("moveDays", () => {
 });
 
 describe("canChange", () => {
+  const open = { paused: false } as const;
+
   it("lets a planned or moved session from today on change", () => {
-    expect(canChange({ date: "2026-10-08", status: "planned" }, "2026-10-08")).toBe(true);
-    expect(canChange({ date: "2026-10-09", status: "moved" }, "2026-10-08")).toBe(true);
+    expect(canChange({ ...open, date: "2026-10-08", status: "planned" }, "2026-10-08")).toBe(true);
+    expect(canChange({ ...open, date: "2026-10-09", status: "moved" }, "2026-10-08")).toBe(true);
   });
 
   it("locks a past, done, missed or skipped session", () => {
-    expect(canChange({ date: "2026-10-07", status: "planned" }, "2026-10-08")).toBe(false);
-    expect(canChange({ date: "2026-10-08", status: "done" }, "2026-10-08")).toBe(false);
-    expect(canChange({ date: "2026-10-08", status: "missed" }, "2026-10-08")).toBe(false);
-    expect(canChange({ date: "2026-10-09", status: "skipped" }, "2026-10-08")).toBe(false);
+    expect(canChange({ ...open, date: "2026-10-07", status: "planned" }, "2026-10-08")).toBe(false);
+    expect(canChange({ ...open, date: "2026-10-08", status: "done" }, "2026-10-08")).toBe(false);
+    expect(canChange({ ...open, date: "2026-10-08", status: "missed" }, "2026-10-08")).toBe(false);
+    expect(canChange({ ...open, date: "2026-10-09", status: "skipped" }, "2026-10-08")).toBe(false);
+  });
+
+  it("locks a session in an open pause, which the end of the pause skips (paused session)", () => {
+    expect(canChange({ paused: true, date: "2026-10-09", status: "planned" }, "2026-10-08")).toBe(
+      false,
+    );
   });
 });

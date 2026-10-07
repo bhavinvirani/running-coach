@@ -1,9 +1,12 @@
 import type {
   Activity,
   CalendarResponse,
+  EndPauseResponse,
   MeResponse,
+  PauseReason,
   PersonalBestsResponse,
   PlanSession,
+  TrainingPause,
 } from "@running-coach/shared";
 import { ErrorCode, RACE_EVENT_TYPE } from "@running-coach/shared";
 import { act, screen, waitFor, within } from "@testing-library/react";
@@ -19,12 +22,19 @@ import { json, never, notFound, problem, stubFetch, type FakeRequest } from "@/t
 import {
   activityFixture,
   calendarFixture,
+  coachEasySessionFixture,
+  coachRestSessionFixture,
   customSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
+  endPauseResponseFixture,
   garminPushStatusFixture,
   meFixture,
+  pausedSessionFixture,
   personalBestFixture,
   personalBestsFixture,
   planSessionId,
+  trainingPauseFixture,
 } from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { TodayScreen } from "./today-screen";
@@ -852,18 +862,41 @@ type FakeWeekApi = {
   calendar?: CalendarResponse | ((request: FakeRequest) => Response | Promise<Response>);
   /** POST /api/calendar/unschedule; by default it takes the workout off and answers the new status. */
   unschedule?: () => Response | Promise<Response>;
+  /** GET /api/pause: the open pause (none by default), or an answer per request. */
+  pause?: TrainingPause | null | (() => Response | Promise<Response>);
+  /** POST /api/pause: a problem, else a pause from today for the reason sent. */
+  startPause?: () => Response | Promise<Response>;
+  /** POST /api/pause/end: a problem, else the pause closed with this re-entry (endPauseResponseFixture's). */
+  endPause?: EndPauseResponse | (() => Response | Promise<Response>);
 };
+
+/** The week with `change` applied to each of its sessions, like the API's next read after a change. */
+function changeSessions(
+  calendar: CalendarResponse,
+  change: (session: PlanSession) => PlanSession,
+): CalendarResponse {
+  return {
+    ...calendar,
+    days: calendar.days.map((day) => ({ ...day, sessions: day.sessions.map(change) })),
+  };
+}
 
 /**
  * Today with its latest run and no bests, and the calendar of the week from Thu 8 Oct. Send to Garmin
- * starts a push the calendar then reports; Unschedule takes the workout off the stored list.
+ * starts a push the calendar then reports; Unschedule takes the workout off the stored list. Pause training
+ * opens a pause today, which pauses the week's sessions that are not done; I'm back skips those and closes
+ * it.
  */
 function fakeWeekApi({
   me = meFixture(),
   calendar = weekCalendar(),
   unschedule,
+  pause = null,
+  startPause,
+  endPause = endPauseResponseFixture(),
 }: FakeWeekApi = {}) {
   let current = calendar;
+  let openPause = pause;
   return stubFetch((request) => {
     const { method, path } = request;
     if (method === "GET" && path === "/api/me") return json(typeof me === "function" ? me() : me);
@@ -874,7 +907,27 @@ function fakeWeekApi({
     if (method === "GET" && path === "/api/calendar") {
       return typeof current === "function" ? current(request) : json(current);
     }
-    if (typeof current === "function") return notFound();
+    if (method === "GET" && path === "/api/pause") {
+      return typeof openPause === "function" ? openPause() : json({ pause: openPause });
+    }
+    if (typeof current === "function" || typeof openPause === "function") return notFound();
+    if (method === "POST" && path === "/api/pause") {
+      if (startPause) return startPause();
+      const { reason } = request.body as { reason: PauseReason };
+      openPause = openPause ?? trainingPauseFixture({ reason, startDate: WEEK_FROM });
+      current = changeSessions(current, (session) =>
+        session.status === "done" ? session : { ...session, paused: true, onGarmin: false },
+      );
+      return json({ pause: openPause });
+    }
+    if (method === "POST" && path === "/api/pause/end") {
+      if (typeof endPause === "function") return endPause();
+      openPause = null;
+      current = changeSessions(current, (session) =>
+        session.paused ? { ...session, paused: false, status: "skipped" } : session,
+      );
+      return json(endPause);
+    }
     if (method === "POST" && path === "/api/calendar/push") {
       current = { ...current, garmin: { ...current.garmin, pushing: true, error: null } };
       return json({ garmin: current.garmin });
@@ -1107,7 +1160,12 @@ describe("TodayScreen next 7 days", () => {
     expect(
       within(week).getByRole("link", { name: "Intervals, 11.6 km, 1:04:00, Not on Garmin" }),
     ).toBeInTheDocument();
-    expect(within(week).queryByRole("button")).not.toBeInTheDocument();
+    // Not feeling 100% is the week's one button: the push line offers no Send to Garmin.
+    expect(
+      within(week)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Not feeling 100%"]);
   });
 
   it("adds no push line while the login is expired, Reconnect Garmin already says it (token expiry)", async () => {
@@ -1119,7 +1177,11 @@ describe("TodayScreen next 7 days", () => {
     const week = await loadedWeek();
 
     expect(header()).toContainElement(screen.getByRole("link", { name: "Reconnect Garmin" }));
-    expect(within(week).queryByRole("button")).not.toBeInTheDocument();
+    expect(
+      within(week)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Not feeling 100%"]);
     expect(within(week).queryByRole("alert")).not.toBeInTheDocument();
     expect(
       within(week).getByRole("link", { name: "Easy, 5.0 km, 30:00, Not on Garmin" }),
@@ -1271,5 +1333,437 @@ describe("TodayScreen next 7 days", () => {
     expect(
       within(rows[0]!).getByRole("link", { name: "Intervals, 7.2 mi, 1:04:00, On Garmin" }),
     ).toBeInTheDocument();
+  });
+});
+
+const PAUSE_QUESTION =
+  "Pause your training? Sessions from today come off your watch until you are back.";
+const SICK_ADVICE =
+  "Rest while you are ill. Run again once you have had no fever for a day and an easy walk feels normal. See a doctor if it lasts more than a week, or straight away for chest pain or trouble breathing.";
+const INJURED_ADVICE =
+  "Stop running on it. Pain that changes how you walk or run, swelling, or pain that lasts more than a few days needs a doctor or physio. Come back once you can walk without pain.";
+const BREAK_ADVICE = "Take the time you need. When you come back, the plan restarts gently.";
+const NOT_MEDICAL_ADVICE = "This is not medical advice.";
+
+/** The week from Thu 8 Oct with every session paused and off the watch, as the API reads it mid-pause. */
+function pausedWeek(): CalendarResponse {
+  return weekCalendar({}, (session) => ({ ...session, paused: true, onGarmin: false }));
+}
+
+const findPausedCard = (day = "Thu 8 Oct") =>
+  screen.findByRole("region", { name: `Training paused since ${day}` });
+
+async function openPausePanel() {
+  const week = await loadedWeek();
+  await userEvent.click(within(week).getByRole("button", { name: "Not feeling 100%" }));
+  return within(week).getByRole("group", { name: PAUSE_QUESTION });
+}
+
+describe("TodayScreen pause", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("offers Not feeling 100% beside the Next 7 days heading with an active plan", async () => {
+    fakeWeekApi();
+    renderToday();
+
+    const week = await loadedWeek();
+    const entry = within(week).getByRole("button", { name: "Not feeling 100%" });
+    expect(
+      within(week).getByRole("heading", { name: "Next 7 days" }).parentElement,
+    ).toContainElement(entry);
+    expect(entry).toHaveAttribute("data-variant", "secondary");
+  });
+
+  it("leaves Not feeling 100% out and never asks for a pause without an active plan (no plan)", async () => {
+    const calls = fakeWeekApi({ calendar: weekCalendar({ paces: null }) });
+    renderToday();
+
+    expect(await screen.findByRole("region", { name: "Latest run" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Not feeling 100%" })).not.toBeInTheDocument();
+    expect(calls.some((call) => call.path === "/api/pause")).toBe(false);
+  });
+
+  it("keeps the week's skeleton until the pause is read too, so the paused card never pushes it down (pause loading)", async () => {
+    const calls = fakeWeekApi({ pause: () => never() });
+    renderToday();
+
+    await vi.waitFor(() => expect(calls.some((call) => call.path === "/api/pause")).toBe(true));
+    const week = screen.getByRole("region", { name: "Next 7 days" });
+    expect(
+      within(week).getByRole("status", { name: "Loading the next 7 days" }),
+    ).toBeInTheDocument();
+    expect(within(week).queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Not feeling 100%" })).not.toBeInTheDocument();
+  });
+
+  it("explains a failed pause read beside the week and reads it again on Retry (pause load error)", async () => {
+    let attempts = 0;
+    fakeWeekApi({
+      pause: () => {
+        attempts += 1;
+        return attempts === 1 ? problem(500, ErrorCode.internal) : json({ pause: null });
+      },
+    });
+    renderToday();
+
+    const week = await loadedWeek();
+    expect(await screen.findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(within(week).getAllByRole("listitem")).toHaveLength(7);
+    expect(
+      within(week).queryByRole("button", { name: "Not feeling 100%" }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(
+      await within(week).findByRole("button", { name: "Not feeling 100%" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("opens the choice in place with focus on its question, and Keep training closes it with focus back (pause panel focus)", async () => {
+    const calls = fakeWeekApi();
+    renderToday();
+
+    const panel = await openPausePanel();
+    expect(within(panel).getByText(PAUSE_QUESTION)).toHaveFocus();
+    expect(
+      within(panel)
+        .getAllByRole("radio")
+        .map((radio) => radio.closest("label")?.textContent),
+    ).toEqual(["Sick", "Pain or injury", "Need a break"]);
+    expect(within(panel).getByRole("button", { name: "Pause training" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Not feeling 100%" })).not.toBeInTheDocument();
+
+    await userEvent.click(within(panel).getByRole("button", { name: "Keep training" }));
+
+    expect(screen.queryByRole("group", { name: PAUSE_QUESTION })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Not feeling 100%" })).toHaveFocus();
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+  });
+
+  it.each([
+    { reason: "Sick", advice: SICK_ADVICE, medical: true },
+    { reason: "Pain or injury", advice: INJURED_ADVICE, medical: true },
+    { reason: "Need a break", advice: BREAK_ADVICE, medical: false },
+  ])(
+    "shows the advice for $reason under the reasons, and the not-medical-advice line only for illness or injury (pause panel $reason)",
+    async ({ reason, advice, medical }) => {
+      fakeWeekApi();
+      renderToday();
+
+      const panel = await openPausePanel();
+      expect(within(panel).queryByText(advice)).not.toBeInTheDocument();
+      await userEvent.click(within(panel).getByRole("radio", { name: reason }));
+
+      expect(within(panel).getByText(advice)).toHaveClass("text-body", "text-ink");
+      if (medical) {
+        expect(within(panel).getByText(NOT_MEDICAL_ADVICE)).toHaveClass(
+          "text-caption",
+          "text-ink-2",
+        );
+      } else {
+        expect(within(panel).queryByText(NOT_MEDICAL_ADVICE)).not.toBeInTheDocument();
+      }
+      expect(within(panel).getByRole("button", { name: "Pause training" })).toBeEnabled();
+    },
+  );
+
+  it("starts the next opening with no reason chosen (pause panel reopened)", async () => {
+    fakeWeekApi();
+    renderToday();
+
+    let panel = await openPausePanel();
+    await userEvent.click(within(panel).getByRole("radio", { name: "Sick" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "Keep training" }));
+    panel = await openPausePanel();
+
+    expect(within(panel).getByRole("radio", { name: "Sick" })).not.toBeChecked();
+    expect(within(panel).queryByText(SICK_ADVICE)).not.toBeInTheDocument();
+  });
+
+  it("pauses training for the reason chosen, then shows the paused card above the week with I'm back and every session Paused (pause)", async () => {
+    const calls = fakeWeekApi();
+    renderToday();
+
+    const panel = await openPausePanel();
+    await userEvent.click(within(panel).getByRole("radio", { name: "Pain or injury" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "Pause training" }));
+
+    const card = await findPausedCard();
+    const title = within(card).getByRole("heading", { name: "Training paused since Thu 8 Oct" });
+    await waitFor(() => expect(title).toHaveFocus());
+    expect(within(card).getByText(INJURED_ADVICE)).toBeInTheDocument();
+    expect(within(card).getByText(NOT_MEDICAL_ADVICE)).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "I'm back" })).toBeEnabled();
+    expect(
+      calls
+        .filter((call) => call.method === "POST" && call.path === "/api/pause")
+        .map((c) => c.body),
+    ).toEqual([{ reason: "injured" }]);
+
+    const week = screen.getByRole("region", { name: "Next 7 days" });
+    expect(card.compareDocumentPosition(week) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const rows = within(week).getAllByRole("listitem");
+    expect(
+      within(rows[0]!).getByRole("link", { name: "Intervals, 11.6 km, 1:04:00, Paused" }),
+    ).toBeInTheDocument();
+    expect(
+      within(rows[6]!).getByRole("link", { name: "Strength, 30:00, Paused" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: PAUSE_QUESTION })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Not feeling 100%" })).not.toBeInTheDocument();
+  });
+
+  it("shows an open pause as the paused card on load, without taking focus (paused card)", async () => {
+    fakeWeekApi({
+      pause: trainingPauseFixture({ reason: "break", startDate: "2026-10-06" }),
+      calendar: pausedWeek(),
+    });
+    renderToday();
+
+    const card = await findPausedCard("Tue 6 Oct");
+    expect(within(card).getByText(BREAK_ADVICE)).toBeInTheDocument();
+    expect(within(card).queryByText(NOT_MEDICAL_ADVICE)).not.toBeInTheDocument();
+    expect(within(card).getByRole("heading")).not.toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Not feeling 100%" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the sick advice and its not-medical-advice line on the paused card (paused card sick)", async () => {
+    fakeWeekApi({ pause: trainingPauseFixture({ reason: "sick" }), calendar: pausedWeek() });
+    renderToday();
+
+    const card = await findPausedCard();
+    expect(within(card).getByText(SICK_ADVICE)).toBeInTheDocument();
+    expect(within(card).getByText(NOT_MEDICAL_ADVICE)).toBeInTheDocument();
+  });
+
+  it("says why Pause training failed with Retry, which sends the same reason again (pause error)", async () => {
+    let attempts = 0;
+    const calls = fakeWeekApi({
+      startPause: () => {
+        attempts += 1;
+        return attempts === 1
+          ? problem(500, ErrorCode.internal)
+          : json({ pause: trainingPauseFixture({ reason: "sick" }) });
+      },
+    });
+    renderToday();
+
+    const panel = await openPausePanel();
+    await userEvent.click(within(panel).getByRole("radio", { name: "Sick" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "Pause training" }));
+
+    expect(await within(panel).findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(screen.queryByRole("region", { name: /^Training paused/ })).not.toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Retry" }));
+
+    expect(await findPausedCard()).toBeInTheDocument();
+    expect(
+      calls
+        .filter((call) => call.method === "POST" && call.path === "/api/pause")
+        .map((c) => c.body),
+    ).toEqual([{ reason: "sick" }, { reason: "sick" }]);
+  });
+
+  it("opens the panel again without the last failure's alert (pause error reopened)", async () => {
+    fakeWeekApi({ startPause: () => problem(500, ErrorCode.internal) });
+    renderToday();
+
+    let panel = await openPausePanel();
+    await userEvent.click(within(panel).getByRole("radio", { name: "Sick" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "Pause training" }));
+    expect(await within(panel).findByRole("alert")).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Keep training" }));
+    panel = await openPausePanel();
+
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      case: "0.7 walk-run",
+      reEntry: { daysOff: 9, factor: 0.7, walkRun: true },
+      line: "9 days off: the next sessions are eased to 70% and build back up by at most 10% a week. This week is walk-run.",
+    },
+    {
+      case: "0.5",
+      reEntry: { daysOff: 15, factor: 0.5, walkRun: false },
+      line: "15 days off: the next sessions are eased to 50% and build back up by at most 10% a week.",
+    },
+    {
+      case: "1 walk-run",
+      reEntry: { daysOff: 3, factor: 1, walkRun: true },
+      line: "This week is walk-run, then the plan carries on.",
+    },
+    {
+      case: "1",
+      reEntry: { daysOff: 2, factor: 1, walkRun: false, sessionsChanged: 0 },
+      line: "Your plan carries on as planned.",
+    },
+  ])(
+    "skips the paused sessions on I'm back and says how the plan restarts (I'm back $case)",
+    async ({ reEntry, line }) => {
+      const calls = fakeWeekApi({
+        pause: trainingPauseFixture(),
+        calendar: pausedWeek(),
+        endPause: endPauseResponseFixture(reEntry),
+      });
+      renderToday();
+
+      const card = await findPausedCard();
+      await userEvent.click(within(card).getByRole("button", { name: "I'm back" }));
+
+      const outcome = await screen.findByRole("status");
+      expect(outcome.textContent).toBe(line);
+      await waitFor(() => expect(outcome).toHaveFocus());
+      expect(screen.queryByRole("region", { name: /^Training paused/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Not feeling 100%" })).toBeInTheDocument();
+      const rows = await weekRows();
+      expect(
+        within(rows[0]!).getByRole("link", { name: "Intervals, Skipped" }),
+      ).toBeInTheDocument();
+      expect(calls.filter((call) => call.path === "/api/pause/end")).toHaveLength(1);
+    },
+  );
+
+  it("closes the card without a line when the pause was already ended elsewhere (double I'm back)", async () => {
+    fakeWeekApi({
+      pause: trainingPauseFixture(),
+      calendar: pausedWeek(),
+      endPause: endPauseResponseFixture(null),
+    });
+    renderToday();
+
+    const card = await findPausedCard();
+    await userEvent.click(within(card).getByRole("button", { name: "I'm back" }));
+
+    const entry = await screen.findByRole("button", { name: "Not feeling 100%" });
+    await waitFor(() => expect(entry).toHaveFocus());
+    expect(screen.queryByRole("region", { name: /^Training paused/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("says why I'm back failed with Retry and keeps the pause until it goes through (I'm back error)", async () => {
+    let attempts = 0;
+    fakeWeekApi({
+      pause: trainingPauseFixture(),
+      calendar: pausedWeek(),
+      endPause: () => {
+        attempts += 1;
+        return attempts === 1
+          ? problem(500, ErrorCode.internal)
+          : json(endPauseResponseFixture({ factor: 1, walkRun: false }));
+      },
+    });
+    renderToday();
+
+    const card = await findPausedCard();
+    await userEvent.click(within(card).getByRole("button", { name: "I'm back" }));
+
+    expect(await within(card).findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(within(card).getByRole("button", { name: "I'm back" })).toBeEnabled();
+    await userEvent.click(within(card).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Your plan carries on as planned.");
+  });
+
+  it("drops the last I'm back line once a new pause starts (pause again)", async () => {
+    fakeWeekApi({ pause: trainingPauseFixture(), calendar: pausedWeek() });
+    renderToday();
+
+    await userEvent.click(within(await findPausedCard()).getByRole("button", { name: "I'm back" }));
+    expect(await screen.findByRole("status")).toBeInTheDocument();
+    const panel = await openPausePanel();
+    await userEvent.click(within(panel).getByRole("radio", { name: "Need a break" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "Pause training" }));
+
+    expect(await findPausedCard()).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
+
+describe("TodayScreen session status", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reads a done session as Done and a paused one as Paused, in place of their Garmin state (session status)", async () => {
+    fakeWeekApi({
+      calendar: weekCalendar({}, (session) =>
+        session.date === WEEK_FROM
+          ? doneSessionFixture(WEEK_FROM, { onGarmin: true })
+          : session.date === "2026-10-09"
+            ? pausedSessionFixture("2026-10-09")
+            : session,
+      ),
+    });
+    renderToday();
+
+    const rows = await weekRows();
+    expect(
+      within(rows[0]!).getByRole("link", { name: "Intervals, 11.6 km, 1:04:00, Done" }),
+    ).toBeInTheDocument();
+    expect(
+      within(rows[1]!).getByRole("link", { name: "Easy, 5.0 km, 30:00, Paused" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says what a session the coach or a return changed was, on a line under its Garmin state (adjusted session)", async () => {
+    const changed = new Map(
+      [coachEasySessionFixture(), coachRestSessionFixture(), easedSessionFixture()].map(
+        (session) => [session.date, session],
+      ),
+    );
+    fakeWeekApi({
+      calendar: weekCalendar({}, (session) => changed.get(session.date) ?? session),
+    });
+    renderToday();
+
+    const rows = await weekRows();
+    expect(within(rows[0]!).getByRole("link", { name: /^Easy,/ })).toHaveAccessibleName(
+      "Easy, 10.6 km, 1:04:00, Waiting to send, Changed by the coach, was Intervals 11.6 km",
+    );
+    // A coach rest says it was skipped once, in its own words.
+    expect(within(rows[1]!).getByRole("link", { name: /^Easy,/ })).toHaveAccessibleName(
+      "Easy, Skipped by the coach",
+    );
+    const eased = within(rows[3]!).getByRole("link", { name: /^Long run,/ });
+    expect(Array.from(eased.children).map((line) => line.textContent)).toEqual([
+      "Long run",
+      "9.8 km·59:09",
+      "Waiting to send",
+      "Eased for your return, was 14.0 km",
+    ]);
+    expect(within(eased).getByText("Eased for your return, was 14.0 km")).toHaveClass(
+      "text-caption",
+      "text-ink-2",
+    );
+  });
+
+  it("gives what an eased session was in mi when the runner uses miles (unit conversion)", async () => {
+    fakeWeekApi({
+      me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }),
+      calendar: weekCalendar({}, (session) =>
+        session.date === "2026-10-11" ? easedSessionFixture("gap") : session,
+      ),
+    });
+    renderToday();
+
+    const rows = await weekRows();
+    expect(within(rows[3]!).getByText("Eased for your return, was 8.7 mi")).toBeInTheDocument();
   });
 });

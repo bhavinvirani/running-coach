@@ -10,9 +10,10 @@ import { cn } from "@/lib/cn";
 import { describeSteps } from "@/lib/describe-steps";
 import { formatDistance, formatDuration, formatLocalDay } from "@/lib/format";
 import type { PlanDay } from "@/lib/plan-week";
+import { adjustmentLine } from "@/lib/session-adjustment";
 import { sessionTypeName } from "@/lib/session-type";
 import { sessionName } from "@/lib/workout-steps";
-import { planWeekCopy } from "../plan-week-copy";
+import { planWeekCopy, sessionStateWord } from "../plan-week-copy";
 
 type DayRowProps = {
   day: PlanDay;
@@ -27,7 +28,8 @@ type DayRowProps = {
  * and time on the right and its steps in one line under it (a lone run's pace band, so the distance is not
  * said twice), paces in the runner's unit. A custom workout with a title leads with it, and its type's name
  * starts the line under it. Each session opens its own screen. A day without a session reads Rest; a
- * skipped session reads Skipped, with nothing left to run.
+ * skipped session reads Skipped, with nothing left to run; a done, missed or paused one says so beside its
+ * distance; a session the coach or a return changed says what it was on a last line.
  */
 export function DayRow({ day, paces, units, today }: DayRowProps) {
   const label = formatLocalDay(day.date);
@@ -91,7 +93,9 @@ function SessionLines({
   const name = sessionName(session);
   // A title takes the type's name off the first line, and the dot's color alone does not say the type.
   const type = session.title === null ? null : sessionTypeName(session.type);
-  const label = [name, type, day, ...(skipped ? [planWeekCopy.skipped] : [distance, duration])]
+  const state = sessionStateWord(session);
+  const adjustment = adjustmentLine(session, units);
+  const label = [name, type, day, state, distance, duration, adjustment]
     .filter((part) => part !== null)
     .join(", ");
 
@@ -109,7 +113,7 @@ function SessionLines({
       >
         <SessionTypeChip type={session.type} name={name} />
         <span className="flex shrink-0 gap-3">
-          {skipped ? <span>{planWeekCopy.skipped}</span> : null}
+          {state ? <span>{state}</span> : null}
           {distance ? <span>{distance}</span> : null}
           {duration ? <span>{duration}</span> : null}
         </span>
@@ -121,6 +125,7 @@ function SessionLines({
           {steps}
         </span>
       ) : null}
+      {adjustment === null ? null : <span className="text-caption text-ink-2">{adjustment}</span>}
     </Link>
   );
 }

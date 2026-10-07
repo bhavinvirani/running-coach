@@ -12,9 +12,16 @@ import { sessionKey } from "@/api/sessions";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import {
+  activityFixture,
+  coachEasySessionFixture,
+  coachRestSessionFixture,
   customSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
   garminPushStatusFixture,
   meFixture,
+  missedSessionFixture,
+  pausedSessionFixture,
   planSessionFixture,
   sessionDetailFixture,
 } from "@/test/fixtures";
@@ -376,5 +383,77 @@ describe("SessionScreen", () => {
     expect(screen.getByText("Time").parentElement).toHaveTextContent(/^Time30:00$/);
     expect(screen.queryByRole("region", { name: "Steps" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Garmin" })).not.toBeInTheDocument();
+  });
+
+  it("says Done and opens the run that completed it, with no Garmin state or actions (done session)", async () => {
+    const done = doneSessionFixture("2026-10-08", { onGarmin: true });
+    fakeSessionApi({ detail: sessionDetailFixture({ session: done }) });
+    const { router } = renderSession(done);
+
+    expect(await screen.findByText("Done")).toHaveClass("text-caption");
+    expect(screen.queryByRole("region", { name: "Garmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip session" })).not.toBeInTheDocument();
+    const run = screen.getByRole("link", { name: "Open run" });
+    expect(run).toHaveAttribute("href", `/runs/${activityFixture().id}`);
+
+    await userEvent.click(run);
+    expect(router.state.location.pathname).toBe(`/runs/${activityFixture().id}`);
+  });
+
+  it("says Missed for a past session with no run and offers nothing to do (missed session)", async () => {
+    const missed = missedSessionFixture("2026-10-07");
+    fakeSessionApi({ detail: sessionDetailFixture({ session: missed }) });
+    renderSession(missed);
+
+    expect(await screen.findByRole("heading", { name: "Wed 7 Oct" })).toBeInTheDocument();
+    expect(screen.getByText("Missed")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open run" })).not.toBeInTheDocument();
+  });
+
+  it("says Paused for a session in an open pause, with no Move, no Skip and no Garmin state (paused session)", async () => {
+    const paused = pausedSessionFixture("2026-10-09");
+    fakeSessionApi({ detail: sessionDetailFixture({ session: paused }) });
+    renderSession(paused);
+
+    expect(await screen.findByRole("heading", { name: "Fri 9 Oct" })).toBeInTheDocument();
+    expect(screen.getByText("Paused")).toHaveClass("text-caption");
+    expect(screen.queryByRole("button", { name: "Move" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip session" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Garmin" })).not.toBeInTheDocument();
+  });
+
+  it("says what the coach changed a session from under its name, and keeps it open to change (adjusted session)", async () => {
+    const changed = coachEasySessionFixture();
+    fakeSessionApi({ detail: sessionDetailFixture({ session: changed }) });
+    renderSession(changed);
+
+    expect(await screen.findByText("Changed by the coach, was Intervals 11.6 km")).toHaveClass(
+      "text-caption",
+      "text-ink-2",
+    );
+    expect(screen.getByText("Distance").parentElement).toHaveTextContent(/^Distance10\.6km$/);
+    expect(screen.getByRole("button", { name: "Skip session" })).toBeInTheDocument();
+  });
+
+  it("says the coach skipped a session once, in its own words (coach rest)", async () => {
+    const rest = coachRestSessionFixture();
+    fakeSessionApi({ detail: sessionDetailFixture({ session: rest }) });
+    renderSession(rest);
+
+    expect(await screen.findByText("Skipped by the coach")).toBeInTheDocument();
+    expect(screen.queryByText("Skipped")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip session" })).not.toBeInTheDocument();
+  });
+
+  it("says a session eased for the return was its planned distance, in the runner's unit (pause re-entry)", async () => {
+    const eased = easedSessionFixture("pause");
+    fakeSessionApi({
+      me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }),
+      detail: sessionDetailFixture({ session: eased }),
+    });
+    renderSession(eased);
+
+    expect(await screen.findByText("Eased for your return, was 8.7 mi")).toBeInTheDocument();
   });
 });

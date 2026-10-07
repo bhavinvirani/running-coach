@@ -2,8 +2,10 @@ import type {
   CoachFallbackReason,
   CoachFeedback,
   InsightResponse,
+  PlanChange,
   RunInsight,
   RunInsightCard,
+  Units,
 } from "@running-coach/shared";
 import { ThumbsDown, ThumbsUp, type LucideIcon } from "lucide-react";
 import { Link } from "react-router";
@@ -13,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { errorMessage, isVersionMismatch } from "@/lib/errors";
 import { formatDayTime } from "@/lib/format";
+import { planChangeLine } from "@/lib/session-adjustment";
 import { Note, RunSection } from "./run-section";
 
 const TITLE = "Coach";
@@ -26,6 +29,8 @@ type CoachCardProps = {
   hasCredential: boolean;
   /** The runner's time zone from settings, for when the coach tries again after the plan's usage limit. */
   timeZone: string;
+  /** The runner's units, for the distances of the plan change the coach made. */
+  units: Units;
   /** Ask the coach, Try again after a fallback card, or Try now while the plan's usage limit holds the job. */
   ask: () => void;
   asking: boolean;
@@ -82,6 +87,7 @@ function CoachBody({
   response,
   hasCredential,
   timeZone,
+  units,
   ask,
   asking,
   askError,
@@ -132,6 +138,8 @@ function CoachBody({
           <InsightText
             content={response.insight.content}
             fallback={response.insight.fallbackReason !== null}
+            planChange={response.insight.planChange}
+            units={units}
           />
           {response.insight.fallbackReason === null ? (
             <Thumbs insight={response.insight} setFeedback={setFeedback} error={feedbackError} />
@@ -236,11 +244,21 @@ const CAUTION_TEXT = {
 } as const;
 
 /**
- * The headline, then the three parts in the coach's order, and the caution when there is one. A fallback
- * card's middle part says why there is no review rather than what the run means, so it reads as its own
- * sentence, without the label.
+ * The headline, then the three parts in the coach's order, the change the coach made to the plan when the
+ * engine applied one, and the caution when there is one. A fallback card's middle part says why there is
+ * no review rather than what the run means, so it reads as its own sentence, without the label.
  */
-function InsightText({ content, fallback }: { content: RunInsight; fallback: boolean }) {
+function InsightText({
+  content,
+  fallback,
+  planChange,
+  units,
+}: {
+  content: RunInsight;
+  fallback: boolean;
+  planChange: PlanChange | null;
+  units: Units;
+}) {
   return (
     <>
       <p className="text-body font-semibold text-ink">{content.headline}</p>
@@ -251,6 +269,7 @@ function InsightText({ content, fallback }: { content: RunInsight; fallback: boo
         <Part label="What it means" text={content.whatItMeans} />
       )}
       <Part label="Next" text={content.nextStep} />
+      {planChange === null ? null : <PlanChangePart change={planChange} units={units} />}
       {content.caution === "none" ? null : (
         <p className="flex items-center gap-2 text-body font-semibold text-ink">
           {/* The words carry the caution; the dot is red only for rest, the one that can mean injury. */}
@@ -265,6 +284,22 @@ function InsightText({ content, fallback }: { content: RunInsight; fallback: boo
         </p>
       )}
     </>
+  );
+}
+
+/**
+ * What the coach changed, from the engine's log rather than the coach's words: "Thu 8 Intervals 11.6 km →
+ * Easy 10.6 km", and a caption when the engine pulled the coach's proposal inside the plan's caps.
+ */
+function PlanChangePart({ change, units }: { change: PlanChange; units: Units }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <h3 className="text-caption text-ink-2">Plan change</h3>
+      <p className="text-body text-ink">{planChangeLine(change, units)}</p>
+      {change.clamped ? (
+        <p className="text-caption text-ink-2">Kept inside the plan&apos;s limits</p>
+      ) : null}
+    </div>
   );
 }
 

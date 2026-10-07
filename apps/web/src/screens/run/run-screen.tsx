@@ -56,7 +56,7 @@ function RunView({ id }: { id: string }) {
         <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
       ) : null}
       <RunStats activity={activity} units={units} bests={currentBests(bestEfforts)} />
-      <CoachCard {...screen.coach} timeZone={timeZone} />
+      <CoachCard {...screen.coach} timeZone={timeZone} units={units} />
       <BestEfforts efforts={bestEfforts} units={units} />
       <RunDetail
         state={screen.detail}
