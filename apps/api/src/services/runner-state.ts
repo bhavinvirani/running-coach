@@ -1,5 +1,5 @@
 import type { SessionStatus } from "@running-coach/shared";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, or } from "drizzle-orm";
 import { type Db, type DbTransaction } from "../db/client";
 import {
   plan,
@@ -8,10 +8,11 @@ import {
   type TrainingPauseRow,
   userSettings,
 } from "../db/schema";
-import { localDateOf } from "../lib/local-date";
+import { addDays, localDateOf } from "../lib/local-date";
 
-// What the adaptation services (session-match, pause, re-entry, coach-change) read about the runner before
-// they change sessions: the local today, the open pause and the active plan.
+// What the adaptation services (session-match, pause, re-entry, coach-change, review-change) read about the
+// runner before they change sessions: the local today, the open pause, the pauses a week had and the
+// active plan.
 
 export type Executor = Db | DbTransaction;
 
@@ -35,6 +36,38 @@ export async function openPause(
     .select()
     .from(trainingPause)
     .where(and(eq(trainingPause.userId, userId), isNull(trainingPause.endedOn)));
+  return row ?? null;
+}
+
+/**
+ * The latest pause that held a day of the Monday-to-Sunday week from `monday`: its paused days are
+ * started_on up to the day before ended_on (the first day back), so one that started and ended on the
+ * same day held none. An open pause holds every day from its start. Local dates only, so DST never moves
+ * a week's edge. Null when no pause held a day of it.
+ */
+export async function pauseCovering(
+  executor: Executor,
+  userId: string,
+  monday: string,
+): Promise<TrainingPauseRow | null> {
+  const [row] = await executor
+    .select()
+    .from(trainingPause)
+    .where(
+      and(
+        eq(trainingPause.userId, userId),
+        lte(trainingPause.startedOn, addDays(monday, 6)),
+        or(
+          isNull(trainingPause.endedOn),
+          and(
+            gt(trainingPause.endedOn, monday),
+            gt(trainingPause.endedOn, trainingPause.startedOn),
+          ),
+        ),
+      ),
+    )
+    .orderBy(desc(trainingPause.startedOn), desc(trainingPause.createdAt))
+    .limit(1);
   return row ?? null;
 }
 

@@ -1,0 +1,122 @@
+{
+  "input": {
+    "week": {
+      "weekStart": "2026-09-28",
+      "sessions": [
+        {
+          "date": "2026-09-29",
+          "type": "easy",
+          "title": null,
+          "status": "missed",
+          "distanceM": 10000,
+          "durationS": 3480,
+          "run": null
+        },
+        {
+          "date": "2026-09-30",
+          "type": "intervals",
+          "title": null,
+          "status": "missed",
+          "distanceM": 11000,
+          "durationS": 3600,
+          "run": null
+        },
+        {
+          "date": "2026-10-02",
+          "type": "easy",
+          "title": null,
+          "status": "done",
+          "distanceM": 8000,
+          "durationS": 2800,
+          "run": { "distanceM": 8000, "durationS": 2810, "avgHr": 144, "isIndoor": false }
+        },
+        {
+          "date": "2026-10-04",
+          "type": "long",
+          "title": null,
+          "status": "done",
+          "distanceM": 22000,
+          "durationS": 7900,
+          "run": { "distanceM": 22100, "durationS": 8050, "avgHr": 152, "isIndoor": false }
+        }
+      ],
+      "extraRuns": [
+        {
+          "date": "2026-10-03",
+          "distanceM": 6000,
+          "durationS": 2200,
+          "avgHr": 140,
+          "isIndoor": false
+        }
+      ],
+      "summary": {
+        "runs": 3,
+        "distanceM": 36100,
+        "durationS": 13060,
+        "sessionsPlanned": 4,
+        "sessionsDone": 2,
+        "plannedDistanceM": 51000,
+        "paused": false
+      },
+      "weekBefore": { "runs": 4, "distanceM": 48000 },
+      "pause": null
+    },
+    "plan": {
+      "goal": {
+        "kind": "race",
+        "distanceKey": "marathon",
+        "raceDate": "2027-01-17",
+        "targetTimeS": null
+      },
+      "weekNumber": 9,
+      "phase": "build",
+      "weeksToRace": 14,
+      "sessions": [
+        {
+          "label": "s1",
+          "date": "2026-10-06",
+          "type": "easy",
+          "title": null,
+          "status": "planned",
+          "distanceM": 10000,
+          "durationS": 3480,
+          "changeable": true
+        },
+        {
+          "label": "s2",
+          "date": "2026-10-08",
+          "type": "tempo",
+          "title": null,
+          "status": "moved",
+          "distanceM": 12000,
+          "durationS": 3900,
+          "changeable": true
+        },
+        {
+          "label": "s3",
+          "date": "2026-10-09",
+          "type": "easy",
+          "title": null,
+          "status": "planned",
+          "distanceM": 8000,
+          "durationS": 2800,
+          "changeable": true
+        },
+        {
+          "label": "s4",
+          "date": "2026-10-11",
+          "type": "long",
+          "title": null,
+          "status": "planned",
+          "distanceM": 24000,
+          "durationS": 8640,
+          "changeable": true
+        }
+      ],
+      "changeAllowed": true,
+      "reason": null
+    },
+    "settings": { "units": "km", "coachDetail": "short" }
+  },
+  "output": null
+}

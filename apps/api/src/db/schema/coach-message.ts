@@ -5,16 +5,16 @@ import {
   coachFeedbackSchema,
 } from "@running-coach/shared";
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, date, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { CoachUsage } from "../../coach/client";
 import { activity } from "./activity";
 import { user } from "./auth";
 import { id, inList, timestamps } from "./columns";
 import { plan } from "./plan";
 
-// Everything the coach wrote: run insights now, weekly reviews and race plans later. Feedback and the
+// Everything the coach wrote: run insights, weekly reviews (slice 10), race plans later. Feedback and the
 // fallback reason come from shared zod enums; kinds stay local, because no route exposes them (the
-// insight routes imply "insight").
+// insight and review routes imply theirs).
 
 const COACH_MESSAGE_KINDS = ["insight", "weekly_review", "race_plan"] as const;
 export type CoachMessageKind = (typeof COACH_MESSAGE_KINDS)[number];
@@ -31,6 +31,8 @@ export const coachMessage = pgTable(
     activityId: uuid("activity_id").references(() => activity.id, { onDelete: "cascade" }),
     // The plan a weekly review or race plan was written for; outlives the plan, unlinked.
     planId: uuid("plan_id").references(() => plan.id, { onDelete: "set null" }),
+    // The reviewed week's Monday, a local date in the runner's zone: set exactly for a weekly review.
+    weekStart: date("week_start", { mode: "string" }),
     // "<prompt>/<version>", e.g. "run-insight/v1": which prompt file wrote it, or whose fallback card it is.
     promptVersion: text("prompt_version").notNull(),
     // The model that wrote content; null when content is the fallback card built without a model.
@@ -53,6 +55,10 @@ export const coachMessage = pgTable(
       .on(table.activityId)
       .where(sql`${table.kind} = 'insight'`),
     index("coach_message_plan_id_idx").on(table.planId),
+    // At most one weekly review per runner and week: the job upserts on this, so a double fire makes one.
+    uniqueIndex("coach_message_weekly_review_week_start_idx")
+      .on(table.userId, table.weekStart)
+      .where(sql`${table.kind} = 'weekly_review'`),
     check("coach_message_kind_check", sql`${table.kind} in (${inList(COACH_MESSAGE_KINDS)})`),
     check(
       "coach_message_feedback_check",
@@ -61,6 +67,10 @@ export const coachMessage = pgTable(
     check(
       "coach_message_fallback_reason_check",
       sql`${table.fallbackReason} in (${inList(coachFallbackReasonSchema.options)})`,
+    ),
+    check(
+      "coach_message_week_start_check",
+      sql`(${table.kind} = 'weekly_review') = (${table.weekStart} is not null)`,
     ),
   ],
 );

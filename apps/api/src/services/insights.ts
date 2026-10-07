@@ -1,6 +1,5 @@
 import {
   type CoachAdjustment,
-  type CoachCredentialChoice,
   type CoachFallbackReason,
   type CoachFeedback,
   ErrorCode,
@@ -9,7 +8,6 @@ import {
   type RunInsight,
 } from "@running-coach/shared";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, notExists, or, sql } from "drizzle-orm";
-import type { CoachCallCredential } from "../coach/client";
 import { runInsight } from "../coach/run-insight";
 import type {
   InsightContext,
@@ -31,7 +29,6 @@ import {
   enqueueAnalyzeRun,
   pullAnalyzeRunForward,
 } from "../jobs/analyze-run-queue";
-import { decrypt } from "../lib/crypto";
 import { DomainError } from "../lib/errors";
 import { daysBetween, localDateOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
@@ -43,7 +40,7 @@ import {
   nextSessionAfter,
   planChangesFor,
 } from "./coach-change";
-import { coachCredentialOf, effectiveCoachCredential } from "./coach-credential";
+import { callCredential, coachCredentialOf } from "./coach-credential";
 import { runDate } from "./run-dates";
 import { openPause } from "./runner-state";
 import { queueWorkoutPush } from "./workout-push";
@@ -287,31 +284,6 @@ function deltaOf(adjustment: CoachAdjustment): PlanDelta | null {
   }
 }
 
-/**
- * What runs the user's coach for one call: the Claude plan, or the saved key decrypted for this call only;
- * null when neither applies.
- */
-function callCredential(
-  userId: string,
-  settings: {
-    email: string;
-    coachCredential: CoachCredentialChoice;
-    claudeKeyEnc: string | null;
-  },
-): CoachCallCredential | null {
-  const { claudeKeyEnc } = settings;
-  const credential = effectiveCoachCredential({
-    email: settings.email,
-    choice: settings.coachCredential,
-    hasClaudeKey: claudeKeyEnc !== null,
-  });
-  if (credential === "plan") return { kind: "plan" };
-  if (credential === "key" && claudeKeyEnc !== null) {
-    return { kind: "key", apiKey: decrypt(claudeKeyEnc, userId) };
-  }
-  return null;
-}
-
 export type AnalyzeRunOutcome =
   | { status: "stored"; coachMessageId: string; fallbackReason: CoachFallbackReason | null }
   /**
@@ -331,7 +303,8 @@ export interface AnalyzeRunOptions {
 // left) and plan_auth_failed (a rejected plan token) included, gives the same answer again.
 const RETRYABLE_REASONS: ReadonlySet<CoachFallbackReason> = new Set(["timeout", "unavailable"]);
 
-function isForeignKeyViolation(error: unknown): boolean {
+/** A write failed on a foreign key: a row it points at was deleted meanwhile. */
+export function isForeignKeyViolation(error: unknown): boolean {
   const cause = (error as { cause?: { code?: unknown } }).cause;
   return (cause?.code ?? (error as { code?: unknown }).code) === "23503";
 }

@@ -60,7 +60,8 @@ export const trainingPause = pgTable(
 /** What a re-entry was asked to do, stored in requested and applied. */
 export type ReEntryRequest = Pick<ReEntry, "factor" | "walkRun" | "daysOff">;
 
-// Every change made to a session after its plan was made, and every coach proposal the engine rejected.
+// Every change made to a session after its plan was made, and every coach or review proposal the engine
+// rejected.
 // The unique indexes make each writer idempotent: a sync or "I'm back" firing twice logs nothing new.
 export const planAdjustment = pgTable(
   "plan_adjustment",
@@ -69,7 +70,8 @@ export const planAdjustment = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    // The session changed; null for a coach proposal with no session to change (rejected no_session).
+    // The session changed; null for a coach or review proposal with no session to change (rejected
+    // no_session).
     planSessionId: uuid("plan_session_id").references(() => planSession.id, {
       onDelete: "cascade",
     }),
@@ -88,7 +90,7 @@ export const planAdjustment = pgTable(
     after: jsonb("after").$type<AdjustedSession>(),
     // The reviewed run (coach) or the run that ended the gap (gap); outlives the run, unlinked.
     activityId: uuid("activity_id").references(() => activity.id, { onDelete: "set null" }),
-    // The insight that proposed it (coach).
+    // The insight (coach) or weekly review (review) that proposed it.
     coachMessageId: uuid("coach_message_id").references(() => coachMessage.id, {
       onDelete: "set null",
     }),
@@ -115,6 +117,10 @@ export const planAdjustment = pgTable(
     uniqueIndex("plan_adjustment_pause_id_session_idx")
       .on(table.pauseId, table.planSessionId)
       .where(sql`${table.source} = 'pause'`),
+    // One review change per session per weekly review: the review job retrying applies nothing twice.
+    uniqueIndex("plan_adjustment_review_message_session_idx")
+      .on(table.coachMessageId, table.planSessionId)
+      .where(sql`${table.source} = 'review'`),
     check(
       "plan_adjustment_source_check",
       sql`${table.source} in (${inList(adjustmentSourceSchema.options)})`,

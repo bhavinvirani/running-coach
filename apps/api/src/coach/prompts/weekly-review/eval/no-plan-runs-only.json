@@ -1,0 +1,45 @@
+{
+  "input": {
+    "week": {
+      "weekStart": "2026-09-28",
+      "sessions": [],
+      "extraRuns": [
+        {
+          "date": "2026-09-29",
+          "distanceM": 6000,
+          "durationS": 2100,
+          "avgHr": 145,
+          "isIndoor": false
+        },
+        {
+          "date": "2026-10-01",
+          "distanceM": 8000,
+          "durationS": 2900,
+          "avgHr": null,
+          "isIndoor": false
+        },
+        {
+          "date": "2026-10-03",
+          "distanceM": 12000,
+          "durationS": 4400,
+          "avgHr": 150,
+          "isIndoor": false
+        }
+      ],
+      "summary": {
+        "runs": 3,
+        "distanceM": 26000,
+        "durationS": 9400,
+        "sessionsPlanned": 0,
+        "sessionsDone": 0,
+        "plannedDistanceM": 0,
+        "paused": false
+      },
+      "weekBefore": { "runs": 2, "distanceM": 18000 },
+      "pause": null
+    },
+    "plan": null,
+    "settings": { "units": "km", "coachDetail": "short" }
+  },
+  "output": null
+}

@@ -416,6 +416,7 @@ describe("coach_message.plan_id", () => {
         userId,
         kind: "weekly_review",
         planId,
+        weekStart: "2026-09-28",
         promptVersion: "weekly-review/v1",
         content: { headline: "Week 1: 4 of 4 runs." },
       })

@@ -11,6 +11,7 @@ import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { createTestApp, ownerId, signedInAgent } from "../helpers";
 import { createPlan, createRunOn, createSession, TEMPO_STEPS } from "../seed";
 import { adjustedSession, createAdjustment, createPause } from "../seed-adaptation";
+import { createReview } from "../seed-weekly-review";
 
 // What every session response carries from slice 9's adaptation, through the three readers (GET /api/plan,
 // /api/calendar, /api/sessions/:id) on the real Postgres: its latest change from plan_adjustment, and
@@ -148,6 +149,29 @@ describe("session adjustment", () => {
       kind: "rest",
       activityId: null,
       original: { status: "planned" },
+    });
+  });
+
+  it("reads a weekly review's change like a coach change, with no run behind it", async () => {
+    const { agent, userId, planId } = await owner();
+    const session = await createSession(userId, planId, { date: "2026-10-13" });
+    const review = await createReview(userId, { weekStart: "2026-10-05" });
+    const before = adjustedSession(session);
+    await createAdjustment(userId, session, {
+      source: "review",
+      outcome: "clamped",
+      coachMessageId: review.id,
+      before,
+      after: { ...before, target: { ...before.target, distanceM: 8300 } },
+    });
+
+    const detail = await sessionDetail(agent, session.id);
+
+    expect(detail.adjustment).toMatchObject({
+      source: "review",
+      kind: "scale",
+      activityId: null,
+      original: { type: "easy", status: "planned", target: session.target },
     });
   });
 

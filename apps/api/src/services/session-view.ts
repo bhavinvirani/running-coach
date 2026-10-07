@@ -41,7 +41,7 @@ export function adjustedOf(row: PlanSessionRow): AdjustedSession {
 /**
  * The context for these sessions in two queries whatever their number: the open pause, and per session
  * its latest applied or clamped change (any source) with the snapshot from before its first one, which is
- * how the plan had it. Rejected coach proposals changed nothing, so they are left out.
+ * how the plan had it. Rejected coach and review proposals changed nothing, so they are left out.
  */
 export async function readSessionContext(
   executor: Executor,
@@ -84,7 +84,7 @@ export async function readSessionContext(
       adjustments.set(row.sessionId, {
         source: row.source,
         kind: row.kind,
-        // A pause has no run behind it; the pause rows carry none.
+        // A pause or a weekly review has no run behind it; their rows carry none.
         activityId: row.activityId,
         original: snapshotOf(row.original),
         at: row.createdAt.toISOString(),
