@@ -187,7 +187,7 @@ export type PlanDelta = z.infer<typeof planDeltaSchema>;
  * stay as built. locked: past, done, missed or skipped. adjusted: the coach already changed this session.
  * paused: training is paused. stale_run: only the newest run of the last 7 days may change the plan.
  * no_session: nothing is planned after the run. no_change: the change would leave the session as it is.
- * invalid: a scale without a usable factor.
+ * invalid: a scale without a usable factor, or a change without its own next step.
  */
 export const deltaRejectionSchema = z.enum([
   "race",

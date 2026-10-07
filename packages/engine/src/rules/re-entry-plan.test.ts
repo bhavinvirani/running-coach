@@ -458,7 +458,7 @@ describe("re-entry plan", () => {
 
   /**
    * The spec's week ratios: the factor of the first week with plan runs, up 10% a week, until a week
-   * meets its plan.
+   * meets its plan; a week without plan runs (custom only) is skipped wherever it falls.
    */
   function ratios(input: ReEntryInput): Map<string, number> {
     const plannedM = new Map<string, number>();
@@ -477,7 +477,7 @@ describe("re-entry plan", () => {
     const out = new Map<string, number>();
     let targetM: number | null = null;
     for (const [monday, p] of [...plannedM].sort(([a], [b]) => daysBetween(b, a))) {
-      if (p === 0 || (targetM === null && !planM.get(monday))) continue;
+      if (!planM.get(monday)) continue;
       targetM = targetM === null ? factor * p : Math.min(p, targetM * 1.1);
       if (targetM / p >= 1) break;
       out.set(monday, targetM / p);
