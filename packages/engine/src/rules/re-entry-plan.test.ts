@@ -310,6 +310,50 @@ describe("re-entry plan", () => {
     expect(() => reEnter({ daysOff: -1 })).toThrow(RangeError);
   });
 
+  it("never eases one break twice: 15 days off over a plan that carries 0.7 runs week 1 at 0.5/0.7", () => {
+    // Week 1 targets 30 000 x 0.5 / 0.7 = 21 429 m: 71.4% of each run, floored to 100 m.
+    const result = reEnter({ daysOff: 15, carriedFactor: 0.7 });
+    expect(result.factor).toBe(0.5 / 0.7);
+    expect(metersById(result.changes).slice(0, 3)).toEqual([
+      ["2026-10-13-easy", 5700],
+      ["2026-10-15-easy", 5700],
+      ["2026-10-18-long", 10_000],
+    ]);
+  });
+
+  it("never eases one break twice: 9 days off over a plan that carries 0.7 changes nothing", () => {
+    expect(reEnter({ daysOff: 9, carriedFactor: 0.7 })).toEqual({ factor: 1, changes: [] });
+  });
+
+  it("never eases one break twice: after illness 9 days off over a plan that carries 0.7 is still walk-run, at full time", () => {
+    const result = reEnter({ daysOff: 9, carriedFactor: 0.7, walkRun: true });
+    expect(result.factor).toBe(1);
+    // 8000 m is 2560 s at 320 s/km: 8 rounds; the 14 000 m long run 4480 s: 14. Week 2 as planned.
+    expect(result.changes.map((c) => [c.id, c.session.steps])).toEqual([
+      ["2026-10-13-easy", walkRun(8)],
+      ["2026-10-15-easy", walkRun(8)],
+      ["2026-10-18-long", walkRun(14)],
+    ]);
+  });
+
+  it("never eases one break twice: 49 days off over a plan that carries 0.5 changes nothing", () => {
+    expect(reEnter({ daysOff: 49, carriedFactor: 0.5 })).toEqual({ factor: 1, changes: [] });
+  });
+
+  it.each([0, 6, 7, 10, 14, 30])(
+    "never eases one break twice: a plan that carries 1 eases %s days off as one with nothing carried",
+    (daysOff) => {
+      expect(reEnter({ daysOff, carriedFactor: 1 })).toEqual(reEnter({ daysOff }));
+    },
+  );
+
+  it.each([0, -0.5, 1.01, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects a carried factor of %s, outside (0, 1], as a programmer error",
+    (carriedFactor) => {
+      expect(() => reEnter({ carriedFactor })).toThrow(RangeError);
+    },
+  );
+
   // --- properties over generated sessions ---------------------------------------------------------
 
   const FIRST_MONDAY = "2026-10-12";
@@ -337,11 +381,17 @@ describe("re-entry plan", () => {
       fromOffset: fc.integer({ min: -3, max: 30 }),
       daysOff: fc.nat({ max: 30 }),
       walkRun: fc.boolean(),
+      carriedFactor: fc.oneof(
+        fc.constant(undefined),
+        fc.constantFrom(0.5, 0.7, 1),
+        fc.double({ min: 0.01, max: 1, noNaN: true }),
+      ),
     })
     .map((drawn) => ({
       fromDate: addDays(FIRST_MONDAY, drawn.fromOffset),
       daysOff: drawn.daysOff,
       walkRun: drawn.walkRun,
+      carriedFactor: drawn.carriedFactor,
       paces: PACES,
       sessions: drawn.sessions.map((s, k) =>
         session(addDays(FIRST_MONDAY, s.dayOffset), s.type, s.distanceM, {
@@ -366,7 +416,14 @@ describe("re-entry plan", () => {
   const mondayOf = (date: string) => addDays(date, -weekdayIndex(weekdayOf(date)));
   const inFirstDays = (input: ReEntryInput, date: string) => daysBetween(input.fromDate, date) < 7;
 
-  /** The spec's week ratios: 70% or 50% of week 1, up 10% a week, until a week meets its plan. */
+  /** 70% or 50% for the days off, over what a plan built during the break already carries, at most 1. */
+  const expectedFactor = (input: ReEntryInput) =>
+    Math.min(
+      1,
+      (input.daysOff >= 14 ? 0.5 : input.daysOff >= 7 ? 0.7 : 1) / (input.carriedFactor ?? 1),
+    );
+
+  /** The spec's week ratios: the factor of week 1, up 10% a week, until a week meets its plan. */
   function ratios(input: ReEntryInput): Map<string, number> {
     const plannedM = new Map<string, number>();
     for (const s of input.sessions) {
@@ -378,7 +435,7 @@ describe("re-entry plan", () => {
         plannedM.set(monday, (plannedM.get(monday) ?? 0) + s.target.distanceM);
       }
     }
-    const factor = input.daysOff >= 14 ? 0.5 : input.daysOff >= 7 ? 0.7 : 1;
+    const factor = expectedFactor(input);
     const out = new Map<string, number>();
     let targetM: number | null = null;
     for (const [monday, p] of [...plannedM].sort(([a], [b]) => daysBetween(b, a))) {
@@ -389,6 +446,16 @@ describe("re-entry plan", () => {
     }
     return out;
   }
+
+  it("never eases one break twice: the factor is the days-off factor over the carried one, never over 1", () => {
+    fc.assert(
+      fc.property(inputArb, (input) => {
+        const { factor } = reEntryPlan(input);
+        expect(factor).toBeLessThanOrEqual(1);
+        expect(factor).toBe(expectedFactor(input));
+      }),
+    );
+  });
 
   it("only changes plan runs from the return on, planned or moved, never the race, in date order", () => {
     fc.assert(

@@ -276,5 +276,6 @@ export const WALK_RUN_RUN_S = 240;
 export const WALK_RUN_WALK_S = 60;
 // The contract's repeat holds at least 2 rounds: a 10 min walk-run is the shortest.
 export const WALK_RUN_MIN_REPEATS = 2;
-// The engine's name for a walk-run session, shown instead of its type (planSessionSchema.title).
-export const WALK_RUN_TITLE = "Walk-run";
+// The engine's name for a walk-run session, shown instead of its type (planSessionSchema.title); the web
+// app reads the same constant from the contract.
+export { WALK_RUN_TITLE } from "@running-coach/shared";

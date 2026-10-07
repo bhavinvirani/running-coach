@@ -49,7 +49,7 @@ describe("adaptation over generated plans", () => {
   );
 
   it(
-    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week",
+    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow a session a re-entry eased",
     () => {
       fc.assert(
         fc.property(
@@ -58,7 +58,8 @@ describe("adaptation over generated plans", () => {
           deltaArb,
           fc.nat({ max: 40_000 }),
           fc.nat({ max: 3 }),
-          ({ input, plan }, pick, delta, longestRecentM, daysBefore) => {
+          fc.boolean(),
+          ({ input, plan }, pick, delta, longestRecentM, daysBefore, eased) => {
             const all = sessionsOf(plan);
             const picked = all[pick % all.length]!;
             const weekIndex = plan.weeks.findIndex((week) => week.sessions.includes(picked));
@@ -68,12 +69,13 @@ describe("adaptation over generated plans", () => {
               weekSessions: plan.weeks[weekIndex]!.sessions.filter((s) => s !== picked).map(
                 (s) => ({ ...s, status: "planned" as const }),
               ),
-              previousWeekM: plan.weeks[weekIndex - 1]?.distanceM ?? 0,
+              previousWeekM: plan.weeks[weekIndex - 1]?.distanceM ?? null,
               longestRecentM,
               daysPerWeek: input.goal.daysPerWeek,
               paces: plan.paces,
               paused: false,
               coachAdjusted: false,
+              eased,
             };
             const result = validateDelta(ctx, delta);
             expect(validateDelta(ctx, delta)).toEqual(result);
@@ -88,13 +90,14 @@ describe("adaptation over generated plans", () => {
             const newM = result.session.target.distanceM;
             if (newM <= picked.target.distanceM) return;
             const othersM = ctx.weekSessions.reduce((sum, s) => sum + s.target.distanceM, 0);
+            expect(eased).toBe(false);
             expect(newM).toBeLessThanOrEqual(Math.floor(longestRecentM * 1.1));
             if (picked.type === "long") {
               const share = input.goal.daysPerWeek >= 4 ? 0.3 : 0.4;
               expect(newM).toBeLessThanOrEqual(share * (othersM + newM) + 1e-6);
               expect(result.session.target.durationS).toBeLessThanOrEqual(9000);
             }
-            if (ctx.previousWeekM > 0) {
+            if (ctx.previousWeekM !== null) {
               expect(othersM + newM).toBeLessThanOrEqual(Math.floor(ctx.previousWeekM * 1.1));
             }
           },
@@ -111,12 +114,13 @@ describe("adaptation over generated plans", () => {
       fromOffset: fc.nat({ max: 400 }),
       daysOff: fc.nat({ max: 30 }),
       walkRun: fc.boolean(),
+      carriedFactor: fc.constantFrom(undefined, 0.5, 0.7, 1),
       pastStatuses: fc.array(fc.constantFrom<SessionStatus>("done", "missed", "skipped"), {
         minLength: 400,
         maxLength: 400,
       }),
     })
-    .map(({ drawn, fromOffset, daysOff, walkRun, pastStatuses }) => {
+    .map(({ drawn, fromOffset, daysOff, walkRun, carriedFactor, pastStatuses }) => {
       const days = daysBetween(drawn.plan.startDate, drawn.plan.endDate) + 1;
       const fromDate = addDays(drawn.plan.startDate, fromOffset % days);
       const sessions: ReEntrySession[] = sessionsOf(drawn.plan).map((s, k) => ({
@@ -130,6 +134,7 @@ describe("adaptation over generated plans", () => {
         fromDate,
         daysOff,
         walkRun,
+        carriedFactor,
         sessions,
         paces: drawn.plan.paces,
       };
@@ -137,12 +142,13 @@ describe("adaptation over generated plans", () => {
     });
 
   it(
-    "eases a return without touching the race or what came before, each week at most 10% over the one before",
+    "eases a return without touching the race or what came before, each week at most 10% over the one before, never easing one break twice",
     () => {
       fc.assert(
         fc.property(reEntryArb, ({ plan, reEntry }) => {
           const result = reEntryPlan(reEntry);
           expect(reEntryPlan(reEntry)).toEqual(result);
+          expect(result.factor).toBeLessThanOrEqual(1);
           const byId = new Map(reEntry.sessions.map((s) => [s.id, s]));
           const minRunM = minRunDistanceM(bandMidpointSPerKm(plan.paces.easy));
 

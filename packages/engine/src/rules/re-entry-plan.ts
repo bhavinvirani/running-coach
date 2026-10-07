@@ -39,6 +39,11 @@ export interface ReEntryInput {
   daysOff: number;
   /** After illness or injury: the first 7 days are walk-run. */
   walkRun: boolean;
+  /**
+   * The share of volume the plan's first week already carries when the plan was built during the
+   * break (the API passes baselineReEntryFactor of its baseline), in (0, 1]; 1 by default, nothing.
+   */
+  carriedFactor?: number;
   /** The active plan's sessions and the custom workouts, any dates and statuses. */
   sessions: readonly ReEntrySession[];
   paces: PlanPaces;
@@ -50,7 +55,10 @@ export interface ReEntryChange {
 }
 
 export interface ReEntryResult {
-  /** The share of planned volume the first week back runs at: 1, 0.7 or 0.5. */
+  /**
+   * The share of planned volume the first week back runs at: reEntryFactor of the days off (1, 0.7 or
+   * 0.5) over the carried factor, at most 1.
+   */
   factor: number;
   /** The sessions that change, in date order. */
   changes: ReEntryChange[];
@@ -133,21 +141,28 @@ function walkRun(durationS: number, paces: PlanPaces, status: SessionStatus): Ad
 
 /**
  * The plan eased for a return after time off. The first week back runs at reEntryFactor of its plan
- * (1 under 7 days off, 0.7 from 7, 0.5 from 14), each later week at most 10% over the one before until
- * a week meets its plan, which it and every week after run as planned. In the first 7 days, after 7+
- * days off or after illness or injury, quality becomes an easy run of the same time; after illness or
- * injury every run of those days is walk-run of the session's time once cut. Only plan runs from the
- * return on that are planned or moved change: the race, custom workouts, done, missed and skipped
- * sessions never do. Returns the sessions that differ, in date order; deterministic.
+ * (1 under 7 days off, 0.7 from 7, 0.5 from 14) over what a plan built during the break already
+ * carries, at most 1, so one break is never eased twice: 15 days off over a plan built at 0.7 runs at
+ * 0.5 / 0.7, 9 days off over it as planned. Each later week runs at most 10% over the one before until
+ * a week meets its plan, which it and every week after run as planned. In the first 7 days, when the
+ * factor is under 1 or after illness or injury, quality becomes an easy run of the same time; after
+ * illness or injury every run of those days is walk-run of the session's time once cut. Only plan
+ * runs from the return on that are planned or moved change: the race, custom workouts, done, missed
+ * and skipped sessions never do. Returns the sessions that differ, in date order; deterministic. A
+ * carried factor outside (0, 1] is a programmer error.
  */
 export function reEntryPlan({
   fromDate,
   daysOff,
   walkRun: afterIllness,
+  carriedFactor = 1,
   sessions,
   paces,
 }: ReEntryInput): ReEntryResult {
-  const factor = reEntryFactor(daysOff);
+  if (!Number.isFinite(carriedFactor) || carriedFactor <= 0 || carriedFactor > 1) {
+    throw new RangeError(`carriedFactor must be finite and in (0, 1], got ${carriedFactor}`);
+  }
+  const factor = Math.min(1, reEntryFactor(daysOff) / carriedFactor);
   if (factor === 1 && !afterIllness) return { factor, changes: [] };
   const ratios = weekRatios(fromDate, factor, sessions);
   const changes = sessions

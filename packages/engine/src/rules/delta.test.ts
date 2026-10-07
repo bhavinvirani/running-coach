@@ -69,12 +69,13 @@ function context(overrides: Partial<DeltaContext> = {}): DeltaContext {
     today: TODAY,
     session: session(),
     weekSessions: [],
-    previousWeekM: 0,
+    previousWeekM: null,
     longestRecentM: 20_000,
     daysPerWeek: 4,
     paces: PACES,
     paused: false,
     coachAdjusted: false,
+    eased: false,
     ...overrides,
   };
 }
@@ -386,15 +387,70 @@ describe("validate delta", () => {
         scale(1.1),
       ),
     ).toMatchObject({ clamped: false, session: { steps: easyRun(7900) } });
+  });
+
+  it("sets no weekly cap in the plan's first week: no week before it", () => {
     expect(
       validateDelta(
-        context({ ...ctx, weekSessions: [other(25_000)], previousWeekM: 0 }),
+        context({
+          previousWeekM: null,
+          session: session({ steps: easyRun(7500) }),
+          weekSessions: [other(25_000)],
+        }),
         scale(1.1),
       ),
-    ).toMatchObject({
+    ).toMatchObject({ clamped: false, session: { steps: easyRun(8200) } });
+  });
+
+  it("illness or injury pauses: allows no rise after a week that ran nothing, and still a cut, easy and rest", () => {
+    const ctx = { previousWeekM: 0 };
+    expect(validateDelta(context(ctx), scale(1.1))).toEqual({ ok: false, reason: "no_change" });
+    expect(validateDelta(context(ctx), scale(0.8))).toMatchObject({
+      ok: true,
       clamped: false,
-      session: { steps: easyRun(8200) },
+      session: { steps: easyRun(6400) },
     });
+    expect(validateDelta(context(ctx), { kind: "rest" }).ok).toBe(true);
+    expect(
+      validateDelta(context({ ...ctx, session: session({ type: "tempo", steps: intervals(5) }) }), {
+        kind: "easy",
+      }).ok,
+    ).toBe(true);
+  });
+
+  it.each([1.02, 1.1, 1.5])(
+    "illness or injury pauses: a rise by %s of a session a re-entry eased clamps to 1 and changes nothing",
+    (factor) => {
+      expect(validateDelta(context({ eased: true }), scale(factor))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+    },
+  );
+
+  it("illness or injury pauses: a session a re-entry eased still takes a cut, easy and rest", () => {
+    expect(validateDelta(context({ eased: true }), scale(0.8))).toEqual({
+      ok: true,
+      delta: { kind: "scale", factor: 0.8 },
+      clamped: false,
+      session: {
+        type: "easy",
+        title: null,
+        status: "planned",
+        steps: easyRun(6400),
+        target: { distanceM: 6400, durationS: 2048, zone: "easy" },
+      },
+    });
+    expect(validateDelta(context({ eased: true }), { kind: "rest" })).toMatchObject({
+      ok: true,
+      session: { status: "skipped" },
+    });
+    expect(
+      validateDelta(
+        context({ eased: true, session: session({ type: "intervals", steps: intervals(5) }) }),
+        { kind: "easy" },
+      ),
+    ).toMatchObject({ ok: true, session: { type: "easy", steps: easyRun(11_100) } });
   });
 
   it("never clamps a rise below the planned run: a week already over 10% leaves it as planned", () => {
@@ -464,11 +520,16 @@ describe("validate delta", () => {
         }),
         { maxLength: 6 },
       ),
-      previousWeekM: fc.oneof(fc.constant(0), fc.integer({ min: 1, max: 100_000 })),
+      previousWeekM: fc.oneof(
+        fc.constant(null),
+        fc.constant(0),
+        fc.integer({ min: 1, max: 100_000 }),
+      ),
       longestRecentM: fc.oneof(fc.constant(0), fc.integer({ min: 1, max: 40_000 })),
       daysPerWeek: fc.integer({ min: 3, max: 7 }),
       paused: fc.integer({ min: 0, max: 9 }).map((n) => n === 0),
       coachAdjusted: fc.boolean(),
+      eased: fc.boolean(),
     })
     .map((c) =>
       context({
@@ -479,6 +540,7 @@ describe("validate delta", () => {
         daysPerWeek: c.daysPerWeek,
         paused: c.paused,
         coachAdjusted: c.coachAdjusted,
+        eased: c.eased,
       }),
     );
   const deltaArb: fc.Arbitrary<PlanDelta> = fc.oneof(
@@ -512,7 +574,7 @@ describe("validate delta", () => {
     );
   });
 
-  it("never lets an accepted rise break 110% of the recent longest, the long-run share, 150 min or +10% on last week", () => {
+  it("never lets an accepted rise break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow an eased session or one after a week that ran nothing", () => {
     fc.assert(
       fc.property(contextArb, deltaArb, (ctx, delta) => {
         const result = validateDelta(ctx, delta);
@@ -523,6 +585,8 @@ describe("validate delta", () => {
           .filter((w) => w.status !== "skipped" && w.status !== "missed")
           .reduce((sum, w) => sum + w.target.distanceM, 0);
         expect(delta.kind).toBe("scale");
+        expect(ctx.eased).toBe(false);
+        expect(ctx.previousWeekM).not.toBe(0);
         expect(ctx.longestRecentM).toBeGreaterThan(0);
         expect(newM).toBeLessThanOrEqual(Math.floor(ctx.longestRecentM * 1.1));
         if (ctx.session!.type === "long") {
@@ -530,7 +594,7 @@ describe("validate delta", () => {
           expect(newM).toBeLessThanOrEqual(share * (othersM + newM) + 1e-6);
           expect(result.session.target.durationS).toBeLessThanOrEqual(9000);
         }
-        if (ctx.previousWeekM > 0) {
+        if (ctx.previousWeekM !== null) {
           expect(othersM + newM).toBeLessThanOrEqual(Math.floor(ctx.previousWeekM * 1.1));
         }
       }),

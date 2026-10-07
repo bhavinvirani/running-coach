@@ -141,6 +141,9 @@ export const SESSION_TYPE_NAMES: Readonly<Record<SessionType, string>> = {
   rest: "Rest",
 };
 
+/** The engine's title for a session its re-entry made walk-run, shown in place of the type's name. */
+export const WALK_RUN_TITLE = "Walk-run";
+
 /** A session as the engine emits it, before the API gives it a row. */
 export const generatedSessionSchema = z
   .object({
