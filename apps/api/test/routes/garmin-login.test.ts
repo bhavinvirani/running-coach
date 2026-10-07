@@ -327,6 +327,24 @@ describe("POST /api/garmin/login/code", () => {
     await expectConnected(userId);
   });
 
+  it("answers 409 garmin_login_lost and stores nothing when Garmin is down for the proof after the code (Garmin outage)", async () => {
+    const agent = await signedInAgent(app);
+    await startLogin(agent);
+    vi.spyOn(garminClient, "profile").mockRejectedValueOnce(
+      new DomainError(
+        ErrorCode.garminUnavailable,
+        502,
+        "Garmin is not answering. Try again later.",
+      ),
+    );
+
+    const response = await sendCode(agent);
+
+    expectProblem(response, 409, ErrorCode.garminLoginLost);
+    expect(await connections()).toEqual([]);
+    expectProblem(await sendCode(agent), 409, ErrorCode.garminLoginLost);
+  });
+
   it("answers 409 garmin_login_lost on the third wrong code, and to the right code after it (lost login)", async () => {
     const agent = await signedInAgent(app);
     await startLogin(agent);

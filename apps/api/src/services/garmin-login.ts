@@ -1,10 +1,12 @@
-import type {
-  FinishGarminLoginRequest,
-  GarminLoginConnected,
-  StartGarminLoginRequest,
-  StartGarminLoginResponse,
+import {
+  ErrorCode,
+  type FinishGarminLoginRequest,
+  type GarminLoginConnected,
+  type StartGarminLoginRequest,
+  type StartGarminLoginResponse,
 } from "@running-coach/shared";
 import { garminClient } from "../garmin/client";
+import { DomainError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { connectGarmin } from "./garmin-connection";
 
@@ -50,14 +52,29 @@ export interface FinishGarminLoginInput extends FinishGarminLoginRequest {
 
 /**
  * POST /api/garmin/login/code: the code for the login the runner started. Throws garmin_mfa_rejected (422;
- * the same login takes another code) or garmin_login_lost (409; start again).
+ * the same login takes another code) or garmin_login_lost (409; start again, also when Garmin is down
+ * during the proof after the code).
  */
 export async function finishGarminLogin({
   userId,
   mfaCode,
 }: FinishGarminLoginInput): Promise<GarminLoginConnected> {
   const { tokenBundle } = await garminClient.loginCode({ loginId: userId, mfaCode });
-  return store(userId, tokenBundle);
+  try {
+    return await store(userId, tokenBundle);
+  } catch (error) {
+    // The service let go of the login when it answered the bundle, so another code cannot work: an outage
+    // during the proof says start again, where a 502 from the code itself means the login is kept.
+    if (error instanceof DomainError && error.code === ErrorCode.garminUnavailable) {
+      throw new DomainError(
+        ErrorCode.garminLoginLost,
+        409,
+        "Garmin took the code, but the login could not be checked. Start again.",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 async function store(userId: string, tokenBundle: string): Promise<GarminLoginConnected> {
