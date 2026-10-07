@@ -8,8 +8,9 @@ export default defineProject({
     name: "web",
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
-    // Playwright specs in e2e/ run under Playwright, never Vitest.
-    include: ["src/**/*.test.{ts,tsx}"],
+    // Playwright specs in e2e/ (*.spec.ts) run under Playwright, never Vitest; only the e2e fixtures' own
+    // unit tests (*.test.ts) run here.
+    include: ["src/**/*.test.{ts,tsx}", "e2e/fixtures/*.test.ts"],
     unstubGlobals: true,
     unstubEnvs: true,
     restoreMocks: true,

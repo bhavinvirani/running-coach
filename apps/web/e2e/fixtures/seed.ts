@@ -31,6 +31,7 @@ import {
 } from "@running-coach/shared";
 import pg from "pg";
 import { addDays, today, weekStart } from "../../src/lib/dates";
+import { e2eSlot } from "./slot";
 
 /**
  * The fictional runner every flow and screenshot runs as. playwright.config.ts passes these to the API as
@@ -45,9 +46,12 @@ export const runner = {
 
 export type Runner = typeof runner;
 
-/** The database the e2e API runs on; playwright.config.ts hands the same URL to the API it starts. */
-export const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? "postgres://postgres:postgres@localhost:5434/running_coach_e2e";
+/**
+ * The database the e2e API runs on, this folder's slot's; playwright.config.ts hands the same URL to the API
+ * it starts, after e2e/reset-database.ts recreates it. The slot is the only setting, so a reset can never
+ * follow an override to another database.
+ */
+export const e2eDatabaseUrl = `postgres://postgres:postgres@localhost:5434/${e2eSlot.database}`;
 
 /**
  * The e2e API's MASTER_KEY (playwright.config.ts): a fake value for e2e only, here so seeded secrets are
@@ -57,9 +61,10 @@ export const e2eMasterKey = "ZTJlLW9ubHktbWFzdGVyLWtleS0zMi1ieXRlcy1vayE=";
 
 /**
  * The fake Claude playwright.config.ts starts beside the API (apps/api/test/fake-claude-cli.ts) and points
- * its CLAUDE_BASE_URL at: it replays apps/api/test/fixtures/claude and never reaches Anthropic.
+ * its CLAUDE_BASE_URL at: it replays apps/api/test/fixtures/claude and never reaches Anthropic. Its port is
+ * this folder's slot's.
  */
-export const fakeClaudePort = 8776;
+export const fakeClaudePort = e2eSlot.fakeClaudePort;
 export const fakeClaudeUrl = `http://127.0.0.1:${fakeClaudePort}`;
 
 /** What a new account starts with (created with the account); every test starts from them. */
@@ -426,7 +431,8 @@ export async function fakeClaudeCalls(
  * it runs (apps/coach/test/fake-claude-code.mjs): "test-<scenario>.<nonce>", where "success" answers every
  * run with a valid card of fake data, and the nonce names the log the fake appends to (fakeClaudeCodeRuns).
  */
-const fakeClaudeCodeNonce = "e2e-plan";
+// The nonce names the log in the shared temp directory, so each slot reads its own.
+const fakeClaudeCodeNonce = e2eSlot.fakeClaudeCodeNonce;
 export const fakeClaudeCodeToken = `test-success.${fakeClaudeCodeNonce}`;
 
 /**

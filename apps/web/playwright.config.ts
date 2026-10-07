@@ -8,18 +8,20 @@ import {
   fakeClaudeUrl,
   runner,
 } from "./e2e/fixtures/seed";
+import { e2eSlot } from "./e2e/fixtures/slot";
 
 // Flows (`pnpm test:e2e`) drive a local Chromium. Screens (`pnpm test:screens`) drive the Chromium inside the
 // official Playwright image through e2e/run-screens.ts, so host fonts and rendering never reach a baseline.
 // Both hit the production web build served by the API in Garmin fixture mode, on the e2e database, and
 // the coach on a local fake Claude: the Messages API for a key, and the coach service over a fake Claude
-// Code CLI for the owner's Claude plan.
+// Code CLI for the owner's Claude plan. This folder's e2e slot (e2e/fixtures/slot.ts) picks every port and
+// the database, so worktrees run e2e side by side.
 
-const PORT = 4173;
+const PORT = e2eSlot.webPort;
 const baseURL = `http://localhost:${PORT}`;
 
-// Not dev's 8777, so e2e runs next to `pnpm dev`.
-const COACH_SERVICE_PORT = 8778;
+// Never dev's 8777 in any slot, so e2e runs next to `pnpm dev`.
+const COACH_SERVICE_PORT = e2eSlot.coachServicePort;
 // A fake value for e2e only; the API sends it to the coach service in x-coach-secret.
 const coachServiceSecret = "e2e-only-coach-service-secret-not-for-production";
 
@@ -39,7 +41,8 @@ const screens: Project = {
   // and a macOS laptop and CI compare against the same file.
   snapshotPathTemplate: "{testDir}/{testFileDir}/{testFileName}-snapshots/{arg}{ext}",
   use: {
-    // <loopback>: the containerised browser reaches localhost:4173 on this machine through the connection.
+    // <loopback>: the containerised browser reaches the web port on this machine's localhost through the
+    // connection.
     connectOptions: { wsEndpoint: screensEndpoint ?? "", exposeNetwork: "<loopback>" },
   },
 };
@@ -117,9 +120,12 @@ export default defineConfig({
     {
       name: "api",
       // The production bundle served by the API from apps/web/dist, as on Render. The build's progress
-      // lines are dropped; its warnings and errors go to stderr and still show.
+      // lines are dropped; its warnings and errors go to stderr and still show. First the slot's database is
+      // recreated (e2e/reset-database.ts): Playwright checks each web server's port, in array order, before
+      // it starts that server and before global setup, so a second run in the same folder fails on the fake
+      // Claude's port before any reset, and the reset runs before the API migrates.
       command:
-        "pnpm --filter @running-coach/web build > /dev/null && pnpm --filter @running-coach/api exec tsx src/index.ts",
+        "node e2e/reset-database.ts && pnpm --filter @running-coach/web build > /dev/null && pnpm --filter @running-coach/api exec tsx src/index.ts",
       // Waiting on the port fails fast when anything already listens there, instead of testing an unknown
       // server.
       port: PORT,
@@ -145,8 +151,8 @@ export default defineConfig({
         // Every test is the one seeded runner, so the API's six Garmin requests a minute per user would fail
         // a test for what the tests before it sent. The API's integration tests cover the limit.
         GARMIN_ROUTE_LIMIT: "1000",
-        // Not dev's 8765, so e2e runs next to `pnpm dev`.
-        GARMIN_SERVICE_PORT: "8775",
+        // Never dev's 8765 in any slot, so e2e runs next to `pnpm dev`.
+        GARMIN_SERVICE_PORT: String(e2eSlot.garminServicePort),
         CLAUDE_BASE_URL: fakeClaudeUrl,
         // As for Garmin: every test saves keys and asks the coach as the one runner, against the API's six
         // a minute per user, which its integration tests cover.
