@@ -57,7 +57,7 @@ test("lists each setting with what it holds now, in My stuff and My preferences,
   await expectRows(card(page, "My preferences"), [
     "Units, Kilometers",
     "Coach detail, Standard",
-    "Heart-rate zones",
+    "Heart rate zones",
   ]);
   await expect(card(page, "Account")).toContainText(login.email);
   await expect(card(page, "Account").getByRole("button", { name: "Log out" })).toBeVisible();
@@ -94,17 +94,11 @@ test("each row opens its own screen inside the Settings tab, and Back returns to
       shows: () => expect(page.getByRole("radio", { name: "Standard" })).toBeChecked(),
     },
     {
-      row: "Heart-rate zones",
-      title: "Heart-rate zones",
+      row: "Heart rate zones",
+      title: "Heart rate zones",
       path: "/settings/hr-zones",
-      // No run is stored, so no max HR and no zones yet.
-      shows: () =>
-        expect(
-          page.getByText(
-            "No run with heart rate yet: sync one recorded with heart rate to see your zones.",
-            { exact: true },
-          ),
-        ).toBeVisible(),
+      // No run is stored, so max HR waits to be typed over Garmin's default shares.
+      shows: () => expect(page.getByLabel("Max HR")).toHaveValue(""),
     },
   ];
 

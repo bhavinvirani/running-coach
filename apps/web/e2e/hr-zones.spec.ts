@@ -65,12 +65,12 @@ async function openLongRun(page: Page): Promise<void> {
   await expect(heading(page, "Sun 27 Sep")).toBeVisible();
 }
 
-/** Opens Heart-rate zones from Settings. */
+/** Opens Heart rate zones from Settings. */
 async function openZonesFromSettings(page: Page): Promise<void> {
   await tab(page, "Settings").click();
   await expect(heading(page, "Settings")).toBeVisible();
-  await page.getByRole("link", { name: "Heart-rate zones" }).click();
-  await expect(heading(page, "Heart-rate zones")).toBeVisible();
+  await page.getByRole("link", { name: "Heart rate zones" }).click();
+  await expect(heading(page, "Heart rate zones")).toBeVisible();
 }
 
 function zonesCard(page: Page): Locator {
@@ -172,7 +172,7 @@ test("zones edited by percent and bpm change the run's time in zone, and Reset t
 
   // Edit zones on the run's card opens the same screen, with the runner's zones and a way back to Garmin's.
   await zonesCard(page).getByRole("link", { name: "Edit zones" }).click();
-  await expect(heading(page, "Heart-rate zones")).toBeVisible();
+  await expect(heading(page, "Heart rate zones")).toBeVisible();
   await expect(page).toHaveURL(/\/settings\/hr-zones$/);
   await expectForm(page, "196", ["50", "70", "74", "78", "82"], customZones.lowBpm);
 
