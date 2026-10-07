@@ -344,11 +344,12 @@ function isForeignKeyViolation(error: unknown): boolean {
  * card and the change its output proposes are stored in one transaction: applyCoachChange decides again,
  * for the session the prompt saw only, logs the proposal and writes an accepted one to the session, and
  * the card's nextStep is the change's own when the engine applied or clamped it, else the plain one (a
- * rejected change drops its text; a change without text is rejected as invalid). A change queues a workout push after the commit. A timeout or Claude down before the last
- * attempt stores nothing and throws claude_unavailable, so pg-boss retries with backoff; the plan's
- * usage limit stores nothing and throws claude_plan_limited with the seconds to its reset on any attempt,
- * for the job to defer itself; a refusal, max_tokens, invalid output, a rejected key or plan token, or a
- * request Claude turned down store the fallback card at once, which never changes the plan.
+ * rejected change drops its text; a change without text is rejected as invalid). A change queues a
+ * workout push after the commit. A timeout or Claude down before the last attempt stores nothing and
+ * throws claude_unavailable, so pg-boss retries with backoff; the plan's usage limit stores nothing and
+ * throws claude_plan_limited with the seconds to its reset on any attempt, for the job to defer itself; a
+ * refusal, max_tokens, invalid output, a rejected key or plan token, or a request Claude turned down
+ * store the fallback card at once, which never changes the plan.
  */
 export async function analyzeRun(
   userId: string,

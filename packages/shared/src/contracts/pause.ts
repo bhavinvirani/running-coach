@@ -32,7 +32,10 @@ export const reEntrySchema = z
   .object({
     /** Days from the last run to the first day back. */
     daysOff: z.number().int().nonnegative(),
-    /** The share of planned volume in the first week back: 1, 0.7 after 7 days off, 0.5 after 14. */
+    /**
+     * The share of the plan the first week back runs at: 1, 0.7 after 7 days off, 0.5 after 14, divided
+     * by what a plan built during the break already carries (0.5 over a plan built at 0.7 is about 0.71).
+     */
     factor: z.number().positive().max(1),
     /** The first week back is walk-run, after illness or injury. */
     walkRun: z.boolean(),

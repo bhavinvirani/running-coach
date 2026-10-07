@@ -41,8 +41,8 @@ type NextSevenDaysProps = {
  * The plan's coming week on Today: a row per day from today with its sessions, each opening its session
  * screen with its Garmin state or what happened to it and any change the coach or a return made, an Add
  * per day for a workout of the runner's own (none from an open pause's start, which the API refuses), and
- * the workouts on the Garmin calendar the app did not put there. Not feeling 100% beside the heading pauses training, and while a pause is open its card sits above
- * the week with I'm back. Shown only with an active plan (the calendar answers its paces); a runner without
+ * the workouts on the Garmin calendar the app did not put there. Not feeling 100% beside the heading
+ * pauses training, and while a pause is open its card sits above the week with I'm back. Shown only with an active plan (the calendar answers its paces); a runner without
  * one sees Today as before. The week waits for the pause as well as the calendar, so the paused card never
  * pushes a loaded week down.
  */

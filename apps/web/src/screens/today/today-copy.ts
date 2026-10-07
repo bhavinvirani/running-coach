@@ -1,3 +1,4 @@
+import { RE_ENTRY_EASY_DAYS, WEEKLY_VOLUME_MAX_INCREASE } from "@running-coach/engine";
 import type { PauseReason, ReEntry, SyncResponse } from "@running-coach/shared";
 import { formatCount, formatLocalDay, formatPercent } from "@/lib/format";
 
@@ -38,9 +39,6 @@ export function isHealthReason(reason: PauseReason): boolean {
   return reason !== "break";
 }
 
-/** The most the plan grows each week on the way back (the engine's 10% rule), for the re-entry line. */
-const WEEKLY_BUILD = 0.1;
-
 /**
  * The line after I'm back: how the plan restarts. Eased by days off ("9 days off: the next sessions are
  * eased to 70% and build back up by at most 10% a week. The next 7 days are walk-run."), only walk-run
@@ -48,12 +46,13 @@ const WEEKLY_BUILD = 0.1;
  * Monday-to-Sunday week, so the line counts days.
  */
 export function reEntryLine(reEntry: ReEntry): string {
+  const walkRunDays = `The next ${RE_ENTRY_EASY_DAYS} days are walk-run`;
   if (reEntry.factor < 1) {
-    const eased = `${formatCount(reEntry.daysOff, "day", "days")} off: the next sessions are eased to ${formatPercent(reEntry.factor)} and build back up by at most ${formatPercent(WEEKLY_BUILD)} a week.`;
-    return reEntry.walkRun ? `${eased} The next 7 days are walk-run.` : eased;
+    const eased = `${formatCount(reEntry.daysOff, "day", "days")} off: the next sessions are eased to ${formatPercent(reEntry.factor)} and build back up by at most ${formatPercent(WEEKLY_VOLUME_MAX_INCREASE)} a week.`;
+    return reEntry.walkRun ? `${eased} ${walkRunDays}.` : eased;
   }
   return reEntry.walkRun
-    ? "The next 7 days are walk-run, then the plan carries on."
+    ? `${walkRunDays}, then the plan carries on.`
     : "Your plan carries on as planned.";
 }
 
