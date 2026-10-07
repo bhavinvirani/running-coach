@@ -2,6 +2,7 @@ import type {
   DeltaRejection,
   PlanDelta,
   PlanPaces,
+  PlanPhase,
   SessionStatus,
   SessionTarget,
   SessionType,
@@ -27,6 +28,11 @@ export interface DeltaContext {
   today: string;
   /** The next session after the run; null when nothing is planned. */
   session: DeltaSession | null;
+  /**
+   * The phase of the plan week the session falls in; null for a custom workout. A taper or race-week
+   * session may shrink, never grow.
+   */
+  phase: PlanPhase | null;
   /** The other sessions of its Monday-to-Sunday week, any status. */
   weekSessions: readonly DeltaWeekSession[];
   /**
@@ -112,7 +118,12 @@ function cappedFactor(
   proposed: number,
 ): { factor: number; clamped: boolean } {
   const bounded = Math.min(Math.max(proposed, DELTA_MIN_FACTOR), DELTA_MAX_FACTOR);
-  const shrinkOnly = context.eased || context.afterPause || QUALITY_SESSION_TYPES.has(session.type);
+  const shrinkOnly =
+    context.eased ||
+    context.afterPause ||
+    context.phase === "taper" ||
+    context.phase === "race" ||
+    QUALITY_SESSION_TYPES.has(session.type);
   const factor = shrinkOnly ? Math.min(bounded, 1) : bounded;
   const clamped = factor !== proposed;
   const plannedM = session.target.distanceM;
@@ -129,11 +140,13 @@ function cappedFactor(
  * Accepts, clamps or rejects a change the coach proposed for the next session. It is rejected for no
  * session, a pause, a custom workout, a race, a past or locked session, a session the coach already
  * changed, or a scale without a usable factor, in that order, and when it would leave the session as
- * it is. A scale is clamped to 0.5 to 1.1; a quality session, a session a re-entry eased and any
- * session in the week right after a paused week only shrink (a rise clamps to 1, so a pure rise
- * changes nothing); a rise of an easy or long run also stops at 110% of the longest recent run, the
- * long-run share and 150 min, and 10% over last week, with none after a week that runs nothing; a cut
- * stops at the 20 min minimum run. easy only applies to quality; rest skips the session.
+ * it is. A scale is clamped to 0.5 to 1.1; a quality session, a session a re-entry eased, any session
+ * in the week right after a paused week and any session of a taper or race week only shrink (a rise
+ * clamps to 1, so a pure rise changes nothing); a rise of an easy or long run also stops at 110% of the
+ * longest recent run, the long-run share and 150 min, and 10% over last week, with none after a week
+ * that runs nothing, and grows only its easy run, never strides or a finish; a cut stops at the 20 min
+ * minimum run and merges strides or a finish into one easy run. easy only applies to quality; rest
+ * skips the session.
  * Deterministic; conflicts are returned, never thrown.
  */
 export function validateDelta(context: DeltaContext, delta: PlanDelta): DeltaResult {

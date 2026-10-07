@@ -1,7 +1,9 @@
 import {
+  planPhaseSchema,
   sessionStatusSchema,
   sessionStepsSchema,
   type PlanDelta,
+  type PlanPhase,
   type PlanPaces,
   type SessionSteps,
   type SessionType,
@@ -60,6 +62,7 @@ function weekSession(
     title: null,
     coachAdjusted: false,
     eased: false,
+    phase: "build",
     ...overrides,
     steps,
     target: overrides.target ?? sessionTarget(steps, PACES),
@@ -280,6 +283,44 @@ describe("validate week deltas", () => {
     ]);
   });
 
+  it.each(["taper", "race"] as const)(
+    "a %s week's sessions only shrink: rises by 1.01 and 1.1 change nothing, a cut by 0.8 applies",
+    (phase) => {
+      const sessions = WEEK.map((session) => ({ ...session, phase }));
+      expect(
+        validateWeekDeltas(context({ sessions }), [
+          propose("s1", scale(1.1)),
+          propose("s2", scale(0.8)),
+          propose("s3", scale(1.01)),
+        ]),
+      ).toMatchObject([
+        { sessionId: "s1", result: { ok: false, reason: "no_change" } },
+        {
+          sessionId: "s2",
+          result: { ok: true, clamped: false, session: { steps: easyRun(7600) } },
+        },
+        { sessionId: "s3", result: { ok: false, reason: "no_change" } },
+      ]);
+    },
+  );
+
+  it("reads each session's own phase: a peak-week session rises next to a taper-week one", () => {
+    // Not a week the plan makes, but the phase travels with each session, not with the week.
+    const sessions = [
+      { ...WEEK[0]!, phase: "taper" as const },
+      { ...WEEK[1]!, phase: "peak" as const },
+    ];
+    expect(
+      validateWeekDeltas(context({ sessions }), [
+        propose("s1", scale(1.1)),
+        propose("s2", scale(1.1)),
+      ]),
+    ).toMatchObject([
+      { sessionId: "s1", result: { ok: false, reason: "no_change" } },
+      { sessionId: "s2", result: { ok: true, session: { steps: easyRun(10_400) } } },
+    ]);
+  });
+
   it("clamps a rise of 1.3 to 1.1 and says so", () => {
     expect(validateWeekDeltas(context(), [propose("s1", scale(1.3))])).toMatchObject([
       {
@@ -386,6 +427,7 @@ describe("validate week deltas", () => {
       daysPerWeek: fc.integer({ min: 3, max: 7 }),
       paused: oneIn(10),
       afterPause: oneIn(6),
+      phase: fc.constantFrom<PlanPhase>(...planPhaseSchema.options),
       proposals: fc.array(
         fc.record({
           pick: fc.oneof(
@@ -406,6 +448,7 @@ describe("validate week deltas", () => {
           source: s.source,
           coachAdjusted: s.coachAdjusted,
           eased: s.eased,
+          phase: s.source === "custom" ? null : drawn.phase,
           steps: QUALITY.has(s.type)
             ? intervals(s.reps)
             : [
@@ -439,7 +482,7 @@ describe("validate week deltas", () => {
       return { ctx, proposals };
     });
 
-  it("keeps the week within +10% of the week before over all accepted changes together, one outcome per proposal in their order", () => {
+  it("keeps the week within +10% of the week before over all accepted changes together, one outcome per proposal in their order, and never grows a taper or race-week session", () => {
     fc.assert(
       fc.property(drawnArb, ({ ctx, proposals }) => {
         const outcomes = validateWeekDeltas(ctx, proposals);
@@ -467,8 +510,15 @@ describe("validate week deltas", () => {
         if (ctx.paused) {
           for (const { result } of outcomes) expect(result.ok).toBe(false);
         }
-        if (ctx.paused || ctx.afterPause || ctx.previousWeekM === 0 || ctx.longestRecentM === 0) {
-          for (const s of ctx.sessions) {
+        for (const s of ctx.sessions) {
+          const shrinkOnly =
+            ctx.paused ||
+            ctx.afterPause ||
+            ctx.previousWeekM === 0 ||
+            ctx.longestRecentM === 0 ||
+            s.phase === "taper" ||
+            s.phase === "race";
+          if (shrinkOnly) {
             expect(after.get(s.id)!.target.distanceM).toBeLessThanOrEqual(s.target.distanceM);
           }
         }

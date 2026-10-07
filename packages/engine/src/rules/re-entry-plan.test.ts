@@ -14,7 +14,7 @@ import {
   type ReEntryInput,
   type ReEntrySession,
 } from "./re-entry-plan";
-import { sessionTarget } from "./session-target";
+import { flattenSteps, sessionTarget } from "./session-target";
 
 const PACES: PlanPaces = {
   easy: { fastSPerKm: 300, slowSPerKm: 340 }, // midpoint 320 s/km: 20 min is 3750 m
@@ -41,6 +41,21 @@ const intervals = (reps: number): SessionSteps => [
     ],
   },
   { kind: "cooldown", zone: "easy", distanceM: null, durationS: 600 },
+];
+// 20 s strides at repetition pace and a 60 s jog: 91 + 188 m and 80 s a round.
+const withStrides = (runM: number, repeat: number): SessionSteps => [
+  { kind: "run", zone: "easy", distanceM: runM, durationS: null },
+  {
+    repeat,
+    steps: [
+      { kind: "run", zone: "repetition", distanceM: null, durationS: 20 },
+      { kind: "recovery", zone: "easy", distanceM: null, durationS: 60 },
+    ],
+  },
+];
+const withFinish = (easyM: number, finishM: number): SessionSteps => [
+  { kind: "run", zone: "easy", distanceM: easyM, durationS: null },
+  { kind: "run", zone: "marathon", distanceM: finishM, durationS: null },
 ];
 const walkRun = (reps: number): SessionSteps => [
   {
@@ -83,6 +98,19 @@ function week(monday: string): ReEntrySession[] {
 
 const MONDAYS = ["2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02", "2026-11-09"];
 const PLAN = MONDAYS.flatMap(week);
+
+/**
+ * The same 30 km weeks with extras: Thursday's 8000 m holds 2 strides (7442 + 2 x 279 m) and Sunday's
+ * 14 000 m long run a 3000 m marathon-pace finish.
+ */
+function extrasWeek(monday: string): ReEntrySession[] {
+  return [
+    session(addDays(monday, 1)),
+    session(addDays(monday, 3), "easy", 0, { steps: withStrides(7442, 2) }),
+    session(addDays(monday, 6), "long", 0, { steps: withFinish(11_000, 3000) }),
+  ];
+}
+const EXTRAS_PLAN = MONDAYS.flatMap(extrasWeek);
 
 function reEnter(overrides: Partial<ReEntryInput>) {
   return reEntryPlan({
@@ -164,6 +192,83 @@ describe("re-entry plan", () => {
     // Week 2 targets 77%: 5 x 1000 m keeps round(3.85) = 4 reps.
     expect(changes[2]!.session).toMatchObject({ type: "intervals", steps: intervals(4) });
     expect(changes[3]!.session.steps).toEqual(easyRun(10_700));
+  });
+
+  it("makes an easy run with strides and a long run with a finish one plain easy run of the same distance in the first 7 days, type kept, before the factor", () => {
+    const { changes } = reEnter({ sessions: EXTRAS_PLAN.slice(0, 3) });
+    // 70% of 8000 and 14 000 m, as for the plain runs: the strides and the finish are gone.
+    expect(changes).toMatchObject([
+      { id: "2026-10-13-easy", session: { steps: easyRun(5600) } },
+      {
+        id: "2026-10-15-easy",
+        session: {
+          type: "easy",
+          title: null,
+          status: "planned",
+          steps: easyRun(5600),
+          target: { distanceM: 5600, durationS: 1792, zone: "easy" },
+        },
+      },
+      {
+        id: "2026-10-18-long",
+        session: {
+          type: "long",
+          title: null,
+          status: "planned",
+          steps: easyRun(9800),
+          target: { distanceM: 9800, durationS: 3136, zone: "easy" },
+        },
+      },
+    ]);
+  });
+
+  it("makes a run with extras plain in the first 7 days even when its week meets the plan", () => {
+    // Back on Saturday 17 after 10 days: the first 7 days run to Friday 23. Week 1 runs at 70% of its
+    // 14 000 m; week 2's 9558 m is under 110% of that 9800, so it runs as planned, except that
+    // Thursday 22's strides go: one easy run of its 5000 + 2 x 279 m.
+    const sessions = [
+      session("2026-10-18", "long", 0, { steps: withFinish(11_000, 3000) }),
+      session("2026-10-20", "easy", 4000),
+      session("2026-10-22", "easy", 0, { steps: withStrides(5000, 2) }),
+    ];
+    const { changes } = reEnter({ fromDate: "2026-10-17", sessions });
+    expect(changes.map((c) => [c.id, c.session.type, c.session.steps])).toEqual([
+      ["2026-10-18-long", "long", easyRun(9800)],
+      ["2026-10-22-easy", "easy", easyRun(5558)],
+    ]);
+  });
+
+  it("cuts a run with extras after the first 7 days as one easy run, and keeps extras in a week that meets the plan", () => {
+    const { changes } = reEnter({ sessions: EXTRAS_PLAN });
+    // The same ramp as the plain plan: 77%, 84.7% and 93.17% of each run, then week 5 as planned.
+    expect(metersById(changes)).toEqual(metersById(reEnter({ sessions: PLAN }).changes));
+    for (const { session: changed } of changes) expect(changed.steps).toHaveLength(1);
+    expect(changes.map((c) => c.id)).not.toContain("2026-11-12-easy");
+    expect(changes.map((c) => c.id)).not.toContain("2026-11-15-long");
+  });
+
+  it("illness or injury: after the first 7 days of walk-run, runs keep their strides and finish", () => {
+    const { changes } = reEnter({ daysOff: 3, walkRun: true, sessions: EXTRAS_PLAN });
+    expect(changes.map((c) => [c.id, c.session.steps])).toEqual([
+      ["2026-10-13-easy", walkRun(8)],
+      ["2026-10-15-easy", walkRun(8)],
+      ["2026-10-18-long", walkRun(14)],
+    ]);
+  });
+
+  it("illness or injury: a walk-run never outlasts the run with extras it replaces", () => {
+    // 16 000 m easy and a 4000 m finish take 5120 + 1082 = 6202 s: 20 rounds of 5 min. The plain
+    // 20 000 m would take 6400 s, 21 rounds.
+    const { changes } = reEntryPlan({
+      fromDate: "2026-10-14",
+      daysOff: 3,
+      walkRun: true,
+      sessions: [session("2026-10-18", "long", 0, { steps: withFinish(16_000, 4000) })],
+      paces: PACES,
+    });
+    expect(changes).toMatchObject([
+      { id: "2026-10-18-long", session: { type: "easy", title: "Walk-run", steps: walkRun(20) } },
+    ]);
   });
 
   it("illness or injury: the first 7 days are walk-run, 4 min run and 1 min walk, at full time after 3 days off", () => {
@@ -390,55 +495,86 @@ describe("re-entry plan", () => {
   // --- properties over generated sessions ---------------------------------------------------------
 
   const FIRST_MONDAY = "2026-10-12";
-  const inputArb: fc.Arbitrary<ReEntryInput> = fc
-    .record({
-      sessions: fc.array(
-        fc.record({
-          dayOffset: fc.integer({ min: 0, max: 41 }),
-          type: fc.constantFrom<SessionType>(
-            "easy",
-            "long",
-            "intervals",
-            "tempo",
-            "race_practice",
-            "race",
-            "strength",
-          ),
-          distanceM: fc.integer({ min: 1000, max: 35_000 }),
-          reps: fc.integer({ min: 2, max: 10 }),
-          status: fc.constantFrom(...sessionStatusSchema.options),
-          custom: fc.integer({ min: 0, max: 9 }).map((n) => n === 0),
-        }),
-        { maxLength: 30 },
-      ),
-      fromOffset: fc.integer({ min: -3, max: 30 }),
-      daysOff: fc.nat({ max: 30 }),
-      walkRun: fc.boolean(),
-      carriedFactor: fc.oneof(
-        fc.constant(undefined),
-        fc.constantFrom(0.5, 0.7, 1),
-        fc.double({ min: 0.01, max: 1, noNaN: true }),
-      ),
-    })
-    .map((drawn) => ({
-      fromDate: addDays(FIRST_MONDAY, drawn.fromOffset),
-      daysOff: drawn.daysOff,
-      walkRun: drawn.walkRun,
-      carriedFactor: drawn.carriedFactor,
-      paces: PACES,
-      sessions: drawn.sessions.map((s, k) =>
-        session(addDays(FIRST_MONDAY, s.dayOffset), s.type, s.distanceM, {
-          id: `s${k}`,
-          status: s.status,
-          source: s.custom ? "custom" : "plan",
-          steps: QUALITY.has(s.type)
-            ? intervals(s.reps)
-            : s.type === "strength"
-              ? []
-              : easyRun(s.distanceM),
-        }),
-      ),
-    }));
+  /**
+   * Up to `maxSessions` sessions over `days` days from FIRST_MONDAY and a return `fromMin` to `fromMax`
+   * days from it.
+   */
+  const inputArbOver = (
+    days: number,
+    fromMin: number,
+    fromMax: number,
+    maxSessions: number,
+  ): fc.Arbitrary<ReEntryInput> =>
+    fc
+      .record({
+        sessions: fc.array(
+          fc.record({
+            dayOffset: fc.integer({ min: 0, max: days - 1 }),
+            type: fc.constantFrom<SessionType>(
+              "easy",
+              "long",
+              "intervals",
+              "tempo",
+              "race_practice",
+              "race",
+              "strength",
+            ),
+            distanceM: fc.integer({ min: 1000, max: 35_000 }),
+            extras: fc.constantFrom("plain" as const, "strides" as const, "finish" as const),
+            reps: fc.integer({ min: 2, max: 10 }),
+            status: fc.constantFrom(...sessionStatusSchema.options),
+            custom: fc.integer({ min: 0, max: 9 }).map((n) => n === 0),
+          }),
+          { maxLength: maxSessions },
+        ),
+        fromOffset: fc.integer({ min: fromMin, max: fromMax }),
+        daysOff: fc.nat({ max: 30 }),
+        walkRun: fc.boolean(),
+        carriedFactor: fc.oneof(
+          fc.constant(undefined),
+          fc.constantFrom(0.5, 0.7, 1),
+          fc.double({ min: 0.01, max: 1, noNaN: true }),
+        ),
+      })
+      .map((drawn) => ({
+        fromDate: addDays(FIRST_MONDAY, drawn.fromOffset),
+        daysOff: drawn.daysOff,
+        walkRun: drawn.walkRun,
+        carriedFactor: drawn.carriedFactor,
+        paces: PACES,
+        sessions: drawn.sessions.map((s, k) =>
+          session(addDays(FIRST_MONDAY, s.dayOffset), s.type, s.distanceM, {
+            id: `s${k}`,
+            status: s.status,
+            source: s.custom ? "custom" : "plan",
+            steps: QUALITY.has(s.type)
+              ? intervals(s.reps)
+              : s.type === "strength"
+                ? []
+                : s.type === "race" || s.extras === "plain"
+                  ? easyRun(s.distanceM)
+                  : s.extras === "strides"
+                    ? withStrides(s.distanceM, 6)
+                    : withFinish(s.distanceM, Math.max(1000, Math.round(s.distanceM / 5))),
+          }),
+        ),
+      }));
+  const inputArb = inputArbOver(42, -3, 30, 30);
+  /**
+   * A return after 7 or more days, well, in the first of two light weeks: the first 7 days often reach a
+   * week that already meets its plan, where nothing but the easing of those days changes a session.
+   */
+  const nearArb = inputArbOver(14, 0, 6, 8).map((input) => ({
+    ...input,
+    daysOff: 7 + (input.daysOff % 24),
+    walkRun: false,
+    carriedFactor: undefined,
+    sessions: input.sessions.map((s) => ({
+      ...s,
+      status: "planned" as const,
+      source: "plan" as const,
+    })),
+  }));
 
   const eligible = (input: ReEntryInput, s: ReEntrySession) =>
     s.source === "plan" &&
@@ -539,6 +675,23 @@ describe("re-entry plan", () => {
           }
         }
       }),
+    );
+  });
+
+  it("leaves no step off easy pace in the eased first 7 days: no quality, strides or finish", () => {
+    fc.assert(
+      fc.property(fc.oneof(inputArb, nearArb), (input) => {
+        const result = reEntryPlan(input);
+        fc.pre(input.walkRun || result.factor < 1);
+        const changed = new Map(result.changes.map((c) => [c.id, c.session]));
+        for (const s of input.sessions) {
+          if (!eligible(input, s) || !inFirstDays(input, s.date)) continue;
+          const after = changed.get(s.id) ?? s;
+          for (const { step } of flattenSteps(after.steps)) expect(step.zone).toBe("easy");
+          expect(after.type).toBe(QUALITY.has(s.type) ? "easy" : input.walkRun ? "easy" : s.type);
+        }
+      }),
+      { numRuns: 300 },
     );
   });
 

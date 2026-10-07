@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { addDays, daysBetween, weekdayIndex, weekdayOf } from "../dates";
 import { validateDelta, type DeltaContext } from "../rules/delta";
 import { reEntryPlan, type ReEntryInput, type ReEntrySession } from "../rules/re-entry-plan";
-import { bandMidpointSPerKm, sessionTarget } from "../rules/session-target";
+import { bandMidpointSPerKm, flattenSteps, sessionTarget } from "../rules/session-target";
 import { matchSessions, type MatchSession } from "../rules/session-match";
 import { validateWeekDeltas, type WeekDeltaSession } from "../rules/week-delta";
 import { minRunDistanceM } from "../rules/week-fill";
@@ -39,6 +39,7 @@ const planArb: fc.Arbitrary<Drawn> = planInputArb
   }));
 
 const sessionsOf = (plan: GeneratedPlan) => plan.weeks.flatMap((week) => week.sessions);
+const SHRINK_ONLY_PHASES = new Set(["taper", "race"]);
 const mondayOf = (date: string) => addDays(date, -weekdayIndex(weekdayOf(date)));
 
 describe("adaptation over generated plans", () => {
@@ -51,7 +52,7 @@ describe("adaptation over generated plans", () => {
   );
 
   it(
-    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow a session a re-entry eased or one right after a paused week",
+    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow a session a re-entry eased, one right after a paused week or one of a taper or race week",
     () => {
       fc.assert(
         fc.property(
@@ -69,6 +70,7 @@ describe("adaptation over generated plans", () => {
             const ctx: DeltaContext = {
               today: addDays(picked.date, -daysBefore),
               session: { ...picked, status: "planned", source: "plan", title: null },
+              phase: plan.weeks[weekIndex]!.phase,
               weekSessions: plan.weeks[weekIndex]!.sessions.filter((s) => s !== picked).map(
                 (s) => ({ ...s, status: "planned" as const }),
               ),
@@ -96,6 +98,7 @@ describe("adaptation over generated plans", () => {
             const othersM = ctx.weekSessions.reduce((sum, s) => sum + s.target.distanceM, 0);
             expect(eased).toBe(false);
             expect(afterPause).toBe(false);
+            expect(SHRINK_ONLY_PHASES.has(ctx.phase!)).toBe(false);
             expect(newM).toBeLessThanOrEqual(Math.floor(longestRecentM * 1.1));
             if (picked.type === "long") {
               const share = input.goal.daysPerWeek >= 4 ? 0.3 : 0.4;
@@ -114,7 +117,7 @@ describe("adaptation over generated plans", () => {
   );
 
   it(
-    "keeps a week within +10% of the week before over all of a weekly review's changes together, in any order, and never grows one right after a paused week",
+    "keeps a week within +10% of the week before over all of a weekly review's changes together, in any order, and never grows one right after a paused week or in a taper or race week",
     () => {
       fc.assert(
         fc.property(
@@ -151,6 +154,7 @@ describe("adaptation over generated plans", () => {
               title: null,
               coachAdjusted: false,
               eased: false,
+              phase: week.phase,
             }));
             const proposals = drawn.map(({ pick, delta }) => ({
               sessionId: `s${pick % sessions.length}`,
@@ -193,9 +197,11 @@ describe("adaptation over generated plans", () => {
                 Math.max(plannedM, maxWeeklyVolumeM(ctx.previousWeekM)),
               );
             }
-            if (afterPause) expect(totalM).toBeLessThanOrEqual(plannedM);
+            if (afterPause || SHRINK_ONLY_PHASES.has(week.phase)) {
+              expect(totalM).toBeLessThanOrEqual(plannedM);
+            }
             for (const s of sessions) {
-              if (afterPause || QUALITY.has(s.type)) {
+              if (afterPause || SHRINK_ONLY_PHASES.has(week.phase) || QUALITY.has(s.type)) {
                 expect(afterM.get(s.id)!).toBeLessThanOrEqual(s.target.distanceM);
               }
             }
@@ -241,7 +247,7 @@ describe("adaptation over generated plans", () => {
     });
 
   it(
-    "eases a return without touching the race or what came before, each week at most 10% over the one before, never easing one break twice",
+    "eases a return without touching the race or what came before, each week at most 10% over the one before, never easing one break twice, with nothing off easy pace in the eased first 7 days",
     () => {
       fc.assert(
         fc.property(reEntryArb, ({ plan, reEntry }) => {
@@ -301,6 +307,16 @@ describe("adaptation over generated plans", () => {
               expect(after.target.distanceM).toBeGreaterThanOrEqual(
                 Math.min(before.target.distanceM, minRunM),
               );
+            }
+          }
+          // Illness or injury: no quality, strides or finish in the eased first 7 days, nothing but easy.
+          if (reEntry.walkRun || result.factor < 1) {
+            const changed = new Map(result.changes.map((c) => [c.id, c.session]));
+            for (const s of reEntry.sessions) {
+              const day = daysBetween(reEntry.fromDate, s.date);
+              if (day < 0 || day >= 7 || s.type === "race" || s.type === "strength") continue;
+              const after = changed.get(s.id) ?? s;
+              for (const { step } of flattenSteps(after.steps)) expect(step.zone).toBe("easy");
             }
           }
           // Weeks that meet their plan, outside the first 7 days, run as planned.

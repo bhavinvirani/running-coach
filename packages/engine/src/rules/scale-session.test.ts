@@ -48,6 +48,20 @@ const intervals = (reps: number): SessionSteps => [
   cooldown,
 ];
 const tempo = (work: Step): SessionSteps => [warmup, work, cooldown];
+// Strides as the plan writes them: 20 s at repetition pace (91 m at 219.5 s/km) and a 60 s jog
+// (188 m at 320 s/km), 279 m and 80 s a round.
+const strides = (repeat: number) => ({
+  repeat,
+  steps: [byTime("run", "repetition", 20), byTime("recovery", "easy", 60)],
+});
+const withStrides = (runM: number, repeat: number): SessionSteps => [
+  byDistance("run", "easy", runM),
+  strides(repeat),
+];
+const withFinish = (easyM: number, finishM: number): SessionSteps => [
+  byDistance("run", "easy", easyM),
+  byDistance("run", "marathon", finishM),
+];
 
 const scale = (steps: SessionSteps, factor: number) =>
   scaleSession({ steps, factor, paces: PACES });
@@ -181,6 +195,71 @@ describe("scale session", () => {
     );
   });
 
+  it("strides are run steps, not work: an easy run with strides is no quality session and grows", () => {
+    expect(scale(withStrides(6000, 6), 1.1)).toEqual({
+      steps: withStrides(6600, 6),
+      atMinimum: false,
+    });
+  });
+
+  it("cuts an easy run with strides as one easy run of its whole distance: the strides go", () => {
+    // 6000 + 6 x 279 = 7674 m, x 0.8 = 6139, floored to 6100.
+    expect(scale(withStrides(6000, 6), 0.8)).toEqual({ steps: easyRun(6100), atMinimum: false });
+  });
+
+  it("cuts a long run with a marathon-pace finish as one easy run of its whole distance", () => {
+    expect(scale(withFinish(16_000, 4000), 0.75)).toEqual({
+      steps: easyRun(15_000),
+      atMinimum: false,
+    });
+  });
+
+  it("merges the extras on the smallest cut too: 0.99 of 4866 m floors to 4800", () => {
+    // The 20 min primer with 4 strides: 3750 + 4 x 279 m.
+    expect(scale(withStrides(3750, 4), 0.99)).toEqual({ steps: easyRun(4800), atMinimum: false });
+  });
+
+  it("floors a cut session with extras at 20 min for the whole session, not per step", () => {
+    // 4000 + 1000 m at 0.76 is 3800 m; at 0.75 it floors to 3700, under the 3750 m floor.
+    expect(scale(withFinish(4000, 1000), 0.76)).toEqual({ steps: easyRun(3800), atMinimum: false });
+    expect(scale(withFinish(4000, 1000), 0.75)).toEqual({ steps: easyRun(3750), atMinimum: true });
+    // Per step, the 3750 m run and the 1000 m finish would each have stayed as they were.
+    expect(scale(withFinish(3750, 1000), 0.5)).toEqual({ steps: easyRun(3750), atMinimum: true });
+  });
+
+  it("keeps a cut session with extras already under 20 min at its own distance", () => {
+    // 2000 + 2 x 279 = 2558 m.
+    expect(scale(withStrides(2000, 2), 0.5)).toEqual({ steps: easyRun(2558), atMinimum: true });
+  });
+
+  it("never merges a session with extras past the longest step the contract allows", () => {
+    expect(scale(withFinish(99_000, 5000), 0.99)).toEqual({
+      steps: easyRun(99_000),
+      atMinimum: false,
+    });
+  });
+
+  it("grows only the first easy run of a session with extras: strides and finish stay as planned", () => {
+    expect(scale(withFinish(16_000, 4000), 1.1).steps).toEqual(withFinish(17_600, 4000));
+    expect(scale([byTime("run", "easy", 3600), strides(6)], 1.1).steps).toEqual([
+      byTime("run", "easy", 3960),
+      strides(6),
+    ]);
+  });
+
+  it("finds extras only after an easy run step that comes first: other sessions scale as before", () => {
+    // A repeat first: its run stays and the run after it is cut on its own.
+    expect(scale([strides(4), byDistance("run", "easy", 8000)], 0.5).steps).toEqual([
+      strides(4),
+      byDistance("run", "easy", 4000),
+    ]);
+    // A marathon-pace run first: each run step is cut on its own, each at its 20 min floor.
+    expect(scale(withFinish(3000, 8000).reverse(), 0.5).steps).toEqual([
+      byDistance("run", "marathon", 4000),
+      byDistance("run", "easy", 3000),
+    ]);
+  });
+
   it("returns the scaled steps alone from scaleSteps", () => {
     expect(scaleSteps({ steps: easyRun(8000), factor: 0.75, paces: PACES })).toEqual(easyRun(6000));
   });
@@ -221,10 +300,38 @@ describe("scale session", () => {
   const factorArb = fc.double({ min: 0.01, max: 1.5, noNaN: true });
   const isQuality = (steps: SessionSteps) =>
     flattenSteps(steps).some(({ step }) => step.kind === "work");
+  /** An easy or long run with extras: no work, an easy run step first and anything after it. */
+  const hasExtras = (steps: SessionSteps) => {
+    const first = steps[0];
+    return (
+      !isQuality(steps) &&
+      steps.length > 1 &&
+      first !== undefined &&
+      !("repeat" in first) &&
+      first.kind === "run" &&
+      first.zone === "easy"
+    );
+  };
+  /** Easy and long runs with strides or a marathon-pace finish, as the plan writes them. */
+  const extrasArb: fc.Arbitrary<SessionSteps> = fc
+    .record({
+      first: fc.oneof(
+        fc.integer({ min: 1, max: 60_000 }).map((m) => byDistance("run", "easy", m)),
+        fc.integer({ min: 1, max: 4 * 3600 }).map((s) => byTime("run", "easy", s)),
+      ),
+      finish: fc.boolean(),
+      repeat: fc.integer({ min: 2, max: 10 }),
+      finishM: fc.integer({ min: 1000, max: 5000 }),
+    })
+    .map(({ first, finish, repeat, finishM }) => [
+      first,
+      finish ? byDistance("run", "marathon", finishM) : strides(repeat),
+    ]);
+  const anyStepsArb = fc.oneof(stepsArb, extrasArb);
 
   it("always returns steps the contract accepts, the same for the same input", () => {
     fc.assert(
-      fc.property(stepsArb, factorArb, (steps, factor) => {
+      fc.property(anyStepsArb, factorArb, (steps, factor) => {
         const result = scaleSteps({ steps, factor, paces: PACES });
         expect(sessionStepsSchema.parse(result)).toEqual(result);
         expect(scaleSteps({ steps, factor, paces: PACES })).toEqual(result);
@@ -234,18 +341,58 @@ describe("scale session", () => {
 
   it("never lengthens a session cut below 1 or shortens one grown above it", () => {
     fc.assert(
-      fc.property(stepsArb, factorArb, (steps, factor) => {
+      fc.property(anyStepsArb, factorArb, (steps, factor) => {
         const before = sessionTarget(steps, PACES);
         const after = sessionTarget(scaleSteps({ steps, factor, paces: PACES }), PACES);
         if (factor < 1) {
           expect(after.distanceM).toBeLessThanOrEqual(before.distanceM);
-          expect(after.durationS).toBeLessThanOrEqual(before.durationS);
+          // A cut runs the extras at easy pace: at most the time of the whole distance run easy.
+          const plain = Math.min(before.distanceM, STEP_MAX_DISTANCE_M);
+          expect(after.durationS).toBeLessThanOrEqual(
+            hasExtras(steps) ? sessionTarget(easyRun(plain), PACES).durationS : before.durationS,
+          );
         } else if (isQuality(steps)) {
           expect(after).toEqual(before);
         } else {
           expect(after.distanceM).toBeGreaterThanOrEqual(before.distanceM);
         }
       }),
+    );
+  });
+
+  it("never leaves extras after a cut: one easy run, at most the session's meters, at least 20 min or all of it", () => {
+    fc.assert(
+      fc.property(
+        anyStepsArb,
+        fc.double({ min: 0.01, max: 1, maxExcluded: true, noNaN: true }),
+        (steps, factor) => {
+          fc.pre(hasExtras(steps));
+          const beforeM = Math.min(sessionTarget(steps, PACES).distanceM, STEP_MAX_DISTANCE_M);
+          const after = scaleSteps({ steps, factor, paces: PACES });
+          expect(after).toHaveLength(1);
+          const [run] = after as [Step];
+          expect(run).toMatchObject({ kind: "run", zone: "easy", durationS: null });
+          expect(run.distanceM).toBeLessThanOrEqual(beforeM);
+          expect(run.distanceM).toBeGreaterThanOrEqual(Math.min(beforeM, 3750));
+        },
+      ),
+    );
+  });
+
+  it("never grows the extras on a rise: only the first easy run grows", () => {
+    fc.assert(
+      fc.property(
+        anyStepsArb,
+        fc.double({ min: 1, max: 1.5, minExcluded: true, noNaN: true }),
+        (steps, factor) => {
+          fc.pre(hasExtras(steps));
+          const after = scaleSteps({ steps, factor, paces: PACES });
+          expect(after.slice(1)).toEqual(steps.slice(1));
+          expect(sessionTarget(after.slice(0, 1), PACES).distanceM).toBeGreaterThanOrEqual(
+            sessionTarget(steps.slice(0, 1), PACES).distanceM,
+          );
+        },
+      ),
     );
   });
 
