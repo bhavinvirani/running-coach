@@ -10,7 +10,7 @@ import {
   type PlanWarning,
 } from "@running-coach/shared";
 import { ENGINE_VERSION, FITNESS_SHAPE_DISTANCE, PEAK_VOLUME_M } from "../constants";
-import { addDays, daysBetween } from "../dates";
+import { addDays } from "../dates";
 import { startVolume, type StartVolumeResult } from "../rules/baseline";
 import {
   longestInWindowM,
@@ -24,12 +24,11 @@ import { neededWeeklyM } from "../rules/needed-volume";
 import { planLength } from "../rules/plan-length";
 import { predictTimeS, racePace } from "../rules/prediction";
 import { bandMidpointSPerKm } from "../rules/session-target";
-import { taperStartDate } from "../rules/taper";
 import { pacesFromVdot, roundVdot, vdotFromPerformance } from "../rules/vdot";
 import { baseCurveM, isDownWeek, weekTargetM } from "../rules/volume-curve";
 import { minRunDistanceM } from "../rules/week-fill";
-import { buildTrainingWeek, type PlanContext } from "./build-week";
-import { buildTaperWeeks, type PreTaperWeek } from "./build-taper";
+import { buildTrainingWeek, longRunDayCapM, type BuiltWeek, type PlanContext } from "./build-week";
+import { buildTaperWeeks } from "./build-taper";
 
 const PRE_TAPER: readonly PlanPhase[] = ["base", "build", "peak"];
 
@@ -47,7 +46,11 @@ interface Setup {
   raceWarning: PlanWarning | null;
 }
 
-/** The base, build and peak weeks, each climbing at most 10% or recovering every 4th week. */
+/**
+ * The base, build and peak weeks, each climbing at most 10% or recovering every 4th week. A long run
+ * close enough to the race (a Thursday race's last peak Sunday, 11 days out) keeps its cap by days to
+ * the race, a share of the largest long run before it.
+ */
 function buildPreTaperWeeks(
   ctx: PlanContext,
   {
@@ -56,13 +59,13 @@ function buildPreTaperWeeks(
     startVolumeM,
     seedM,
   }: { phases: readonly PlanPhase[]; startDate: string; startVolumeM: number; seedM: number },
-): PreTaperWeek[] {
+): BuiltWeek[] {
   const curve = baseCurveM({
     startVolumeM,
     peakVolumeM: PEAK_VOLUME_M[ctx.distanceKey],
     weeks: phases.length,
   });
-  const built: PreTaperWeek[] = [];
+  const built: BuiltWeek[] = [];
   let previousNonDownM: number | null = null;
   phases.forEach((phase, index) => {
     const number = index + 1;
@@ -78,19 +81,29 @@ function buildPreTaperWeeks(
           curveM: curve[index]!,
           previousNonDownWeekM: previousNonDownM,
         });
+    const weekStart = addDays(startDate, 7 * index);
     const runCapM = maxRunM(
       longestInWindowM({ longestByWeekM: built.map((w) => w.longestM), seedM }),
     );
     const week = buildTrainingWeek(ctx, {
       number,
       phase,
-      weekStart: addDays(startDate, 7 * index),
+      weekStart,
       targetM,
-      maxRunM: runCapM,
+      maxRunM: Math.min(
+        runCapM,
+        longRunDayCapM(ctx, {
+          weekStart,
+          longRunsBeforeM: built.flatMap((w) =>
+            w.week.sessions.filter((s) => s.type === "long").map((s) => s.target.distanceM),
+          ),
+          seedM,
+        }) ?? Infinity,
+      ),
       lastHardDate: built.findLast((w) => w.lastHardDate !== null)?.lastHardDate ?? null,
     });
     if (!down) previousNonDownM = week.week.distanceM;
-    built.push({ ...week, targetM, maxRunM: runCapM });
+    built.push(week);
   });
   return built;
 }
@@ -197,17 +210,9 @@ export function generatePlan(input: PlanGenerationInput): PlanGenerationResult {
           preTaper,
         });
   // The peak long run is the longest before the taper; the taper's long runs are cut on purpose.
-  const taperStart =
-    ctx.raceDate === null
-      ? null
-      : taperStartDate({ distanceKey: ctx.distanceKey, raceDate: ctx.raceDate });
-  const preTaperLongRunsM = weeks
-    .flatMap((week) => week.sessions)
-    .filter(
-      (session) =>
-        session.type === "long" &&
-        (taperStart === null || daysBetween(session.date, taperStart) > 0),
-    )
+  const preTaperLongRunsM = preTaper
+    .flatMap((built) => built.week.sessions)
+    .filter((session) => session.type === "long")
     .map((session) => session.target.distanceM);
   const longRunShort =
     preTaperLongRunsM.length === 0

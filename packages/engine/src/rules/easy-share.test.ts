@@ -13,7 +13,7 @@ const PACES: PlanPaces = {
 };
 
 describe("easy share", () => {
-  it("counts only work steps in hard zones, repeats included", () => {
+  it("counts work steps in hard zones, repeats included", () => {
     const steps: SessionSteps = [
       { kind: "warmup", zone: "easy", distanceM: null, durationS: 900 },
       {
@@ -39,6 +39,25 @@ describe("easy share", () => {
     expect(
       hardTimeS([{ kind: "work", zone: "marathon", distanceM: 5000, durationS: null }], PACES),
     ).toBe(0);
+  });
+
+  it("counts strides and a marathon-pace finish as hard: run steps outside the easy and race zones", () => {
+    const strides: SessionSteps = [
+      { kind: "run", zone: "easy", distanceM: 5000, durationS: null },
+      {
+        repeat: 6,
+        steps: [
+          { kind: "run", zone: "repetition", distanceM: null, durationS: 20 },
+          { kind: "recovery", zone: "easy", distanceM: null, durationS: 60 },
+        ],
+      },
+    ];
+    expect(hardTimeS(strides, PACES)).toBe(6 * 20);
+    const finish: SessionSteps = [
+      { kind: "run", zone: "easy", distanceM: 12_000, durationS: null },
+      { kind: "run", zone: "marathon", distanceM: 3000, durationS: null }, // 270.5 s/km: 812 s
+    ];
+    expect(hardTimeS(finish, PACES)).toBe(812);
   });
 
   it("holds at exactly 20% hard time and not 1 s over", () => {

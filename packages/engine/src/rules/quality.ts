@@ -17,6 +17,8 @@ import {
   RACE_PRACTICE_REP_M,
   REPETITION_RECOVERY_S,
   REPETITION_REP_M,
+  RACE_WEEK_DAYS,
+  TAPER_TEMPO_MIN_DAYS,
   THRESHOLD_BLOCK_STEP_M,
   THRESHOLD_BLOCKS,
   THRESHOLD_RECOVERY_S,
@@ -55,7 +57,13 @@ export const QUALITY_SESSION_TYPES: ReadonlySet<SessionType> = new Set(
   Object.values(QUALITY_SESSION_TYPE),
 );
 
-/** Base, taper and race weeks hold 1; build and peak 2, leaving at least 2 easy days, so 1 at 3 days. */
+// Build, peak and taper weeks hold 2 quality sessions; a taper keeps the peak's sharpness.
+const TWO_QUALITY_PHASES: ReadonlySet<PlanPhase> = new Set(["build", "peak", "taper"]);
+
+/**
+ * Base and race weeks hold 1; build, peak and taper 2, leaving at least 2 easy days, so 1 at 3 days. The
+ * race week's own sessions come from its template (race-week.ts), not from this count.
+ */
 export function qualityCount({
   phase,
   daysPerWeek,
@@ -63,13 +71,29 @@ export function qualityCount({
   phase: PlanPhase;
   daysPerWeek: number;
 }): number {
-  return phase === "build" || phase === "peak" ? Math.min(2, daysPerWeek - 2) : 1;
+  return TWO_QUALITY_PHASES.has(phase) ? Math.min(2, daysPerWeek - 2) : 1;
+}
+
+/**
+ * Whether a taper week's quality slot keeps its work: race pace until 7 days out, where the race week
+ * takes over, tempo until 10 days out; no intervals or repetitions. A slot that does not runs easy.
+ */
+export function taperKeepsWork({ zone, daysOut }: { zone: WorkZone; daysOut: number }): boolean {
+  if (daysOut <= RACE_WEEK_DAYS) return false;
+  switch (zone) {
+    case "race":
+      return true;
+    case "threshold":
+      return daysOut >= TAPER_TEMPO_MIN_DAYS;
+    default:
+      return false;
+  }
 }
 
 /**
  * Each session's zone, first session first. With two, the first alternates intervals (odd weeks) and
- * repetitions (even weeks) in base and build and is race practice in the peak; the second is always
- * tempo. With one, base and build cycle tempo, intervals, tempo, repetitions by week, the peak
+ * repetitions (even weeks) in base and build and is race practice in the peak and taper; the second is
+ * always tempo. With one, base and build cycle tempo, intervals, tempo, repetitions by week, the peak
  * alternates race practice (odd weeks) and tempo (even weeks), and taper and race weeks run race
  * practice: a runner on one session a week still meets tempo.
  */

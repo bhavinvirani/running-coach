@@ -59,11 +59,17 @@ export {
   qualitySteps,
   qualityWork,
   qualityZones,
+  taperKeepsWork,
   workCapM,
 } from "./rules/quality";
 export type { QualityStepsInput, Work, WorkZone } from "./rules/quality";
-export { raceWeekDays, taperPracticeDate } from "./rules/race-week";
-export type { RaceWeekDays, RaceWeekDaysInput, TaperPracticeInput } from "./rules/race-week";
+export { raceWeekDays, raceWeekSessions } from "./rules/race-week";
+export type {
+  RaceWeekDay,
+  RaceWeekDayKind,
+  RaceWeekDaysInput,
+  RaceWeekSessionsInput,
+} from "./rules/race-week";
 export { reEntryFactor } from "./rules/re-entry";
 export { reEntryPlan } from "./rules/re-entry-plan";
 export type {
@@ -89,14 +95,20 @@ export type {
   MatchSessionsInput,
   SessionMatch,
 } from "./rules/session-match";
-export { taperBlocks, taperPeakM, taperStartDate, taperVolumesM } from "./rules/taper";
-export type {
-  TaperBlock,
-  TaperBlocksInput,
-  TaperDatesInput,
-  TaperPeakInput,
-  TaperVolumesInput,
-} from "./rules/taper";
+export { stridesM, stridesRepeat, withStrides } from "./rules/strides";
+export type { WithStridesInput } from "./rules/strides";
+export { taperPeakM } from "./rules/taper";
+export type { TaperPeakInput } from "./rules/taper";
+export { longRunKeepsDay, taperLongRunCapM } from "./rules/taper-long-run";
+export type { TaperLongRunInput } from "./rules/taper-long-run";
+export {
+  isRaceBandWeek,
+  taperCeilingM,
+  taperShare,
+  taperWeekCount,
+  thursdayDaysOut,
+} from "./rules/taper-share";
+export type { TaperShareInput, TaperWeekInput } from "./rules/taper-share";
 export { paceAtShareSPerKm, pacesFromVdot, roundVdot, vdotFromPerformance } from "./rules/vdot";
 export type { Performance, TrainingPaces } from "./rules/vdot";
 export { baseCurveM, downWeekM, isDownWeek, weekTargetM } from "./rules/volume-curve";

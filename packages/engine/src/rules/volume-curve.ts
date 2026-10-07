@@ -13,7 +13,7 @@ export type WeekTargetInput =
   | { kind: "climb"; curveM: number; previousNonDownWeekM: number | null }
   /** A down week, against the week before it as built. */
   | { kind: "down"; curveM: number; previousWeekM: number }
-  /** A taper block, against the block or week before it as built (none at the plan's start). */
+  /** A taper week, against the week before it as built (none at the plan's start). */
   | { kind: "eased"; volumeM: number; previousWeekM: number | null };
 
 /**

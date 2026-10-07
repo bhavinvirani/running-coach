@@ -8,6 +8,7 @@ import {
   qualityZones,
   QUALITY_SESSION_TYPE,
   qualityWork,
+  taperKeepsWork,
   workCapM,
   type WorkZone,
 } from "./quality";
@@ -24,12 +25,17 @@ const ZONES: readonly WorkZone[] = ["threshold", "interval", "repetition", "race
 const SHARE = { threshold: 0.1, interval: 0.08, repetition: 0.05, race: 0.1 };
 
 describe("quality", () => {
-  it("runs 1 quality session in base, taper and race weeks at any days a week", () => {
+  it("runs 1 quality session in base and race weeks at any days a week", () => {
     for (const daysPerWeek of [3, 6]) {
       expect(qualityCount({ phase: "base", daysPerWeek })).toBe(1);
-      expect(qualityCount({ phase: "taper", daysPerWeek })).toBe(1);
       expect(qualityCount({ phase: "race", daysPerWeek })).toBe(1);
     }
+  });
+
+  it("keeps the peak's count in taper weeks: 1 at 3 days a week, 2 from 4", () => {
+    expect(qualityCount({ phase: "taper", daysPerWeek: 3 })).toBe(1);
+    expect(qualityCount({ phase: "taper", daysPerWeek: 4 })).toBe(2);
+    expect(qualityCount({ phase: "taper", daysPerWeek: 6 })).toBe(2);
   });
 
   it("runs at most 2 in build and peak, and 1 at 3 days a week", () => {
@@ -92,13 +98,33 @@ describe("quality", () => {
     ]);
   });
 
-  it("keeps the one session of taper and race weeks race practice, odd and even weeks", () => {
+  it("runs race practice in taper weeks, plus tempo from 4 days a week, odd and even weeks", () => {
+    for (const weekNumber of [11, 12]) {
+      expect(qualityZones({ phase: "taper", weekNumber, daysPerWeek: 3 })).toEqual(["race"]);
+      expect(qualityZones({ phase: "taper", weekNumber, daysPerWeek: 4 })).toEqual([
+        "race",
+        "threshold",
+      ]);
+    }
     for (const daysPerWeek of [3, 6]) {
-      expect(qualityZones({ phase: "taper", weekNumber: 11, daysPerWeek })).toEqual(["race"]);
-      expect(qualityZones({ phase: "taper", weekNumber: 12, daysPerWeek })).toEqual(["race"]);
       expect(qualityZones({ phase: "race", weekNumber: 12, daysPerWeek })).toEqual(["race"]);
       expect(qualityZones({ phase: "race", weekNumber: 13, daysPerWeek })).toEqual(["race"]);
     }
+  });
+
+  it("keeps tempo in a taper week 10 days out and runs it easy 9 days out", () => {
+    expect(taperKeepsWork({ zone: "threshold", daysOut: 10 })).toBe(true);
+    expect(taperKeepsWork({ zone: "threshold", daysOut: 9 })).toBe(false);
+  });
+
+  it("keeps race practice in a taper week 7 days out and leaves 6 days out to the race week", () => {
+    expect(taperKeepsWork({ zone: "race", daysOut: 7 })).toBe(true);
+    expect(taperKeepsWork({ zone: "race", daysOut: 6 })).toBe(false);
+  });
+
+  it("holds no intervals or repetitions in a taper week", () => {
+    expect(taperKeepsWork({ zone: "interval", daysOut: 20 })).toBe(false);
+    expect(taperKeepsWork({ zone: "repetition", daysOut: 20 })).toBe(false);
   });
 
   it("types threshold work tempo, interval and repetition work intervals, race pace race practice", () => {
@@ -260,6 +286,17 @@ describe("quality", () => {
           expect(zones).toContain("threshold");
         },
       ),
+    );
+  });
+
+  it("keeps no taper work in the last 6 days, and no tempo in the last 9", () => {
+    fc.assert(
+      fc.property(fc.constantFrom(...ZONES), fc.integer({ min: 0, max: 30 }), (zone, daysOut) => {
+        const kept = taperKeepsWork({ zone, daysOut });
+        if (daysOut <= 6) expect(kept).toBe(false);
+        if (zone === "threshold" && daysOut < 10) expect(kept).toBe(false);
+        if (zone === "race" && daysOut >= 7) expect(kept).toBe(true);
+      }),
     );
   });
 

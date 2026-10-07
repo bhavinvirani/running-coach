@@ -98,3 +98,68 @@ export const planInputArb: fc.Arbitrary<PlanGenerationInput> = fc
     },
     vdotSource: drawn.source === null ? null : sourceOf(drawn.source),
   }));
+
+const MIN_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
+  "5k": 8,
+  "10k": 8,
+  half: 12,
+  marathon: 18,
+};
+const MIN_DAYS: Readonly<Record<RaceDistanceKey, number>> = {
+  "5k": 3,
+  "10k": 3,
+  half: 3,
+  marathon: 4,
+};
+
+/**
+ * A race plan from a runner with history, the race on any weekday `weeks` weeks into the plan, on days
+ * the distance allows.
+ */
+function raceInputArb(weeksArb: (distanceKey: RaceDistanceKey) => fc.Arbitrary<number>) {
+  return distanceKeyArb.chain((distanceKey) =>
+    fc
+      .record({
+        startDate: mondayArb,
+        weeks: weeksArb(distanceKey),
+        raceWeekday: fc.integer({ min: 0, max: 6 }),
+        daysPerWeek: fc.integer({ min: MIN_DAYS[distanceKey], max: 6 }),
+        longRunDay: fc.constantFrom(...weekdaySchema.options),
+        weeklyVolumesM: fc.array(fc.integer({ min: 15_000, max: 90_000 }), {
+          minLength: 4,
+          maxLength: 4,
+        }),
+        longestRunM: fc.integer({ min: 0, max: 30_000 }),
+        daysSinceLastRun: fc.integer({ min: 0, max: 20 }),
+        source: sourceArb,
+      })
+      .map((drawn): PlanGenerationInput => ({
+        goal: {
+          kind: "race",
+          distanceKey,
+          raceDate: addDays(drawn.startDate, 7 * (drawn.weeks - 1) + drawn.raceWeekday),
+          targetTimeS: null,
+          daysPerWeek: drawn.daysPerWeek,
+          longRunDay: drawn.longRunDay,
+          recentTime: null,
+        },
+        startDate: drawn.startDate,
+        baseline: {
+          weeklyVolumesM: drawn.weeklyVolumesM,
+          longestRunM: drawn.longestRunM,
+          daysSinceLastRun: drawn.daysSinceLastRun,
+        },
+        vdotSource: sourceOf(drawn.source),
+      })),
+  );
+}
+
+/** Race plans at least the distance's minimum, the race on every weekday: a whole taper every time. */
+export const fullRaceInputArb: fc.Arbitrary<PlanGenerationInput> = raceInputArb((distanceKey) =>
+  fc.integer({ min: MIN_WEEKS[distanceKey], max: MIN_WEEKS[distanceKey] + 10 }),
+);
+
+/** Races 1 to 5 weeks out on every weekday: plans that start in the taper or just before it. */
+export const closeRaceInputArb: fc.Arbitrary<PlanGenerationInput> = raceInputArb(() =>
+  fc.integer({ min: 1, max: 5 }),
+);

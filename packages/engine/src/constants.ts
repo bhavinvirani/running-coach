@@ -8,7 +8,7 @@ import {
 } from "@running-coach/shared";
 
 // Stored on each plan so a plan can be traced to the rule set that produced it.
-export const ENGINE_VERSION = "0.5.0";
+export const ENGINE_VERSION = "0.6.0";
 
 // The 10% rule: weekly running volume rises at most 10% over the previous week.
 export const WEEKLY_VOLUME_MAX_INCREASE = 0.1;
@@ -69,16 +69,52 @@ export const MIN_PLAN_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
   marathon: 18,
 };
 
-// SPEC "Plan engine": taper 2 weeks, 3 for the marathon, as 7-day blocks counted back from the race.
-export const TAPER_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
-  "5k": 2,
-  "10k": 2,
-  half: 2,
-  marathon: 3,
+// A Monday-to-Sunday week tapers by the days from its Thursday to the race: 4 of its 7 days fall on or
+// before it, so a week takes the band most of its days are in. Source: this app's own choice.
+export const TAPER_ANCHOR_WEEKDAY = 3;
+
+// Bosquet et al. 2007 meta-analysis (a 41-60% volume cut over about 2 weeks) and Pfitzinger's 3-week
+// marathon taper: each band is the most days from a week's Thursday to the race it covers and the share
+// of the taper peak the week may hold, the race excluded; a week past the last band is not tapering.
+export const TAPER_SHARES: Readonly<
+  Record<RaceDistanceKey, readonly { maxDaysOut: number; share: number }[]>
+> = {
+  "5k": [
+    { maxDaysOut: 6, share: 0.4 },
+    { maxDaysOut: 13, share: 0.7 },
+  ],
+  "10k": [
+    { maxDaysOut: 6, share: 0.4 },
+    { maxDaysOut: 13, share: 0.7 },
+  ],
+  half: [
+    { maxDaysOut: 6, share: 0.4 },
+    { maxDaysOut: 13, share: 0.7 },
+  ],
+  marathon: [
+    { maxDaysOut: 6, share: 0.4 },
+    { maxDaysOut: 13, share: 0.6 },
+    { maxDaysOut: 20, share: 0.8 },
+  ],
 };
 
-// The taper's blocks are 7 days counted back from race day, so the 7 days before any race are one.
-export const TAPER_BLOCK_DAYS = 7;
+// Pfitzinger: the last long run about a week out at 70% of the peak one (a marathon's 80% three weeks
+// out, then 60%), and none in the last 5 days. Bands by the long run's own days to the race.
+export const LONG_RUN_MIN_DAYS_BEFORE_RACE = 6;
+export const TAPER_LONG_RUN_SHARES: Readonly<
+  Record<RaceDistanceKey, readonly { maxDaysOut: number; share: number }[]>
+> = {
+  "5k": [{ maxDaysOut: 13, share: 0.7 }],
+  "10k": [{ maxDaysOut: 13, share: 0.7 }],
+  half: [{ maxDaysOut: 13, share: 0.7 }],
+  marathon: [
+    { maxDaysOut: 13, share: 0.6 },
+    { maxDaysOut: 20, share: 0.8 },
+  ],
+};
+
+// Daniels and Pfitzinger keep threshold work until about 10 days out; closer, only race pace stays.
+export const TAPER_TEMPO_MIN_DAYS = 10;
 
 // Daniels' phase IV: the 2 weeks before the taper carry the plan's peak work.
 export const PEAK_PHASE_WEEKS = 2;
@@ -130,13 +166,6 @@ export const PEAK_VOLUME_M: Readonly<Record<RaceDistanceKey, number>> = {
 export const DOWN_WEEK_EVERY = 4;
 export const DOWN_WEEK_FACTOR = 0.8;
 
-// SPEC taper cuts volume 40 to 60%, per 7-day block counted back from the race: the 7 days before it
-// run 40% of the peak, the race excluded, the full 60% cut, so the legs are fresh on race day.
-export const TAPER_FRACTIONS: Readonly<Record<number, readonly number[]>> = {
-  2: [0.65, 0.4],
-  3: [0.8, 0.6, 0.4],
-};
-
 // SPEC "Plan engine": long run at most 30% of weekly volume or 150 min. The share keeps the long run
 // from growing past it; it does not shrink the longest run the runner already runs (long-run.ts).
 export const LONG_RUN_SHARE = 0.3;
@@ -145,8 +174,8 @@ export const LONG_RUN_MAX_S = 9000;
 // At 3 runs a week the longest is at least a third of the week, so 30% cannot hold; 40% leaves room.
 export const LONG_RUN_SHARE_3_DAYS = 0.4;
 
-// A taper block can hold fewer than 3 runs: the long run of n runs takes 1.2/n of them, the room 3 runs
-// at 40% leave, so the runs still hold the block instead of shrinking it towards nothing.
+// A taper week can hold fewer than 3 runs: the long run of n runs takes 1.2/n of them, the room 3 runs
+// at 40% leave, so the runs still hold the week instead of shrinking it towards nothing.
 // Source: this app's own choice; Daniels and the SPEC give no share under 3 runs, so 3 x 40% carries.
 export const LONG_RUN_SHARE_FEW_RUNS = 1.2;
 
@@ -232,8 +261,46 @@ export const NEEDED_VOLUME_STEP_M = 100;
 // SPEC "Plan engine": at least 80% of the week's time easy.
 export const HARD_TIME_MAX_SHARE = 0.2;
 
-// Race week: the race-pace session at least 3 days out; the day before the race is rest.
+// Runna and Pfitzinger: race practice 4 days out, 3 when 4 is under 48 h after the last hard day; the day
+// before the race is rest.
+export const RACE_PRACTICE_DAYS_BEFORE_RACE = 4;
 export const RACE_PRACTICE_MIN_DAYS_BEFORE_RACE = 3;
+
+// The race week's days by days to the race, in the order a runner's days fill them: race practice, the
+// primer 2 days out, then easy days. Source: this app's own choice after Runna's race weeks.
+export const RACE_WEEK_DAY_ORDER: readonly number[] = [4, 2, 5, 3, 6];
+// The race week's template owns the 6 days before the race, wherever they fall.
+export const RACE_WEEK_DAYS = Math.max(...RACE_WEEK_DAY_ORDER);
+// Each easy day's time by days to the race; the primer 2 days out runs 20 min before its strides.
+export const RACE_WEEK_EASY_S: Readonly<Record<number, number>> = {
+  2: 1200,
+  3: 1800,
+  5: 2100,
+  6: 1800,
+};
+// Pfitzinger's race-week primer: a few short strides 2 days out keep the legs quick.
+export const RACE_WEEK_PRIMER_DAYS_OUT = 2;
+export const RACE_WEEK_STRIDES = 4;
+// Race practice by distance: a few reps at race pace, well under the race (Daniels' race-week sessions).
+export const RACE_WEEK_PRACTICE: Readonly<Record<RaceDistanceKey, { reps: number; repM: number }>> =
+  {
+    "5k": { reps: 4, repM: 400 },
+    "10k": { reps: 3, repM: 1000 },
+    half: { reps: 3, repM: 1000 },
+    marathon: { reps: 2, repM: 2000 },
+  };
+// A Monday to Wednesday race tapers its week before to 40% too: that week's days 7 to 9 out hold up to
+// 2 easy runs of 30 min, nearest the race first. Source: this app's own choice.
+export const RACE_BAND_EXTRA_DAY_ORDER: readonly number[] = [7, 9, 8];
+export const RACE_BAND_EXTRA_RUNS = 2;
+export const RACE_BAND_EXTRA_S = 1800;
+
+// Strides: 20 s quick and relaxed, about mile pace (Daniels' R), with a full minute's easy jog.
+export const STRIDE_RUN_S = 20;
+export const STRIDE_RECOVERY_S = 60;
+
+// Easy runs set by time land on whole 500 m, as Runna's plans show them.
+export const RUN_ROUND_M = 500;
 
 // SPEC "Plan engine": 48 h between hard days.
 export const HARD_DAY_MIN_GAP_DAYS = 2;

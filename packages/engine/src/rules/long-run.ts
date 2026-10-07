@@ -14,7 +14,7 @@ import { distanceForDurationM } from "./session-target";
 
 export interface LongRunInput {
   weekVolumeM: number;
-  /** Days that run: the runner's days a week, or the runs a taper block holds. */
+  /** Days that run: the runner's days a week, or the runs a taper week holds. */
   daysPerWeek: number;
   /** The easy band's midpoint, the pace the long run is planned at. */
   easyPaceSPerKm: number;
@@ -46,7 +46,7 @@ export interface LongestInWindowInput {
 
 /**
  * The long run's largest share of the volume its runs hold: 30% from 4 runs, 40% at 3. Fewer runs, in a
- * taper block cut short, take more, so the runs, none longer than the long run, can still hold it.
+ * taper week, take more, so the runs, none longer than the long run, can still hold it.
  */
 export function longRunShare(runs: number): number {
   if (runs >= 4) return LONG_RUN_SHARE;

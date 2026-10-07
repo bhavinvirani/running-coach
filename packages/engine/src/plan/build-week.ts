@@ -8,7 +8,7 @@ import type {
   Weekday,
 } from "@running-coach/shared";
 import { DISTANCE_METERS } from "@running-coach/shared";
-import { HARD_SESSION_TYPES } from "../constants";
+import { HARD_SESSION_TYPES, LONG_RUN_MIN_DAYS_BEFORE_RACE } from "../constants";
 import { addDays, daysBetween, weekdayIndex } from "../dates";
 import { hardShareHolds, hardTimeS } from "../rules/easy-share";
 import { weekLayout } from "../rules/hard-days";
@@ -30,6 +30,7 @@ import {
   type WorkZone,
 } from "../rules/quality";
 import { sessionTarget } from "../rules/session-target";
+import { taperLongRunCapM } from "../rules/taper-long-run";
 import { fillWeek } from "../rules/week-fill";
 
 /** What every week of one plan shares. */
@@ -53,10 +54,7 @@ export interface QualitySlot {
   zone: WorkZone;
 }
 
-/**
- * The days a week, or a taper block, runs and what each holds; a day not named is rest. A session
- * that would fall on the day before the race has already moved to a free day as an easy run.
- */
+/** The days a week runs and what each holds; a day not named is rest. */
 export interface Slots {
   long: string | null;
   quality: QualitySlot[];
@@ -80,8 +78,8 @@ export interface TrainingWeekInput extends WeekSlotsInput {
 export interface SizeWeekInput {
   slots: Slots;
   /**
-   * Sessions already in the week, sized elsewhere: they count towards its volume, its shares and its
-   * easy time, and a fixed long run caps the others. Empty for a whole week or a taper block.
+   * Sessions already in the week, sized elsewhere (the race week's days in the week before it): they
+   * count towards its volume, its shares and its easy time, and a fixed long run caps the others.
    */
   fixed?: readonly GeneratedSession[];
   /** Base, build and peak long runs never drop under the runner's own longest run. */
@@ -92,15 +90,12 @@ export interface SizeWeekInput {
   maxRunM: number;
 }
 
-export interface SizeRaceBlockInput {
-  /** The race practice's day, null with none. */
-  practiceDate: string | null;
-  /** In fill order. */
-  easyDates: readonly string[];
-  /** The block's running, the race excluded. */
-  targetM: number;
-  /** No run passes the long run the block before allowed or 110% of the recent longest. */
-  capM: number;
+export interface LongRunDayCapInput {
+  weekStart: string;
+  /** Every long run before the week, as built. */
+  longRunsBeforeM: readonly number[];
+  /** The baseline's longest run, never under the 5 km floor. */
+  seedM: number;
 }
 
 export interface FinishedWeek {
@@ -217,9 +212,9 @@ export function finishWeek(
 }
 
 /**
- * Which day of a Monday-to-Sunday week holds the long run, each quality session and each easy run.
- * Only the week holding the day before a Monday race has it: that day is rest, and a session planned
- * there, the long run too, moves to the latest free day as an easy run.
+ * Which day of a Monday-to-Sunday week holds the long run, each quality session and each easy run. The
+ * race week's days and the day before the race are the race week's template (build-taper.ts), so no
+ * week laid out here holds them.
  */
 export function weekSlots(ctx: PlanContext, input: WeekSlotsInput): Slots {
   const { number, phase, weekStart, lastHardDate } = input;
@@ -231,28 +226,15 @@ export function weekSlots(ctx: PlanContext, input: WeekSlotsInput): Slots {
     lastHardDaysBefore: lastHardDate === null ? null : daysBetween(lastHardDate, weekStart),
   });
   const dateOf = (day: Weekday) => addDays(weekStart, weekdayIndex(day));
-  const blocked = ctx.raceDate === null ? null : addDays(ctx.raceDate, -1);
-  const longDate = dateOf(layout.longRun);
-  const qualityDates = layout.quality.map(dateOf);
-  const used = new Set([longDate, ...qualityDates, ...layout.easy.map(dateOf)]);
-  const free = [6, 5, 4, 3, 2, 1, 0]
-    .map((index) => addDays(weekStart, index))
-    .filter((date) => !used.has(date) && date !== blocked);
-  const movable = (date: string) => (date === blocked ? free.shift()! : date);
-  const easy = layout.easy.map(dateOf).map(movable);
-  const movedQuality = qualityDates.filter((date) => date === blocked).map(movable);
-  const movedLong = longDate === blocked ? [movable(longDate)] : [];
   return {
-    long: longDate === blocked ? null : longDate,
-    quality: zones
-      .map((zone, k) => ({ date: qualityDates[k]!, zone }))
-      .filter((slot) => slot.date !== blocked),
-    easy: [...easy, ...movedLong, ...movedQuality],
+    long: dateOf(layout.longRun),
+    quality: zones.map((zone, k) => ({ date: dateOf(layout.quality[k]!), zone })),
+    easy: layout.easy.map(dateOf),
   };
 }
 
 /**
- * The sessions on a week's or a taper block's slots, for its target volume. The long run and quality
+ * The sessions on a week's slots, for its target volume. The long run and quality
  * sessions come first, then easy runs fill the volume. Base, build and peak long runs never drop under
  * the runner's own longest (longRunFloorM), but every day comes first: the long run gives way down to
  * 20 min (longRunGivingWayM), then the last quality session gives its day to an easy run, so a 20 min
@@ -263,7 +245,7 @@ export function weekSlots(ctx: PlanContext, input: WeekSlotsInput): Slots {
  * are built again; reps come off the hardest session while easy time is under 80%. Each pass shortens
  * the long run, or shrinks the work, which only shrinks, so the loop ends. Slots with no long run still
  * size one: the long run their volume allows caps every other run. The long run's share follows the
- * days that run (longRunShare), so a block of fewer runs than the week still holds its volume.
+ * days that run (longRunShare), so a taper week of fewer runs than the runner's days holds its volume.
  */
 export function sizeWeek(
   ctx: PlanContext,
@@ -408,6 +390,24 @@ export function sizeWeek(
   }
 }
 
+/**
+ * The cap a race plan's week puts on its runs by its long run's days to the race (taperLongRunCapM): a
+ * share of the largest long run before the week, else the baseline's longest; a week whose long-run day
+ * is the race week's caps them as 6 days out would. Null with no race, or a long run further out.
+ */
+export function longRunDayCapM(
+  ctx: PlanContext,
+  { weekStart, longRunsBeforeM, seedM }: LongRunDayCapInput,
+): number | null {
+  if (ctx.raceDate === null) return null;
+  const longDate = addDays(weekStart, weekdayIndex(ctx.longRunDay));
+  return taperLongRunCapM({
+    distanceKey: ctx.distanceKey,
+    daysOut: Math.max(daysBetween(longDate, ctx.raceDate), LONG_RUN_MIN_DAYS_BEFORE_RACE),
+    peakLongRunM: longRunsBeforeM.length === 0 ? seedM : Math.max(...longRunsBeforeM),
+  });
+}
+
 /** A base, build, peak or taper week from Monday to Sunday: its slots, sized for its target. */
 export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): BuiltWeek {
   const slots = weekSlots(ctx, input);
@@ -418,48 +418,4 @@ export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): B
     maxRunM: input.maxRunM,
   });
   return { ...finishWeek(input.number, input.phase, input.weekStart, sessions), slots };
-}
-
-/**
- * The 7 days before the race: easy runs and one short race practice, the race excluded, at 80% easy
- * time on their own. Sized like a training week, without a long run.
- */
-export function sizeRaceBlock(
-  ctx: PlanContext,
-  { practiceDate, easyDates, targetM, capM }: SizeRaceBlockInput,
-): GeneratedSession[] {
-  let workSizeM = targetM;
-  let drops = 0;
-  for (;;) {
-    const sized = practiceDate === null ? null : sizedWork(ctx, "race", workSizeM, drops, capM);
-    const work = sized !== null && baseM(sized, ctx.paces) <= targetM ? sized : null;
-    const practice = work === null ? null : { date: practiceDate!, work, slot: 0 };
-    const slots = [
-      ...easyDates,
-      ...(practice === null && practiceDate !== null ? [practiceDate] : []),
-    ];
-    const fill = fillWeek({
-      restM: targetM,
-      capM,
-      qualityM: practice === null ? [] : [baseM(practice.work, ctx.paces)],
-      easySlots: slots.length,
-      minRunM: ctx.minRunM,
-    });
-    const running = [
-      ...(practice === null ? [] : [qualitySession(practice, fill.qualityPadM[0]!, ctx.paces)]),
-      ...fill.easyRunsM.map((m, k) => runSession(slots[k]!, "easy", m, ctx.paces)),
-    ];
-    if (
-      practice !== null &&
-      practice.work.reps * practice.work.repM > workCapM("race", sumM(running))
-    ) {
-      workSizeM = sumM(running);
-      continue;
-    }
-    if (!holdsEasyShare(running, ctx.paces)) {
-      drops += 1;
-      continue;
-    }
-    return running;
-  }
 }

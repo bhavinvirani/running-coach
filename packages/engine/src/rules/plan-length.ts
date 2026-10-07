@@ -11,9 +11,9 @@ import {
   MAX_PLAN_WEEKS,
   MIN_PLAN_WEEKS,
   PEAK_PHASE_WEEKS,
-  TAPER_WEEKS,
 } from "../constants";
-import { addDays, daysBetween, weekdayOf } from "../dates";
+import { addDays, daysBetween } from "../dates";
+import { taperWeekCount } from "./taper-share";
 
 export interface PlanLengthInput {
   kind: GoalKind;
@@ -33,12 +33,12 @@ function repeat(phase: PlanPhase, count: number): PlanPhase[] {
 }
 
 /**
- * The phase of every week. A race plan ends with its taper, the race week last. The taper runs in 7-day
- * blocks counted back from the race; a taper week is a week wholly inside them, so a Monday race, whose
- * blocks fill whole weeks, has one more than any other race day, where the last peak week runs into the
- * first block. A plan at least the distance's minimum puts 2 peak weeks before the taper and a quarter
- * of the rest as base. A shorter plan is the taper weeks that fit, counted back from the race, with
- * build weeks before them. A race past week 52 is a conflict: the engine plans at most a year.
+ * The phase of every week. A race plan ends with its taper, the race week last: the weeks whose Thursday
+ * is in a taper band (taper-share.ts), 2 for a Thursday to Sunday race and 3 for a Monday to Wednesday
+ * one, whose week before is in the race band too, a marathon one more. A plan at least the distance's
+ * minimum puts 2 peak weeks before the taper and a quarter of the rest as base. A shorter plan is the
+ * taper weeks that fit, counted back from the race, with build weeks before them. A race past week 52 is
+ * a conflict: the engine plans at most a year.
  */
 export function planLength({
   kind,
@@ -76,8 +76,7 @@ export function planLength({
     };
   }
   const minimumWeeks = MIN_PLAN_WEEKS[distanceKey];
-  const raceOnMonday = weekdayOf(raceDate) === "mon";
-  const taperWeeks = Math.min(TAPER_WEEKS[distanceKey] + (raceOnMonday ? 1 : 0), weeks);
+  const taperWeeks = Math.min(taperWeekCount({ distanceKey, raceDate }), weeks);
   const preTaperWeeks = weeks - taperWeeks;
   const taper = [...repeat("taper", taperWeeks - 1), "race" as const];
   if (weeks < minimumWeeks) {
