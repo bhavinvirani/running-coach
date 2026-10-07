@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 
-/** A card of related settings; rows inside are divided by hairlines. */
-export function Section({ title, children }: { title?: string; children: ReactNode }) {
+/**
+ * A card of related settings with its title inside, rows divided by hairlines: Account on Settings, and
+ * the Garmin and Claude screens until they are rebuilt (#51).
+ */
+export function SettingsCard({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section aria-label={title} className="rounded-md border border-line bg-surface-1 px-4">
       {title ? <h2 className="pt-4 text-body font-semibold text-ink">{title}</h2> : null}
@@ -11,7 +14,7 @@ export function Section({ title, children }: { title?: string; children: ReactNo
 }
 
 /** Label on the left, value on the right, one line high. */
-export function Row({ label, children }: { label: string; children: ReactNode }) {
+export function SettingsRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-h-12 items-center justify-between gap-4 py-3">
       <span className="shrink-0 text-body text-ink-2">{label}</span>

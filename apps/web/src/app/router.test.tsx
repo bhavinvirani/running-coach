@@ -20,6 +20,7 @@ import {
   sessionDetailFixture,
   weekFixture,
 } from "@/test/fixtures";
+import { hrZonesResponseFixture } from "@/test/fixtures-hr-zones";
 import { REVIEW_ID, reviewListFixture, reviewResponseFixture } from "@/test/fixtures-weekly-review";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
@@ -60,6 +61,7 @@ function signedIn({ path, query }: FakeRequest): Response {
   if (path === `/api/sessions/${customSessionFixture().id}`) {
     return json(sessionDetailFixture({ session: customSessionFixture() }));
   }
+  if (path === "/api/hr-zones") return json(hrZonesResponseFixture());
   if (path === "/api/import") {
     return json(
       importProgressFixture({ status: "done", runsStored: 1, finishedAt: "2026-09-27T06:20:00Z" }),
@@ -260,6 +262,54 @@ describe("app routes", () => {
     expect(screen.getByRole("link", { name: "Plan" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("link", { name: "Progress" })).not.toHaveAttribute("aria-current");
   });
+
+  const settingsScreens = [
+    { row: "Garmin, Connected", title: "Garmin", path: "/settings/garmin" },
+    { row: "Claude, No key", title: "Claude", path: "/settings/claude" },
+    { row: "Units, Kilometers", title: "Units", path: "/settings/units" },
+    { row: "Coach detail, Standard", title: "Coach detail", path: "/settings/coach-detail" },
+    { row: "Heart-rate zones", title: "Heart-rate zones", path: "/settings/hr-zones" },
+  ];
+
+  it.each(settingsScreens)(
+    "opens $path from its Settings row inside the tab shell, with only Settings selected, and Back returns",
+    async ({ row, title, path }) => {
+      stubFetch(signedIn);
+      const router = renderApp("/settings");
+
+      await userEvent.click(await screen.findByRole("link", { name: row }));
+
+      expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe(path);
+      expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      for (const name of ["Today", "Plan", "Progress"]) {
+        expect(screen.getByRole("link", { name })).not.toHaveAttribute("aria-current");
+      }
+
+      await userEvent.click(screen.getByRole("link", { name: "Back" }));
+
+      expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/settings");
+    },
+  );
+
+  it.each(settingsScreens)(
+    "opens $path from its address with the Settings tab current, and Back goes to Settings",
+    async ({ title, path }) => {
+      stubFetch(signedIn);
+      renderApp(path);
+
+      expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute("href", "/settings");
+    },
+  );
 
   it("opens a run from its Progress row inside the tab shell, and Back returns to Progress", async () => {
     stubFetch(signedIn);

@@ -267,6 +267,19 @@ describe("RunScreen", () => {
     ).toBeVisible();
   });
 
+  it("opens the heart-rate zones screen from Edit zones on the zones card", async () => {
+    fakeRunApi({ stored: activityDetailFixture() });
+    const { router } = renderRun();
+    await detailLoaded();
+
+    const edit = within(section("Heart rate zones")).getByRole("link", { name: "Edit zones" });
+    expect(edit).toHaveAttribute("href", "/settings/hr-zones");
+    expect(edit).toHaveAttribute("data-variant", "secondary");
+    await userEvent.click(edit);
+
+    expect(router.state.location.pathname).toBe("/settings/hr-zones");
+  });
+
   it("shows the splits as pace bars by default and the lap table with avg HR on Show table", async () => {
     fakeRunApi({ stored: activityDetailFixture() });
     renderRun();
@@ -507,7 +520,7 @@ describe("RunScreen", () => {
     expect(within(route).queryByRole("img")).not.toBeInTheDocument();
   });
 
-  it("hides the zones chart with a note and shows dashes for HR (missing HR)", async () => {
+  it("shows no zones card and no error, and dashes for HR, when the run has no heart rate (missing HR)", async () => {
     const base = activityDetailFixture();
     fakeRunApi({
       run: activityFixture({ avgHr: null, maxHr: null }),
@@ -520,9 +533,10 @@ describe("RunScreen", () => {
     renderRun();
     await detailLoaded();
 
-    const zones = section("Heart rate zones");
-    expect(within(zones).getByText("No heart rate recorded, so no zones.")).toBeInTheDocument();
-    expect(within(zones).queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Heart rate zones" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Edit zones" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(section("Cadence")).toBeInTheDocument();
     expect(figure("Avg HR")).toHaveTextContent(new RegExp(`^Avg HR${MISSING}$`));
     const splits = await splitsTable();
     expect(

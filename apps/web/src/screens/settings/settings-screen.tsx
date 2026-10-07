@@ -1,17 +1,18 @@
+import { HeartPulse, KeyRound, MessageSquareText, Ruler, Watch } from "lucide-react";
 import type { ReactNode } from "react";
+import { CardSection } from "@/components/card-section";
+import { ListRow } from "@/components/list-row";
+import { LoadError } from "@/components/load-error";
 import { RetryAlert } from "@/components/retry-alert";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
+import { coachDetailNames, unitsNames } from "@/lib/settings-names";
 import { AccountSection } from "./parts/account-section";
-import { ClaudeKeySection } from "./parts/claude-key-section";
-import { CoachDetailField } from "./parts/coach-detail-field";
-import { GarminSection } from "./parts/garmin-section";
-import { Section } from "./parts/section";
-import { UnitsField } from "./parts/units-field";
+import { claudeValue, garminStatusNames } from "./settings-copy";
 import { useSettingsScreen } from "./use-settings";
 
-/** Settings tab. No empty state: every account gets its settings row when it is created (auth.ts). */
+/**
+ * Settings tab: grouped cards of rows, each opening one screen, with what it holds now on the right.
+ * No empty state: every account gets its settings row when it is created (auth.ts).
+ */
 export function SettingsScreen() {
   const screen = useSettingsScreen();
   const { data, status, error, refetch } = screen;
@@ -23,54 +24,47 @@ export function SettingsScreen() {
   if (status === "error") {
     return (
       <SettingsLayout>
-        <div className="flex flex-col items-start gap-4">
-          <p role="alert" className="text-body text-ink">
-            {errorMessage(error)}
-          </p>
-          <Button variant="secondary" onClick={() => void refetch()}>
-            Retry
-          </Button>
-        </div>
+        <LoadError error={error} onRetry={() => void refetch()} />
       </SettingsLayout>
     );
   }
 
-  const settings = { ...data.settings, ...screen.pendingChanges };
+  const { settings, garmin } = data;
 
   return (
     <SettingsLayout>
       {screen.refetchError ? (
         <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
       ) : null}
-      <Section>
-        <UnitsField value={settings.units} onChange={(units) => screen.updateSettings({ units })} />
-        <CoachDetailField
-          value={settings.coachDetail}
-          onChange={(coachDetail) => screen.updateSettings({ coachDetail })}
+      <CardSection title="My stuff">
+        <ListRow
+          to="/settings/garmin"
+          icon={Watch}
+          label="Garmin"
+          value={garminStatusNames[garmin.status]}
         />
-      </Section>
-      {screen.updateError ? (
-        <p role="alert" className="text-body text-ink">
-          {errorMessage(screen.updateError)}
-        </p>
-      ) : null}
-      <ClaudeKeySection
-        hasKey={data.settings.hasClaudeKey}
-        credential={
-          data.settings.claudePlanAvailable
-            ? {
-                // Without a key the coach uses nothing (none), and the key form is what to fill in.
-                choice:
-                  screen.coachCredential.pending ??
-                  (data.settings.coachCredential === "plan" ? "plan" : "key"),
-                error: screen.coachCredential.error,
-                choose: screen.coachCredential.choose,
-              }
-            : undefined
-        }
-        {...screen.claudeKey}
-      />
-      <GarminSection garmin={data.garmin} timeZone={data.settings.timezone} />
+        <ListRow
+          to="/settings/claude"
+          icon={KeyRound}
+          label="Claude"
+          value={claudeValue(settings)}
+        />
+      </CardSection>
+      <CardSection title="My preferences">
+        <ListRow
+          to="/settings/units"
+          icon={Ruler}
+          label="Units"
+          value={unitsNames[settings.units]}
+        />
+        <ListRow
+          to="/settings/coach-detail"
+          icon={MessageSquareText}
+          label="Coach detail"
+          value={coachDetailNames[settings.coachDetail]}
+        />
+        <ListRow to="/settings/hr-zones" icon={HeartPulse} label="Heart-rate zones" />
+      </CardSection>
       <AccountSection
         email={data.user.email}
         onLogOut={screen.logOut}
@@ -95,62 +89,48 @@ function SettingsSkeleton() {
   return (
     <SettingsLayout busy>
       <div role="status" aria-label="Loading settings" className="flex flex-col gap-4">
-        <SkeletonCard rows={2} tall />
-        <ClaudeKeySkeleton />
-        <SkeletonCard rows={2} title />
-        <SkeletonCard rows={2} title />
+        <SkeletonGroup rows={2} />
+        <SkeletonGroup rows={3} />
+        <AccountSkeleton />
       </div>
     </SettingsLayout>
   );
 }
 
-/**
- * The Claude key card as it loads without a key: the title, the field's label, the field, the helper text's
- * two lines at 390 px, then Save key. Each block sits in a box at its text's line height, as in the card.
- */
-function ClaudeKeySkeleton() {
+/** A CardSection of ListRows: the heading's line above the card, then icon, label and value per row. */
+function SkeletonGroup({ rows }: { rows: number }) {
   return (
-    <div className="rounded-md border border-line bg-surface-1 px-4 pb-4">
-      <div className="mt-4 flex h-5.5 items-center">
+    <div className="flex flex-col gap-2">
+      <div className="flex h-5.5 items-center">
         <div className="h-4 w-24 rounded-sm bg-surface-2" />
       </div>
-      <div className="flex flex-col gap-2 py-4">
-        <div className="flex h-5.5 items-center">
-          <div className="h-4 w-28 rounded-sm bg-surface-2" />
-        </div>
-        <div className="h-11 rounded-sm border border-line bg-surface-0" />
-        <div>
-          {["w-full", "w-1/2"].map((width) => (
-            <div key={width} className="flex h-4 items-center">
-              <div className={cn("h-3 rounded-sm bg-surface-2", width)} />
-            </div>
-          ))}
-        </div>
+      <div className="flex flex-col divide-y divide-line rounded-md bg-surface-1 px-4">
+        {Array.from({ length: rows }, (_, row) => (
+          <div key={row} className="flex min-h-12 items-center gap-3 py-3">
+            <div className="size-5 rounded-sm bg-surface-2" />
+            <div className="h-4 w-24 rounded-sm bg-surface-2" />
+          </div>
+        ))}
       </div>
-      <div className="h-11 w-24 rounded-sm bg-surface-2" />
     </div>
   );
 }
 
-function SkeletonCard({ rows, title, tall }: { rows: number; title?: boolean; tall?: boolean }) {
+/** The Account card: its title inside, the email row, then Log out. */
+function AccountSkeleton() {
   return (
     <div className="rounded-md border border-line bg-surface-1 px-4">
-      {title ? <div className="mt-5 h-4 w-20 rounded-sm bg-surface-2" /> : null}
+      <div className="mt-4 flex h-5.5 items-center">
+        <div className="h-4 w-20 rounded-sm bg-surface-2" />
+      </div>
       <div className="flex flex-col divide-y divide-line">
-        {Array.from({ length: rows }, (_, row) =>
-          tall ? (
-            <div key={row} className="flex flex-col gap-3 py-4">
-              <div className="h-4 w-24 rounded-sm bg-surface-2" />
-              <div className="h-13 rounded-md bg-surface-0" />
-              <div className="h-3 w-48 rounded-sm bg-surface-2" />
-            </div>
-          ) : (
-            <div key={row} className="flex min-h-12 items-center justify-between py-3">
-              <div className="h-4 w-20 rounded-sm bg-surface-2" />
-              <div className="h-4 w-32 rounded-sm bg-surface-2" />
-            </div>
-          ),
-        )}
+        <div className="flex min-h-12 items-center justify-between py-3">
+          <div className="h-4 w-12 rounded-sm bg-surface-2" />
+          <div className="h-4 w-40 rounded-sm bg-surface-2" />
+        </div>
+        <div className="py-4">
+          <div className="h-11 w-24 rounded-sm bg-surface-2" />
+        </div>
       </div>
     </div>
   );

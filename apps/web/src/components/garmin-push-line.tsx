@@ -33,7 +33,7 @@ export function GarminPushLine({ garmin, send, explainExpired = false }: GarminP
     return (
       <p className="text-body text-ink-2">
         Connect Garmin in{" "}
-        <Link to="/settings" className="font-semibold text-ink underline">
+        <Link to="/settings/garmin" className="font-semibold text-ink underline">
           Settings
         </Link>{" "}
         to send these workouts to your watch.

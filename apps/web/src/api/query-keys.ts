@@ -13,7 +13,8 @@ export type Resource =
   | "sessions"
   | "insights"
   | "reviews"
-  | "pause";
+  | "pause"
+  | "hr-zones";
 
 type Id = string | number;
 

@@ -161,6 +161,53 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
                 ),
               },
             },
+            {
+              // Each Settings row opens one of these, inside the shell with Settings still selected.
+              path: "settings/garmin",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/garmin/garmin-screen")).GarminScreen,
+                ),
+              },
+            },
+            {
+              path: "settings/claude",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/claude/claude-screen")).ClaudeScreen,
+                ),
+              },
+            },
+            {
+              path: "settings/units",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/units/units-screen")).UnitsScreen,
+                ),
+              },
+            },
+            {
+              path: "settings/coach-detail",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () =>
+                    (await import("@/screens/coach-detail/coach-detail-screen")).CoachDetailScreen,
+                ),
+              },
+            },
+            {
+              path: "settings/hr-zones",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/hr-zones/hr-zones-screen")).HrZonesScreen,
+                ),
+              },
+            },
           ],
         },
         { path: "*", loader: () => redirect("/") },
