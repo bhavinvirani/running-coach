@@ -23,6 +23,10 @@ export function toPlanSession(
     source: row.planId === null ? "custom" : "plan",
     title: row.title,
     activityId: row.activityId,
+    // filled in by slice 9's adaptation service
+    adjustment: null,
+    // filled in by slice 9's adaptation service
+    paused: false,
     onGarmin: isOnGarmin(row, paces, units),
   };
 }

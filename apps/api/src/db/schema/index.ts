@@ -8,3 +8,4 @@ export * from "./activity-detail";
 export * from "./best-effort";
 export * from "./goal";
 export * from "./plan";
+export * from "./adaptation";

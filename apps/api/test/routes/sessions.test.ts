@@ -103,6 +103,8 @@ describe("GET /api/sessions/:id", () => {
         source: "plan",
         title: null,
         activityId: null,
+        adjustment: null,
+        paused: false,
         onGarmin: false,
       },
       paces: PACES,

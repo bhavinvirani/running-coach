@@ -131,6 +131,7 @@ describe("GET /api/activities/:id/insight", () => {
         content: validOutput,
         fallbackReason: null,
         feedback: null,
+        planChange: null,
         createdAt: card.createdAt.toISOString(),
       },
     });

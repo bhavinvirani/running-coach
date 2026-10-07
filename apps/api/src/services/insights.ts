@@ -75,6 +75,8 @@ function ready(card: CoachMessage): InsightResponse {
       content: card.content as RunInsight,
       fallbackReason: card.fallbackReason,
       feedback: card.feedback,
+      // filled in by slice 9's adaptation service
+      planChange: null,
       createdAt: card.createdAt.toISOString(),
     },
   };
