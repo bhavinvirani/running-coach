@@ -146,10 +146,10 @@
     }
   },
   "output": {
-    "headline": "All 4 sessions done, 23.2 mi against a planned 20.0 mi, with an extra treadmill run.",
-    "whatHappened": "Monday's easy 4.0 mi at 11:58 /mi, 138 bpm. Wednesday's 5.0 mi tempo at 9:54 /mi, 158 bpm. Thursday's 3.0 mi of hill repeats at 155 bpm, and Saturday's 8.0 mi long run at 12:38 /mi, 146 bpm. On Sunday you ran 3.0 mi on a treadmill with no session planned. The watch estimated it at 10:00 /mi and recorded no heart rate.",
-    "whatItMeans": "The planned sessions went as written, and heart rate stayed moderate on the easy and long runs. The extra Sunday run put the week 3.2 mi over the plan. It also took the volume up from 19.0 mi to 23.2 mi, a rise of about 22% in one week. That is a big step for a base phase.",
-    "nextWeek": "4 sessions, 20.5 mi: an easy 4.0 mi on Monday, a 5.0 mi tempo on Wednesday, 3.0 mi of hill repeats on Thursday and an 8.5 mi long run on Saturday. Run the sessions as planned and don't add extra runs, so the volume settles back to the plan.",
+    "headline": "All 4 sessions done, 23.2 mi against a planned 20.0 mi, with one extra treadmill run.",
+    "whatHappened": "Monday's easy 4.0 mi, Wednesday's 5.0 mi tempo at 9:54 /mi, Thursday's 3.0 mi of hill repeats and Saturday's 8.0 mi long run at 12:38 /mi were all done. On Sunday you added a 3.0 mi treadmill run with no heart rate, which no session matched. That made 23.2 mi, 116% of the plan and 4.2 mi more than the 19.0 mi of the week before.",
+    "whatItMeans": "The planned work went as written. Heart rate stayed steady: 138 bpm on the easy run, 146 bpm on the long run and 158 bpm on the tempo. The extra 3.0 mi took the week 3.2 mi over the plan, a 22% rise on the week before. Distance and pace for the treadmill run are the watch's estimate.",
+    "nextWeek": "The plan has 4 sessions for 20.5 mi: an easy 4.0 mi on Monday, a 5.0 mi tempo on Wednesday, 3.0 mi of hill repeats on Thursday and an 8.5 mi long run on Saturday. Stick to these sessions and skip extra runs, so your volume stays at the level the plan sets.",
     "changes": []
   }
 }
