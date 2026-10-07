@@ -68,7 +68,8 @@
         "reason": "sick",
         "startDate": "2026-09-26",
         "endDate": "2026-10-01"
-      }
+      },
+      "openPause": null
     },
     "plan": {
       "goal": {

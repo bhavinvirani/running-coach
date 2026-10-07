@@ -65,6 +65,7 @@ function week(overrides: Partial<ReviewWeek> = {}): ReviewWeek {
     },
     weekBefore: { runs: 4, distanceM: 33_000 },
     pause: null,
+    openPause: null,
     ...overrides,
   };
 }
@@ -317,6 +318,53 @@ describe("buildWeeklyReviewFallback", () => {
 
     expect(card.nextWeek).toBe(
       "Training has been paused since Friday 2 October 2026. Tap I'm back on Today when you are ready to train. Rest or run easy if anything hurts or you feel unwell.",
+    );
+  });
+
+  it.each(WEEKLY_REVIEW_FALLBACK_REASONS)(
+    "never tells a runner who paused after the week to run the coming week as planned, for %s (illness or injury pause)",
+    (reason) => {
+      for (const [pauseReason, planIn] of [
+        ["sick", plan()],
+        ["injured", plan()],
+        ["break", plan()],
+        ["sick", null],
+      ] as const) {
+        const card = buildWeeklyReviewFallback(
+          week({ openPause: { reason: pauseReason, startDate: "2026-10-05", endDate: null } }),
+          planIn,
+          km,
+          reason,
+        );
+
+        expect(JSON.stringify(card)).not.toMatch(/as planned|Run them|Coming week:/);
+        expect(card.nextWeek).toBe(
+          pauseReason === "break"
+            ? "Training has been paused since Monday 5 October 2026. Tap I'm back on Today when you are ready to train. Rest or run easy if anything hurts or you feel unwell."
+            : "Training has been paused since Monday 5 October 2026. Rest until you feel well, then tap I'm back on Today. See a doctor or physio if it does not get better.",
+        );
+        expect(voiceProblems(weeklyReviewSchema.parse(card), weeklyReviewSchema)).toEqual([]);
+      }
+    },
+  );
+
+  it("takes the pause open now over the week's ended one when it says what to do next (illness or injury pause)", () => {
+    const card = buildWeeklyReviewFallback(
+      week({
+        summary: { ...week().summary, paused: true },
+        pause: { reason: "break", startDate: "2026-09-26", endDate: "2026-10-01" },
+        openPause: { reason: "injured", startDate: "2026-10-05", endDate: null },
+      }),
+      plan(),
+      km,
+      "timeout",
+    );
+
+    expect(card.whatHappened).toContain(
+      "Training was paused for a break from Saturday 26 September 2026 to Thursday 1 October 2026.",
+    );
+    expect(card.nextWeek).toBe(
+      "Training has been paused since Monday 5 October 2026. Rest until you feel well, then tap I'm back on Today. See a doctor or physio if it does not get better.",
     );
   });
 

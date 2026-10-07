@@ -10,12 +10,31 @@ import {
   type ReviewListResponse,
   type ReviewResponse,
   type ReviewWeekSummary,
+  type SessionStatus,
   type WeeklyReview,
   type WeeklyReviewCard,
 } from "@running-coach/shared";
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  ne,
+  notExists,
+  or,
+  sql,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type {
   ReviewExtraRun,
+  ReviewPause,
   ReviewPlan,
   ReviewWeek,
   ReviewWeekSession,
@@ -27,9 +46,11 @@ import {
   type CoachMessage,
   coachMessage,
   goal,
+  plan,
   planAdjustment,
   type PlanRow,
   planSession,
+  type TrainingPauseRow,
   user,
   userSettings,
 } from "../db/schema";
@@ -47,7 +68,7 @@ import {
   sessionsBetween,
 } from "./review-change";
 import { runDate, runDateWithin } from "./run-dates";
-import { activePlan, pauseCovering, runnerToday } from "./runner-state";
+import { activePlan, openPause, pauseCovering, runnerToday } from "./runner-state";
 import { queueWorkoutPush } from "./workout-push";
 
 // The coach's weekly review (slice 10): one per runner per Monday-to-Sunday week, written once the week
@@ -97,14 +118,45 @@ async function readReview(userId: string, weekStart: string): Promise<CoachMessa
   return row;
 }
 
-/** Sessions of the active plan, or custom ones only without it. */
-function sessionSources(active: PlanRow | null) {
-  return active === null
-    ? isNull(planSession.planId)
-    : or(eq(planSession.planId, active.id), isNull(planSession.planId));
+// Their day passed under the plan version that held it: done, missed, or dropped.
+const SETTLED: SessionStatus[] = ["done", "missed", "skipped"];
+
+/**
+ * The sessions the reviewed week reads: the active plan's and custom ones (custom ones only without an
+ * active plan), and the history a goal saved mid-week kept: an earlier version's sessions settled (done,
+ * missed or skipped) on a day before the active plan, or any later version, began. Its sessions still
+ * planned or moved are stale, since matching stops at a superseded plan, and a day a later version covers
+ * comes from that version alone, so a run never counts against two versions. The coming week and its
+ * changes read the active plan alone (review-change.ts).
+ */
+function reviewedWeekSources(active: PlanRow | null) {
+  if (active === null) return isNull(planSession.planId);
+  const own = alias(plan, "own_plan");
+  const later = alias(plan, "later_plan");
+  return or(
+    eq(planSession.planId, active.id),
+    isNull(planSession.planId),
+    and(
+      ne(planSession.planId, active.id),
+      lt(planSession.date, active.startDate),
+      inArray(planSession.status, SETTLED),
+      // Two saves: the first new plan's days are its own, not those of the version it replaced.
+      notExists(
+        db
+          .select({ id: later.id })
+          .from(own)
+          .innerJoin(later, and(eq(later.goalId, own.goalId), gt(later.version, own.version)))
+          .where(and(eq(own.id, planSession.planId), lte(later.startDate, planSession.date))),
+      ),
+    ),
+  );
 }
 
-/** The week had something to review: a run on its dates, a session (any status) or a pause over a day. */
+function toReviewPause(row: TrainingPauseRow): ReviewPause {
+  return { reason: row.reason, startDate: row.startedOn, endDate: row.endedOn };
+}
+
+/** The week had something to review: a run on its dates, a session it reads, or a pause over a day. */
 async function weekHadTraining(userId: string, weekStart: string): Promise<boolean> {
   const weekEnd = addDays(weekStart, 6);
   const [run] = await db
@@ -120,7 +172,7 @@ async function weekHadTraining(userId: string, weekStart: string): Promise<boole
     .where(
       and(
         eq(planSession.userId, userId),
-        sessionSources(active),
+        reviewedWeekSources(active),
         gte(planSession.date, weekStart),
         lte(planSession.date, weekEnd),
       ),
@@ -153,9 +205,9 @@ export async function queueWeeklyReview(userId: string, now: Date): Promise<bool
 }
 
 /**
- * The reviewed week as the prompt reads it: the active plan's and the runner's custom sessions dated in it,
- * any status, with the run each matched; the runs on its local dates no session matched; its totals; the
- * week before's runs; and the pause that held a day of it.
+ * The reviewed week as the prompt reads it: its sessions (reviewedWeekSources), any status, with the run
+ * each matched; the runs on its local dates no session matched; its totals; the week before's runs; the
+ * pause that held a day of it; and the pause open now, which may have started after it.
  */
 async function readReviewWeek(
   userId: string,
@@ -177,7 +229,7 @@ async function readReviewWeek(
     .where(
       and(
         eq(planSession.userId, userId),
-        sessionSources(active),
+        reviewedWeekSources(active),
         gte(planSession.date, weekStart),
         lte(planSession.date, weekEnd),
       ),
@@ -235,6 +287,7 @@ async function readReviewWeek(
     );
 
   const pause = await pauseCovering(db, userId, weekStart);
+  const open = await openPause(db, userId);
   const live = rows.filter((row) => row.session.status !== "skipped");
   const summary: ReviewWeekSummary = {
     runs: runs.length,
@@ -257,9 +310,8 @@ async function readReviewWeek(
             runs: before.length,
             distanceM: Math.round(before.reduce((sum, run) => sum + run.distanceM, 0)),
           },
-    pause: pause
-      ? { reason: pause.reason, startDate: pause.startedOn, endDate: pause.endedOn }
-      : null,
+    pause: pause ? toReviewPause(pause) : null,
+    openPause: open ? toReviewPause(open) : null,
   };
 }
 

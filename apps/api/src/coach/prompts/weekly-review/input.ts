@@ -15,8 +15,8 @@ import { formatDistance, formatDuration, formatLocalDate, formatPace } from "../
 import { describeSession } from "../run-insight/input";
 
 // The user message for weekly-review: the Monday-to-Sunday week that just ended (its sessions as stored,
-// with the run that matched each, the runs no session matched, its totals against the week before and any
-// pause), then the goal and the coming week's sessions under labels s1..sN with whether each may change.
+// with the run that matched each, the runs no session matched, its totals against the week before, any
+// pause, and a pause opened since and still open), then the goal and the coming week's sessions under labels s1..sN with whether each may change.
 // Built from plain JSON the service passes in (an eval case's input is exactly { week, plan, settings }),
 // in the runner's units through format.ts, with labels instead of ids, so it cannot carry the API key,
 // Garmin tokens, the email, an id or another user's data.
@@ -56,7 +56,7 @@ export interface ReviewExtraRun extends ReviewRun {
   date: string;
 }
 
-/** A training pause that covered at least one of the reviewed week's days. */
+/** A training pause that covered at least one of the reviewed week's days, or the one open now. */
 export interface ReviewPause {
   reason: PauseReason;
   /** The local date the runner paused, maybe before the week. */
@@ -77,6 +77,11 @@ export interface ReviewWeek {
   /** The Monday-to-Sunday week before it; null when it had no run. */
   weekBefore: { runs: number; distanceM: number } | null;
   pause: ReviewPause | null;
+  /**
+   * The runner's pause open now, maybe opened after the week (on the Monday before the job ran): the plan
+   * is on hold while it lasts. The same pause as `pause` when that one is still open.
+   */
+  openPause: ReviewPause | null;
 }
 
 export interface ReviewGoal {
@@ -223,6 +228,10 @@ function weekLines(week: ReviewWeek, units: Units): string[] {
     `Week before: ${before}`,
     `Training pause: ${week.pause ? describePause(week.pause) : "none"}`,
   ];
+  // Only a pause the week did not hold: an open one that did is already on the line above.
+  if (week.openPause && week.openPause.startDate !== week.pause?.startDate) {
+    lines.push(`Training pause now: ${describePause(week.openPause)}`);
+  }
   if (week.sessions.length === 0) lines.push("Sessions of the week: none");
   else {
     lines.push("Sessions of the week:");

@@ -86,6 +86,7 @@ const week: ReviewWeek = {
   },
   weekBefore: { runs: 4, distanceM: 36_000 },
   pause: null,
+  openPause: null,
 };
 
 const plan: ReviewPlan = {

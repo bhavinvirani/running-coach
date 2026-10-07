@@ -69,7 +69,8 @@
         "runs": 4,
         "distanceM": 36000
       },
-      "pause": null
+      "pause": null,
+      "openPause": null
     },
     "plan": {
       "goal": {

@@ -65,6 +65,7 @@ function week(overrides: Partial<ReviewWeek> = {}): ReviewWeek {
     },
     weekBefore: { runs: 3, distanceM: 16_000 },
     pause: null,
+    openPause: null,
     ...overrides,
   };
 }
@@ -290,6 +291,42 @@ describe("buildWeeklyReviewInput", () => {
       expect(lines(message)[7]).toBe(line);
     },
   );
+
+  it.each([
+    ["no pause in the week", null],
+    [
+      "an ended pause in the week",
+      { reason: "break", startDate: "2026-09-29", endDate: "2026-10-01" },
+    ],
+  ] as const)(
+    "adds a Training pause now line for a pause opened after the week and still open, after %s (illness or injury pause)",
+    (_, pause) => {
+      const message = buildWeeklyReviewInput(
+        week({ pause, openPause: { reason: "sick", startDate: "2026-10-05", endDate: null } }),
+        plan({ changeAllowed: false, reason: "paused" }),
+        km,
+      );
+
+      expect(lines(message)[7]).toMatch(/^Training pause: /);
+      expect(lines(message)[8]).toBe(
+        "Training pause now: sick, since Monday 5 October 2026, still open",
+      );
+    },
+  );
+
+  it("writes exactly the same text without a pause opened after the week: none open, or the week's own open pause", () => {
+    const open = { reason: "injured", startDate: "2026-10-02", endDate: null } as const;
+    const withoutOpen = buildWeeklyReviewInput(week({ pause: open, openPause: null }), plan(), km);
+
+    expect(buildWeeklyReviewInput(week({ pause: open, openPause: open }), plan(), km)).toBe(
+      withoutOpen,
+    );
+    expect(withoutOpen).not.toContain("Training pause now");
+    expect(lines(buildWeeklyReviewInput(week(), plan(), km))).toHaveLength(
+      lines(withoutOpen).length,
+    );
+    expect(buildWeeklyReviewInput(week(), plan(), km)).not.toContain("Training pause now");
+  });
 
   it("states the goal, the coming week's number and phase, and the weeks to the race", () => {
     const message = buildWeeklyReviewInput(week(), plan(), km);

@@ -120,6 +120,41 @@ async function runner(fixture: string, options: RunnerOptions = {}) {
   return { userId, key, planId: active.id, tuesdayRun, missed, s1, s2, s3 };
 }
 
+/**
+ * A runner whose goal was saved on Wednesday of the reviewed week, so the new plan starts on the coming
+ * Monday: the replaced plan, superseded, kept Monday's easy 8 km done with its 8.1 km run and Tuesday's
+ * easy 8 km missed, and still holds Thursday's tempo planned, stale since the save; the new plan has
+ * Tuesday's easy run in the coming week.
+ */
+async function goalSavedMidWeek(fixture: string) {
+  const userId = await createUser();
+  const key = claudeKey(fixture);
+  await setSettings(userId, { claudeKey: key });
+  const replaced = await createPlan(userId, { status: "superseded" });
+  const active = await createPlan(userId, { version: 2, startDate: "2026-10-12" });
+  const mondayRun = await createRunOn(userId, WEEK, {
+    distanceM: 8100,
+    durationS: 2600,
+    avgHr: 141,
+  });
+  const monday = await createSession(userId, replaced.id, {
+    date: WEEK,
+    status: "done",
+    activityId: mondayRun.id,
+  });
+  const tuesday = await createSession(userId, replaced.id, {
+    date: "2026-10-06",
+    status: "missed",
+  });
+  await createSession(userId, replaced.id, {
+    date: "2026-10-08",
+    type: "tempo",
+    steps: TEMPO_STEPS,
+  });
+  await createSession(userId, active.id, { date: "2026-10-13" });
+  return { userId, key, monday, tuesday };
+}
+
 async function write(userId: string, lastAttempt = false, now = NOW) {
   return writeWeeklyReview(userId, WEEK, { lastAttempt, now });
 }
@@ -251,6 +286,24 @@ describe("queueWeeklyReview", () => {
     const active = await createPlan(missed);
     await createSession(missed, active.id, { date: "2026-10-07", status: "missed" });
     expect(await queueWeeklyReview(missed, NOW)).toBe(true);
+  });
+
+  it("queues a week whose only training was missed sessions of the plan a goal save replaced, and nothing for one with only that plan's stale planned sessions (race date change)", async () => {
+    const missed = await createUser();
+    await setSettings(missed, { claudeKey: claudeKey("weekly-review-valid") });
+    const replaced = await createPlan(missed, { status: "superseded" });
+    await createPlan(missed, { version: 2, startDate: "2026-10-12" });
+    await createSession(missed, replaced.id, { date: WEEK, status: "missed" });
+    await createSession(missed, replaced.id, { date: "2026-10-06", status: "missed" });
+    expect(await queueWeeklyReview(missed, NOW)).toBe(true);
+
+    const stale = await createUser("stale@example.com");
+    await setSettings(stale, { claudeKey: claudeKey("weekly-review-valid") });
+    const old = await createPlan(stale, { status: "superseded" });
+    await createPlan(stale, { version: 2, startDate: "2026-10-12" });
+    await createSession(stale, old.id, { date: "2026-10-08" });
+    await createSession(stale, old.id, { date: "2026-10-09", status: "moved" });
+    expect(await queueWeeklyReview(stale, NOW)).toBe(false);
   });
 
   it("does not count a pause that ended on the week's Monday: its last paused day was the Sunday before", async () => {
@@ -523,6 +576,108 @@ describe("writeWeeklyReview", () => {
     ]);
     await expectUnchanged(s1, s2, s3);
     expect(await pushJobs(userId)).toHaveLength(0);
+  });
+
+  it("tells the prompt about a pause opened on the Monday after the week and still open, and rejects every change as paused (illness or injury pause)", async () => {
+    const { userId, key, s1, s2, s3 } = await runner("weekly-review-changes");
+    await createPause(userId, { startedOn: "2026-10-12" });
+
+    const outcome = await write(userId);
+
+    expect(outcome).toMatchObject({ status: "stored", changed: false });
+    expect(storedContent(await onlyReview(userId)).summary.paused).toBe(false);
+    const message = await sentMessage(key);
+    expect(message).toContain(
+      "Training pause: none\nTraining pause now: sick, since Monday 12 October 2026, still open\n",
+    );
+    expect(message).toContain("Changes to the coming week: not allowed (training is paused)");
+    expect((await storedAdjustments(userId)).map((row) => row.reason)).toEqual([
+      "paused",
+      "paused",
+      "paused",
+    ]);
+    await expectUnchanged(s1, s2, s3);
+    expect(await pushJobs(userId)).toHaveLength(0);
+  });
+
+  it("stores a fallback card that tells a runner paused after the week to rest, never to run the coming week as planned (illness or injury pause, invalid Claude key)", async () => {
+    const { userId } = await runner("key-invalid");
+    await createPause(userId, { startedOn: "2026-10-12" });
+
+    await write(userId);
+
+    const { card } = storedContent(await onlyReview(userId));
+    expect(card.nextWeek).toBe(
+      "Training has been paused since Monday 12 October 2026. Rest until you feel well, then tap I'm back on Today. See a doctor or physio if it does not get better.",
+    );
+    expect(JSON.stringify(card)).not.toMatch(/as planned/);
+  });
+
+  it("reviews a week a goal save cut in two from the plan that held it: the replaced plan's done session with its run and its missed one, no extra run, and not its stale planned one (race date change, regenerating a plan without losing history)", async () => {
+    const { userId, key, monday, tuesday } = await goalSavedMidWeek("weekly-review-valid");
+
+    await write(userId);
+
+    const message = await sentMessage(key);
+    expect(message).toContain("Sessions done: 1 of 2 planned");
+    expect(message).toMatch(
+      /- Monday 5 October 2026: Easy \(easy\), .*Status: done\. Run: 8\.1 km in 43:20 /,
+    );
+    expect(message).toMatch(
+      /- Tuesday 6 October 2026: Easy \(easy\), .*Status: missed\. Run: none\./,
+    );
+    expect(message).not.toContain("Thursday 8 October 2026");
+    expect(message).toContain("Runs without a session: none");
+    expect(message).toContain("Coming week: week 1 of the plan, base phase");
+    expect(storedContent(await onlyReview(userId)).summary).toEqual({
+      runs: 1,
+      distanceM: 8100,
+      durationS: 2600,
+      sessionsPlanned: 2,
+      sessionsDone: 1,
+      plannedDistanceM: monday.target.distanceM + tuesday.target.distanceM,
+      paused: false,
+    });
+  });
+
+  it("takes each day of the week from the plan version that held it after two goal saves in it, so a run never counts against two versions (regenerating a plan without losing history)", async () => {
+    const userId = await createUser();
+    const key = claudeKey("weekly-review-valid");
+    await setSettings(userId, { claudeKey: key });
+    // Saved on Monday morning after the run, so the second plan held Monday; saved again on Wednesday.
+    const first = await createPlan(userId, { status: "superseded" });
+    const second = await createPlan(userId, {
+      version: 2,
+      status: "superseded",
+      startDate: WEEK,
+    });
+    const third = await createPlan(userId, { version: 3, startDate: "2026-10-12" });
+    const run = await createRunOn(userId, WEEK, { distanceM: 8100, durationS: 2600 });
+    await createSession(userId, first.id, {
+      date: WEEK,
+      title: "First plan run",
+      status: "done",
+      activityId: run.id,
+    });
+    await createSession(userId, second.id, {
+      date: WEEK,
+      title: "Second plan run",
+      status: "done",
+      activityId: run.id,
+    });
+    await createSession(userId, third.id, { date: "2026-10-13" });
+
+    await write(userId);
+
+    const message = await sentMessage(key);
+    expect(message).toContain("Second plan run");
+    expect(message).not.toContain("First plan run");
+    expect(message).toContain("Sessions done: 1 of 1 planned");
+    expect(storedContent(await onlyReview(userId)).summary).toMatchObject({
+      runs: 1,
+      sessionsPlanned: 1,
+      sessionsDone: 1,
+    });
   });
 
   it("reviews a runner without a plan from the runs alone and changes nothing", async () => {

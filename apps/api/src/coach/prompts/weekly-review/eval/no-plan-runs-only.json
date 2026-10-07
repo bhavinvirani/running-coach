@@ -39,7 +39,8 @@
         "runs": 2,
         "distanceM": 18000
       },
-      "pause": null
+      "pause": null,
+      "openPause": null
     },
     "plan": null,
     "settings": {

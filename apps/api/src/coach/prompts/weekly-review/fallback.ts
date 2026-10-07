@@ -10,6 +10,7 @@ import type { CoachCardFailure } from "../../client";
 import { formatDistance, formatDuration, formatLocalDate } from "../../format";
 import {
   liveSessions,
+  type ReviewPause,
   type ReviewPlan,
   type ReviewPlanSession,
   type ReviewSettings,
@@ -189,15 +190,24 @@ function keySession(sessions: ReviewPlanSession[], units: Units): string {
   return `, with the long run of ${formatDistance(long.distanceM, units)} on ${formatLocalDate(long.date)}`;
 }
 
+/** The pause open now: one opened after the week, or the week's own while it is still open. */
+function pauseNow(week: ReviewWeek): ReviewPause | null {
+  return week.openPause ?? (week.pause?.endDate === null ? week.pause : null);
+}
+
 function nextWeekOf(week: ReviewWeek, plan: ReviewPlan | null, units: Units): string {
-  const { pause } = week;
-  const unwell = pause !== null && pause.reason !== "break";
-  // The plan's sessions are on hold during an open pause: never "run them as planned" while ill, hurt or away.
-  if (pause !== null && pause.endDate === null) {
-    const since = `Training has been paused since ${formatLocalDate(pause.startDate)}.`;
-    if (!unwell) return `${since} Tap I'm back on Today when you are ready to train. ${SAFETY}`;
+  // The plan's sessions are on hold during an open pause, also one opened after the week: never "run
+  // them as planned" while ill, hurt or away.
+  const open = pauseNow(week);
+  if (open !== null) {
+    const since = `Training has been paused since ${formatLocalDate(open.startDate)}.`;
+    if (open.reason === "break") {
+      return `${since} Tap I'm back on Today when you are ready to train. ${SAFETY}`;
+    }
     return `${since} Rest until you feel well, then tap I'm back on Today. ${PROFESSIONAL}`;
   }
+  const { pause } = week;
+  const unwell = pause !== null && pause.reason !== "break";
   if (plan === null) {
     return `There is no plan for the coming week. Keep your runs easy, or set a goal on Plan to get one. ${SAFETY}`;
   }
