@@ -7,9 +7,10 @@ arguments: [issue]
 
 # /ship $issue
 
-1. Checks, all green, in this order: `pnpm check`; `pnpm test:e2e`; `pnpm test:screens`; `pnpm py:check` when anything under `services/garmin` changed; `pnpm build`. A red check stops the ship: fix it, never skip or weaken it. A change under `packages/shared/src/contracts/` also keeps the deploy rules in `.claude/rules/contracts.md`; a check covers only their union and record shapes, for the schemas listed in `apps/web/src/api/parse-response.test.ts`.
-2. `git status --porcelain` shows no `.env*` file other than `.env.example`, no recordings, no screenshots outside `apps/web/e2e/screens/*-snapshots/`, no files the slice did not need.
-3. Commits: conventional messages (`feat(web): ...`, `fix(api): ...`, `test(engine): ...`, `chore: ...`), one per logical change. Squash `wip` commits first with `git reset --soft origin/main` and recommit.
-4. `git push -u origin HEAD`. Never force-push; if the push is rejected, `git pull --rebase origin "$(git branch --show-current)"` and push again.
-5. `gh pr create --title "<conventional title>" --body "<at most 5 lines, last line Closes #$issue when an issue number was given>"`, then `gh pr merge --auto --squash`.
-6. Print the PR URL and stop. CI, auto-merge and the production deploy need nothing more from this session.
+1. Catch up: commit what is uncommitted (`wip` commits are fine), then `git fetch origin && git merge --no-edit origin/main`, so the checks run on what the PR will merge, including what other lanes merged since this branch started. Resolve conflicts here; a migration clash follows `.claude/rules/migrations.md`.
+2. Checks, all green, in this order: `pnpm check`; `pnpm test:e2e`; `pnpm test:screens`; `pnpm py:check` when anything under `services/garmin` changed; `pnpm build`. A red check stops the ship: fix it, never skip or weaken it. A change under `packages/shared/src/contracts/` also keeps the deploy rules in `.claude/rules/contracts.md`; a check covers only their union and record shapes, for the schemas listed in `apps/web/src/api/parse-response.test.ts`.
+3. `git status --porcelain` shows no `.env*` file other than `.env.example`, no recordings, no screenshots outside `apps/web/e2e/screens/*-snapshots/`, no files the slice did not need.
+4. Commits: conventional messages (`feat(web): ...`, `fix(api): ...`, `test(engine): ...`, `chore: ...`), one per logical change. Squash `wip` commits only before the first push (`git ls-remote --exit-code --heads origin "$(git branch --show-current)"` finds no branch): `git reset --soft "$(git merge-base HEAD origin/main)"` and recommit. After step 1 that base is the `origin/main` just merged, so the commits hold only this branch's changes; a reset onto an `origin/main` the branch has not merged would revert every lane merged since. Once pushed, add commits and never rewrite them.
+5. `git push -u origin HEAD`. Never force-push; if the push is rejected, `git pull --no-rebase origin "$(git branch --show-current)"` and push again.
+6. `gh pr create --title "<conventional title>" --body "<at most 5 lines, last line Closes #$issue when an issue number was given>"`, then `gh pr merge --auto --squash`.
+7. Print the PR URL and stop. CI, auto-merge and the production deploy need nothing more from this session.

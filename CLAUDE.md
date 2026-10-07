@@ -34,6 +34,7 @@ Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md
 | `pnpm py:check`                                     | ruff, mypy, pytest for `services/garmin` through uv                                                                                                                                               |
 | `pnpm garmin:connect <app-url>`                     | laptop CLI: signs in to the app, logs in to Garmin with 2FA in the terminal, uploads the token bundle, which the API proves with one call and stores encrypted                                    |
 | `pnpm coach:dev`                                    | the coach service on 127.0.0.1:8777 for the owner's Claude plan, on this laptop's Claude Code login (needs `COACH_SERVICE_SECRET`)                                                                |
+| `pnpm worktree:add <lane>`                          | a sibling worktree `../running-coach-<lane>` at `origin/main` for one parallel session: installs, links `reference`, writes its e2e slot, never copies `.env`                                     |
 
 ## Consistency standards
 
@@ -62,13 +63,23 @@ Only these docs exist: CLAUDE.md, SPEC.md (one page), README (setup and run). Fi
 
 ## Sessions
 
-- One slice per session. Backlog: issues #1 to #12 are the slices in build order, #13 to #19 hold deferred trade-offs, #20 is the owner's setup checklist.
+- One slice per session. Backlog: pinned #46 holds the lanes and their build order, #13 to #19 hold deferred trade-offs, #20 is the owner's setup checklist.
 - Model: claude-opus-5-5 at xhigh effort (the highest `effortLevel`) with ultracode on, both set in `.claude/settings.json`; subagents in `.claude/agents/` are opus too.
 - State lives in SPEC.md, `.claude/`, GitHub issues and git, never only in chat. Search with the Explore subagent; do not read the whole repo.
 - Stop only for: slice plan approval, secrets, paid services, deleting data, anything public beyond this repo. Everything else: decide and continue.
 - Context running low mid-slice: commit work in progress, add an issue comment of at most 3 lines (done / next / blockers), stop, and tell the owner the one line to resume with.
 - Conventional commits. Never force-push. Never read or write `.env` files (hooks block both); `.env.example` is the list of variables.
 - Pushing back is welcome: the owner is a software engineer (Java/Spring, React/TypeScript, Node) and wants the why and the trade-off in a sentence, and risks (API access, ToS, security, privacy, cost) flagged early.
+
+## Parallel sessions
+
+- One lane per sibling worktree, one session per lane, at most three at once; #46 names the lanes. `pnpm worktree:add <lane>` makes the folder; each slice branches there from `origin/main`.
+- Main folder only, since they need the owner's `.env` or own shared state: `pnpm dev`, `coach:dev`, `db:migrate`, `seed:owner`, `garmin:connect`, and creating the Postgres container. Every start is `docker compose up -d --wait --no-recreate postgres`: compose's config hash differs per folder, so a plain `up` from a worktree recreates the shared container mid-test.
+- Each folder runs the checks, `test:e2e` and `test:screens` on its own e2e slot (ports, database, fake Claude Code nonce; `.claude/rules/tests.md`), one e2e run at a time per folder.
+- Migrations: one PR with a migration merges at a time; renumber yours as `.claude/rules/migrations.md` says when `origin/main` gained one.
+- `ENGINE_VERSION` and `generatePlan` belong to lane main; other lanes call them and never change them.
+- Screenshot baselines are re-recorded per spec and never merged by hand.
+- Catch up by merging: `git merge origin/main`, never a rebase. `/ship` merges before its checks and squashes only before the first push.
 
 ## Coach
 

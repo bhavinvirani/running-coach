@@ -30,7 +30,7 @@ case "$tool" in
       if [[ "$token" != ".env.example" ]]; then deny "$env_reason"; fi
     done < <(printf '%s' "$cmd" | tr -c 'A-Za-z0-9_.\n-' '\n' | grep -E '^\.env(\.[A-Za-z0-9_-]*)*$' || true)
     if printf '%s' "$cmd" | grep -qE 'git([[:space:]]+-[A-Za-z-]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+push([[:space:]]+[^|;&]*)?(--force|--force-with-lease|--force-if-includes|-f([[:space:]]|$)|--mirror|[[:space:]]\+[A-Za-z])'; then
-      deny "Force-push is blocked. Rebase onto main and push a new commit instead."
+      deny "Force-push is blocked. Merge origin/main into the branch (git fetch origin && git merge origin/main) and push a new commit instead; never rebase a pushed branch."
     fi
     ;;
 esac

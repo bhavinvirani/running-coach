@@ -30,12 +30,14 @@ Coach on your Claude plan (owner only, optional): set `COACH_SERVICE_URL=http://
 
 Database: `pnpm db:generate` writes a SQL migration from the Drizzle schema, `pnpm db:migrate` applies it locally (the API also migrates at start).
 
+Parallel sessions: `pnpm worktree:add <lane>` creates `../running-coach-<lane>` at `origin/main` with its own e2e slot and no `.env`; `pnpm dev`, `db:migrate`, `seed:owner` and `garmin:connect` stay in the main folder (CLAUDE.md, Parallel sessions).
+
 ## Test
 
 ```sh
 pnpm check                  # typecheck, lint, boundaries, contract drift, unit and integration tests, engine coverage (what CI runs)
 pnpm test                   # Vitest only
-pnpm test:e2e               # Playwright flows; starts its own API on port 4173 with the e2e database
+pnpm test:e2e               # Playwright flows; starts its own API on this folder's e2e slot (port 4173 in the main folder) on a fresh e2e database
 pnpm test:screens           # screenshots, browser in the Playwright Docker image (needs Docker; first pull about 2 GB); --update rewrites the baselines
 pnpm py:check               # ruff, mypy and pytest for services/garmin
 pnpm build                  # production bundles
