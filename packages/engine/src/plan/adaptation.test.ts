@@ -12,12 +12,14 @@ import { validateDelta, type DeltaContext } from "../rules/delta";
 import { reEntryPlan, type ReEntryInput, type ReEntrySession } from "../rules/re-entry-plan";
 import { bandMidpointSPerKm, sessionTarget } from "../rules/session-target";
 import { matchSessions, type MatchSession } from "../rules/session-match";
+import { validateWeekDeltas, type WeekDeltaSession } from "../rules/week-delta";
 import { minRunDistanceM } from "../rules/week-fill";
+import { maxWeeklyVolumeM } from "../rules/weekly-volume";
 import { generatePlan } from "./generate";
 import { planInputArb } from "./plan-arbitraries";
 
-// Slice 9's rules over whole plans: the coach's deltas, the re-entry after time off and run matching
-// keep the plan's caps on any plan generatePlan makes.
+// Slice 9's and 10's rules over whole plans: the coach's deltas after a run and in a weekly review, the
+// re-entry after time off and run matching keep the plan's caps on any plan generatePlan makes.
 
 const QUALITY = new Set(["intervals", "tempo", "race_practice"]);
 const PROPERTY_TIMEOUT_MS = 120_000;
@@ -49,7 +51,7 @@ describe("adaptation over generated plans", () => {
   );
 
   it(
-    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow a session a re-entry eased",
+    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow a session a re-entry eased or one right after a paused week",
     () => {
       fc.assert(
         fc.property(
@@ -59,7 +61,8 @@ describe("adaptation over generated plans", () => {
           fc.nat({ max: 40_000 }),
           fc.nat({ max: 3 }),
           fc.boolean(),
-          ({ input, plan }, pick, delta, longestRecentM, daysBefore, eased) => {
+          fc.boolean(),
+          ({ input, plan }, pick, delta, longestRecentM, daysBefore, eased, afterPause) => {
             const all = sessionsOf(plan);
             const picked = all[pick % all.length]!;
             const weekIndex = plan.weeks.findIndex((week) => week.sessions.includes(picked));
@@ -76,6 +79,7 @@ describe("adaptation over generated plans", () => {
               paused: false,
               coachAdjusted: false,
               eased,
+              afterPause,
             };
             const result = validateDelta(ctx, delta);
             expect(validateDelta(ctx, delta)).toEqual(result);
@@ -91,6 +95,7 @@ describe("adaptation over generated plans", () => {
             if (newM <= picked.target.distanceM) return;
             const othersM = ctx.weekSessions.reduce((sum, s) => sum + s.target.distanceM, 0);
             expect(eased).toBe(false);
+            expect(afterPause).toBe(false);
             expect(newM).toBeLessThanOrEqual(Math.floor(longestRecentM * 1.1));
             if (picked.type === "long") {
               const share = input.goal.daysPerWeek >= 4 ? 0.3 : 0.4;
@@ -103,6 +108,100 @@ describe("adaptation over generated plans", () => {
           },
         ),
         { numRuns: 150 },
+      );
+    },
+    PROPERTY_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps a week within +10% of the week before over all of a weekly review's changes together, in any order, and never grows one right after a paused week",
+    () => {
+      fc.assert(
+        fc.property(
+          planArb,
+          fc.nat(),
+          fc.array(
+            fc.record({
+              pick: fc.noBias(fc.nat({ max: 99 })),
+              // Mostly rises, so several land in one week and meet its cap.
+              delta: fc.oneof(
+                {
+                  weight: 3,
+                  arbitrary: fc
+                    .noBias(fc.double({ min: 1, max: 1.3, noNaN: true }))
+                    .map((factor) => ({ kind: "scale" as const, factor })),
+                },
+                { weight: 1, arbitrary: deltaArb },
+              ),
+            }),
+            { minLength: 1, maxLength: 6 },
+          ),
+          // The longest recent run as a share of the week's longest session.
+          fc.noBias(fc.double({ min: 0.8, max: 1.6, noNaN: true })),
+          fc.boolean(),
+          ({ input, plan }, weekPick, drawn, longestShare, afterPause) => {
+            const weekIndex = weekPick % plan.weeks.length;
+            const week = plan.weeks[weekIndex]!;
+            if (week.sessions.length === 0) return;
+            const sessions: WeekDeltaSession[] = week.sessions.map((s, k) => ({
+              ...s,
+              id: `s${k}`,
+              status: "planned",
+              source: "plan",
+              title: null,
+              coachAdjusted: false,
+              eased: false,
+            }));
+            const proposals = drawn.map(({ pick, delta }) => ({
+              sessionId: `s${pick % sessions.length}`,
+              delta,
+            }));
+            const ctx = {
+              today: week.startDate,
+              sessions,
+              previousWeekM: plan.weeks[weekIndex - 1]?.distanceM ?? null,
+              longestRecentM: Math.round(
+                longestShare * Math.max(...sessions.map((s) => s.target.distanceM)),
+              ),
+              daysPerWeek: input.goal.daysPerWeek,
+              paces: plan.paces,
+              paused: false,
+              afterPause,
+            };
+            const outcomes = validateWeekDeltas(ctx, proposals);
+            expect(outcomes.map((o) => o.sessionId)).toEqual(proposals.map((p) => p.sessionId));
+            if (new Set(proposals.map((p) => p.sessionId)).size === proposals.length) {
+              expect(validateWeekDeltas(ctx, [...proposals].reverse())).toEqual(
+                [...outcomes].reverse(),
+              );
+            }
+            const afterM = new Map(sessions.map((s) => [s.id, s.target.distanceM]));
+            for (const { sessionId, result } of outcomes) {
+              if (!result.ok) continue;
+              expect(result.session.target).toEqual(
+                sessionTarget(result.session.steps, plan.paces),
+              );
+              afterM.set(
+                sessionId!,
+                result.session.status === "skipped" ? 0 : result.session.target.distanceM,
+              );
+            }
+            const plannedM = sessions.reduce((sum, s) => sum + s.target.distanceM, 0);
+            const totalM = [...afterM.values()].reduce((sum, m) => sum + m, 0);
+            if (ctx.previousWeekM !== null && ctx.previousWeekM > 0) {
+              expect(totalM).toBeLessThanOrEqual(
+                Math.max(plannedM, maxWeeklyVolumeM(ctx.previousWeekM)),
+              );
+            }
+            if (afterPause) expect(totalM).toBeLessThanOrEqual(plannedM);
+            for (const s of sessions) {
+              if (afterPause || QUALITY.has(s.type)) {
+                expect(afterM.get(s.id)!).toBeLessThanOrEqual(s.target.distanceM);
+              }
+            }
+          },
+        ),
+        { numRuns: 100 },
       );
     },
     PROPERTY_TIMEOUT_MS,

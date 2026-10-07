@@ -76,6 +76,7 @@ function context(overrides: Partial<DeltaContext> = {}): DeltaContext {
     paused: false,
     coachAdjusted: false,
     eased: false,
+    afterPause: false,
     ...overrides,
   };
 }
@@ -453,6 +454,53 @@ describe("validate delta", () => {
     ).toMatchObject({ ok: true, session: { type: "easy", steps: easyRun(11_100) } });
   });
 
+  it.each([1.02, 1.1, 1.5])(
+    "illness or injury pauses: right after a paused week a rise by %s clamps to 1 and changes nothing",
+    (factor) => {
+      expect(validateDelta(context({ afterPause: true }), scale(factor))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+      expect(
+        validateDelta(context({ afterPause: true, session: long(8000) }), scale(factor)),
+      ).toEqual({ ok: false, reason: "no_change" });
+    },
+  );
+
+  it("illness or injury pauses: right after a paused week a cut by 0.8 applies, and so do easy and rest", () => {
+    expect(validateDelta(context({ afterPause: true }), scale(0.8))).toEqual({
+      ok: true,
+      delta: { kind: "scale", factor: 0.8 },
+      clamped: false,
+      session: {
+        type: "easy",
+        title: null,
+        status: "planned",
+        steps: easyRun(6400),
+        target: { distanceM: 6400, durationS: 2048, zone: "easy" },
+      },
+    });
+    expect(validateDelta(context({ afterPause: true }), { kind: "rest" })).toMatchObject({
+      ok: true,
+      session: { status: "skipped" },
+    });
+    expect(
+      validateDelta(
+        context({ afterPause: true, session: session({ type: "tempo", steps: intervals(5) }) }),
+        { kind: "easy" },
+      ),
+    ).toMatchObject({ ok: true, session: { type: "easy", steps: easyRun(11_100) } });
+  });
+
+  it("illness or injury pauses: right after a paused week a quality session's rise still changes nothing", () => {
+    expect(
+      validateDelta(
+        context({ afterPause: true, session: session({ type: "tempo", steps: intervals(5) }) }),
+        scale(1.1),
+      ),
+    ).toEqual({ ok: false, reason: "no_change" });
+  });
+
   it("never clamps a rise below the planned run: a week already over 10% leaves it as planned", () => {
     expect(
       validateDelta(
@@ -530,6 +578,7 @@ describe("validate delta", () => {
       paused: fc.integer({ min: 0, max: 9 }).map((n) => n === 0),
       coachAdjusted: fc.boolean(),
       eased: fc.boolean(),
+      afterPause: fc.boolean(),
     })
     .map((c) =>
       context({
@@ -541,6 +590,7 @@ describe("validate delta", () => {
         paused: c.paused,
         coachAdjusted: c.coachAdjusted,
         eased: c.eased,
+        afterPause: c.afterPause,
       }),
     );
   const deltaArb: fc.Arbitrary<PlanDelta> = fc.oneof(
@@ -574,7 +624,7 @@ describe("validate delta", () => {
     );
   });
 
-  it("never lets an accepted rise break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow an eased session or one after a week that ran nothing", () => {
+  it("never lets an accepted rise break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow an eased session, one right after a paused week or one after a week that ran nothing", () => {
     fc.assert(
       fc.property(contextArb, deltaArb, (ctx, delta) => {
         const result = validateDelta(ctx, delta);
@@ -586,6 +636,7 @@ describe("validate delta", () => {
           .reduce((sum, w) => sum + w.target.distanceM, 0);
         expect(delta.kind).toBe("scale");
         expect(ctx.eased).toBe(false);
+        expect(ctx.afterPause).toBe(false);
         expect(ctx.previousWeekM).not.toBe(0);
         expect(ctx.longestRecentM).toBeGreaterThan(0);
         expect(newM).toBeLessThanOrEqual(Math.floor(ctx.longestRecentM * 1.1));
