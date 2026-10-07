@@ -157,10 +157,11 @@ export type GeneratedSession = z.infer<typeof generatedSessionSchema>;
 
 /**
  * Who changed a session after the plan was made. coach: the coach's proposal after a run, as the engine
- * accepted or clamped it. pause: the re-entry when the runner ended a pause. gap: the re-entry after a run
- * that followed 7 or more days without one, with no pause.
+ * accepted or clamped it. review: the same from the coach's weekly review, for the coming week. pause: the
+ * re-entry when the runner ended a pause. gap: the re-entry after a run that followed 7 or more days
+ * without one, with no pause.
  */
-export const adjustmentSourceSchema = z.enum(["coach", "pause", "gap"]);
+export const adjustmentSourceSchema = z.enum(["coach", "review", "pause", "gap"]);
 export type AdjustmentSource = z.infer<typeof adjustmentSourceSchema>;
 
 /**
@@ -184,7 +185,8 @@ export type PlanDelta = z.infer<typeof planDeltaSchema>;
 
 /**
  * Why a proposed change was dropped. race: a race is never changed. custom: the runner's own workouts
- * stay as built. locked: past, done, missed or skipped. adjusted: the coach already changed this session.
+ * stay as built. locked: past, done, missed or skipped. adjusted: the coach already changed this session,
+ * after a run or in a weekly review.
  * paused: training is paused. stale_run: only the newest run of the last 7 days may change the plan.
  * no_session: nothing is planned after the run. no_change: the change would leave the session as it is.
  * invalid: a scale without a usable factor, or a change without its own next step.
@@ -222,7 +224,7 @@ export const sessionAdjustmentSchema = z
   .object({
     source: adjustmentSourceSchema,
     kind: adjustmentKindSchema,
-    /** The run that prompted it: the reviewed run (coach) or the run that ended the gap; null for a pause. */
+    /** The run that prompted it: the reviewed run (coach) or the run that ended the gap; null for a pause or a review. */
     activityId: z.uuid().nullable(),
     /** The session as the plan had it before its first change. */
     original: sessionSnapshotSchema,
@@ -231,7 +233,10 @@ export const sessionAdjustmentSchema = z
   .strict();
 export type SessionAdjustment = z.infer<typeof sessionAdjustmentSchema>;
 
-/** One session the coach changed after a run, as the engine applied it: shown on the run's coach card. */
+/**
+ * One session the coach changed after a run or in a weekly review, as the engine applied it: shown on the
+ * run's coach card and the review card.
+ */
 export const planChangeSchema = z
   .object({
     sessionId: z.uuid(),

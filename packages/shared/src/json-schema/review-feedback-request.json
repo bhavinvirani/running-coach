@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "feedback": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "up",
+            "down"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "feedback"
+  ],
+  "additionalProperties": false
+}
