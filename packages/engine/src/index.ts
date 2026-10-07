@@ -1,6 +1,8 @@
 export * from "./constants";
 export { addDays, daysBetween, nextMonday, weekdayIndex, weekdayOf } from "./dates";
 export { generatePlan, planStartVolume } from "./plan/generate";
+export { applyDelta, sameSession } from "./rules/apply-delta";
+export type { AdjustedSession, DeltaSession } from "./rules/apply-delta";
 export {
   baselineReEntryFactor,
   recentVolumeM,
@@ -11,6 +13,8 @@ export {
 export type { StartVolumeInput, StartVolumeResult } from "./rules/baseline";
 export { bestEfforts } from "./rules/best-efforts";
 export type { BestEffort, BestEffortsInput } from "./rules/best-efforts";
+export { validateDelta } from "./rules/delta";
+export type { DeltaContext, DeltaResult, DeltaWeekSession } from "./rules/delta";
 export { hardShareHolds, hardTimeS } from "./rules/easy-share";
 export { garminWorkout } from "./rules/garmin-workout";
 export type { GarminWorkoutInput } from "./rules/garmin-workout";
@@ -50,6 +54,7 @@ export type { PredictionInput, RacePaceInput, RacePaceResult } from "./rules/pre
 export {
   dropRep,
   QUALITY_SESSION_TYPE,
+  QUALITY_SESSION_TYPES,
   qualityCount,
   qualitySteps,
   qualityWork,
@@ -60,6 +65,15 @@ export type { QualityStepsInput, Work, WorkZone } from "./rules/quality";
 export { raceWeekDays, taperPracticeDate } from "./rules/race-week";
 export type { RaceWeekDays, RaceWeekDaysInput, TaperPracticeInput } from "./rules/race-week";
 export { reEntryFactor } from "./rules/re-entry";
+export { reEntryPlan } from "./rules/re-entry-plan";
+export type {
+  ReEntryChange,
+  ReEntryInput,
+  ReEntryResult,
+  ReEntrySession,
+} from "./rules/re-entry-plan";
+export { scaleSession, scaleSteps } from "./rules/scale-session";
+export type { ScaleSessionResult, ScaleStepsInput } from "./rules/scale-session";
 export {
   bandMidpointSPerKm,
   distanceForDurationM,
@@ -68,6 +82,13 @@ export {
   stepDistanceM,
   stepDurationS,
 } from "./rules/session-target";
+export { matchSessions } from "./rules/session-match";
+export type {
+  MatchRun,
+  MatchSession,
+  MatchSessionsInput,
+  SessionMatch,
+} from "./rules/session-match";
 export { taperBlocks, taperPeakM, taperStartDate, taperVolumesM } from "./rules/taper";
 export type {
   TaperBlock,

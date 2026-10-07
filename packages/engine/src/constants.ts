@@ -8,7 +8,7 @@ import {
 } from "@running-coach/shared";
 
 // Stored on each plan so a plan can be traced to the rule set that produced it.
-export const ENGINE_VERSION = "0.4.0";
+export const ENGINE_VERSION = "0.5.0";
 
 // The 10% rule: weekly running volume rises at most 10% over the previous week.
 export const WEEKLY_VOLUME_MAX_INCREASE = 0.1;
@@ -254,3 +254,27 @@ export const TARGETED_STEP_KINDS: ReadonlySet<StepKind> = new Set(["run", "work"
 
 // A fitness goal with no distance is shaped like a 10K: a middle ground of volume and speed work.
 export const FITNESS_SHAPE_DISTANCE = "10k" satisfies RaceDistanceKey;
+
+// Slice 9 plan (#9): the coach may cut a session to half or lengthen it by at most 10%, the 10% rule's
+// step; the run and week caps can lower a rise further.
+export const DELTA_MIN_FACTOR = 0.5;
+export const DELTA_MAX_FACTOR = 1.1;
+
+// A scaled step lands on whole 100 m or 10 s so the watch shows round numbers, as THRESHOLD_BLOCK_STEP_M.
+export const SCALE_DISTANCE_STEP_M = 100;
+export const SCALE_DURATION_STEP_S = 10;
+
+// IEEE 754: 8000 x (8800 / 8000) can come out a hair under 8800; a nudge this small keeps the 100 m
+// step from dropping a whole step, and moves no result by a millimetre.
+export const FLOAT_TOLERANCE = 1e-9;
+
+// SPEC re-entry: the first 7 days back hold no quality after 7+ days off or after illness or injury.
+export const RE_ENTRY_EASY_DAYS = 7;
+
+// SPEC walk-run return: 4 min run and 1 min walk, the first stage of the usual return-to-run ladder.
+export const WALK_RUN_RUN_S = 240;
+export const WALK_RUN_WALK_S = 60;
+// The contract's repeat holds at least 2 rounds: a 10 min walk-run is the shortest.
+export const WALK_RUN_MIN_REPEATS = 2;
+// The engine's name for a walk-run session, shown instead of its type (planSessionSchema.title).
+export const WALK_RUN_TITLE = "Walk-run";

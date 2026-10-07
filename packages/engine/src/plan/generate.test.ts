@@ -1004,7 +1004,7 @@ describe("generate plan", () => {
     const half = plan(
       input({ goal: { distanceKey: "half", raceDate: addDays(START, 7 * 12 - 1) } }),
     );
-    expect(half.engineVersion).toBe("0.4.0");
+    expect(half.engineVersion).toBe("0.5.0");
     expect(half.weeks.at(-1)!.sessions.at(-1)!.steps).toEqual([
       { kind: "run", zone: "race", distanceM: 21_098, durationS: null },
     ]);

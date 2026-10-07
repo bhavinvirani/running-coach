@@ -50,6 +50,11 @@ export const QUALITY_SESSION_TYPE: Readonly<Record<WorkZone, SessionType>> = {
   race: "race_practice",
 };
 
+/** The session types that hold quality work: intervals, tempo and race practice. */
+export const QUALITY_SESSION_TYPES: ReadonlySet<SessionType> = new Set(
+  Object.values(QUALITY_SESSION_TYPE),
+);
+
 /** Base, taper and race weeks hold 1; build and peak 2, leaving at least 2 easy days, so 1 at 3 days. */
 export function qualityCount({
   phase,
