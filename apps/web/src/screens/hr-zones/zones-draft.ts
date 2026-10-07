@@ -152,10 +152,7 @@ export function checkDraft(draft: ZonesDraft): DraftCheck {
   // The bpm are saved, but a percent that is not whole would leave the screen showing what was not saved.
   const halfTyped = draft.zones.findIndex((zone) => Number.isNaN(parseWhole(zone.percent)));
   if (halfTyped >= 0) {
-    return {
-      success: false,
-      message: `Zone ${halfTyped + 1} starts at a whole percent of max HR.`,
-    };
+    return { success: false, message: zonesProblems.wholePercent(halfTyped + 1) };
   }
   return { success: true, zones: parsed.data };
 }
