@@ -286,6 +286,39 @@ describe("re-entry plan", () => {
     ]);
   });
 
+  it.each([
+    ["skipped on the Tuesday before the return", "2026-10-06", "skipped"],
+    ["planned on the Saturday after the return", "2026-10-10", "planned"],
+  ] as const)(
+    "illness or injury pause: a custom-only week before the plan's first week (%s) leaves week 1 at the factor of its plan",
+    (_case, date, status) => {
+      // Back on 2026-10-08 after 15 days over a plan that carries 0.7: the ramp starts at the week of
+      // 10-12, the first with plan runs, at 0.5 / 0.7 of its 30 000 m, not at that of the 5 km custom.
+      const custom = session(date, "easy", 5000, { source: "custom", id: "custom", status });
+      const input = { fromDate: "2026-10-08", daysOff: 15, carriedFactor: 0.7 };
+      const result = reEnter({ ...input, sessions: [custom, ...PLAN] });
+      expect(metersById(result.changes).slice(0, 3)).toEqual([
+        ["2026-10-13-easy", 5700],
+        ["2026-10-15-easy", 5700],
+        ["2026-10-18-long", 10_000],
+      ]);
+      expect(result).toEqual(reEnter({ ...input, sessions: PLAN }));
+    },
+  );
+
+  it("missed or moved sessions: a week with only a custom workout mid-ramp neither ends the ramp nor raises it", () => {
+    // Week 2's plan runs were skipped ahead of time and a 5 km custom workout is all it holds: week 3
+    // still ramps from week 1's 21 000 m, to 23 100 of its 30 000 m (77%), instead of running in full.
+    const skipped = week("2026-10-19").map((s) => ({ ...s, status: "skipped" as const }));
+    const custom = session("2026-10-21", "easy", 5000, { source: "custom", id: "custom" });
+    const sessions = [...week("2026-10-12"), ...skipped, custom, ...week("2026-10-26")];
+    expect(metersById(reEnter({ sessions }).changes).slice(3)).toEqual([
+      ["2026-10-27-easy", 6100],
+      ["2026-10-29-easy", 6100],
+      ["2026-11-01-long", 10_700],
+    ]);
+  });
+
   it("counts a custom workout in its week's volume but never changes it", () => {
     const sessions = [
       ...week("2026-10-12"),
@@ -423,9 +456,13 @@ describe("re-entry plan", () => {
       (input.daysOff >= 14 ? 0.5 : input.daysOff >= 7 ? 0.7 : 1) / (input.carriedFactor ?? 1),
     );
 
-  /** The spec's week ratios: the factor of week 1, up 10% a week, until a week meets its plan. */
+  /**
+   * The spec's week ratios: the factor of the first week with plan runs, up 10% a week, until a week
+   * meets its plan.
+   */
   function ratios(input: ReEntryInput): Map<string, number> {
     const plannedM = new Map<string, number>();
+    const planM = new Map<string, number>();
     for (const s of input.sessions) {
       const counts =
         daysBetween(input.fromDate, s.date) < 0 ||
@@ -433,13 +470,14 @@ describe("re-entry plan", () => {
       const monday = mondayOf(s.date);
       if (counts && daysBetween(mondayOf(input.fromDate), monday) >= 0) {
         plannedM.set(monday, (plannedM.get(monday) ?? 0) + s.target.distanceM);
+        if (s.source === "plan") planM.set(monday, (planM.get(monday) ?? 0) + s.target.distanceM);
       }
     }
     const factor = expectedFactor(input);
     const out = new Map<string, number>();
     let targetM: number | null = null;
     for (const [monday, p] of [...plannedM].sort(([a], [b]) => daysBetween(b, a))) {
-      if (p === 0) continue;
+      if (p === 0 || (targetM === null && !planM.get(monday))) continue;
       targetM = targetM === null ? factor * p : Math.min(p, targetM * 1.1);
       if (targetM / p >= 1) break;
       out.set(monday, targetM / p);

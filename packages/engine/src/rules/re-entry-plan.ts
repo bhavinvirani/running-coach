@@ -78,11 +78,13 @@ function mondayOf(date: string): string {
 }
 
 /**
- * Each week's share of its plan from the return on: the first week with planned volume runs at the
+ * Each week's share of its plan from the return on: the first week with plan volume is held to the
  * factor, each later week rises at most 10% over the one before (T_k = min(P_k, 1.1 T_k-1)), and the
  * first week that meets its plan ends the list. P is the week's sessions that are not skipped or
  * missed, custom ones included, except that the first week counts every session before the return
- * as planned: the days the break took are not volume the runner lost from the base.
+ * as planned: the days the break took are not volume the runner lost from the base. A week of custom
+ * workouts only counts for nothing: before the plan's first week one 5 km custom run would hold the
+ * plan to factor x 5 km plus 10% a week, and mid-ramp it would end the ramp a week early.
  */
 function weekRatios(
   fromDate: string,
@@ -91,6 +93,7 @@ function weekRatios(
 ): Map<string, number> {
   const firstMonday = mondayOf(fromDate);
   const plannedM = new Map<string, number>();
+  const planM = new Map<string, number>();
   for (const session of sessions) {
     const monday = mondayOf(session.date);
     const counts =
@@ -98,12 +101,16 @@ function weekRatios(
       (session.status !== "skipped" && session.status !== "missed");
     if (counts && daysBetween(firstMonday, monday) >= 0) {
       plannedM.set(monday, (plannedM.get(monday) ?? 0) + session.target.distanceM);
+      if (session.source === "plan") {
+        planM.set(monday, (planM.get(monday) ?? 0) + session.target.distanceM);
+      }
     }
   }
   const ratios = new Map<string, number>();
   let targetM: number | null = null;
   for (const [monday, weekM] of [...plannedM].sort(([a], [b]) => daysBetween(b, a))) {
-    if (weekM === 0) continue;
+    // A week without plan runs (custom workouts only) neither sets the base, ends the ramp nor raises it.
+    if (!planM.get(monday)) continue;
     targetM =
       targetM === null
         ? factor * weekM
