@@ -35,11 +35,23 @@
         "plannedDistanceM": 0,
         "paused": false
       },
-      "weekBefore": { "runs": 2, "distanceM": 18000 },
+      "weekBefore": {
+        "runs": 2,
+        "distanceM": 18000
+      },
       "pause": null
     },
     "plan": null,
-    "settings": { "units": "km", "coachDetail": "short" }
+    "settings": {
+      "units": "km",
+      "coachDetail": "short"
+    }
   },
-  "output": null
+  "output": {
+    "headline": "3 runs, 26.0 km, up from 18.0 km the week before.",
+    "whatHappened": "With no plan, you ran 6.0 km at 5:50 /km on Tuesday, 8.0 km at 6:03 /km on Thursday with no heart rate recorded, and 12.0 km at 6:07 /km on Saturday.",
+    "whatItMeans": "Your volume rose by 8.0 km in one week, a big jump, but heart rate stayed steady at 145 and 150 bpm at easy paces.",
+    "nextWeek": "No plan is set, so keep every run easy, take rest days between them, and do not add distance or speed beyond this week's 26.0 km.",
+    "changes": []
+  }
 }

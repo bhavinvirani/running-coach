@@ -10,7 +10,12 @@
           "status": "done",
           "distanceM": 8000,
           "durationS": 2700,
-          "run": { "distanceM": 8100, "durationS": 2730, "avgHr": 141, "isIndoor": false }
+          "run": {
+            "distanceM": 8100,
+            "durationS": 2730,
+            "avgHr": 141,
+            "isIndoor": false
+          }
         },
         {
           "date": "2026-10-01",
@@ -19,7 +24,12 @@
           "status": "done",
           "distanceM": 9000,
           "durationS": 2880,
-          "run": { "distanceM": 9050, "durationS": 2850, "avgHr": 162, "isIndoor": false }
+          "run": {
+            "distanceM": 9050,
+            "durationS": 2850,
+            "avgHr": 162,
+            "isIndoor": false
+          }
         },
         {
           "date": "2026-10-02",
@@ -37,7 +47,12 @@
           "status": "done",
           "distanceM": 16000,
           "durationS": 5760,
-          "run": { "distanceM": 16200, "durationS": 5900, "avgHr": 149, "isIndoor": false }
+          "run": {
+            "distanceM": 16200,
+            "durationS": 5900,
+            "avgHr": 149,
+            "isIndoor": false
+          }
         }
       ],
       "extraRuns": [],
@@ -50,7 +65,10 @@
         "plannedDistanceM": 39000,
         "paused": false
       },
-      "weekBefore": { "runs": 4, "distanceM": 36000 },
+      "weekBefore": {
+        "runs": 4,
+        "distanceM": 36000
+      },
       "pause": null
     },
     "plan": {
@@ -108,7 +126,16 @@
       "changeAllowed": true,
       "reason": null
     },
-    "settings": { "units": "km", "coachDetail": "standard" }
+    "settings": {
+      "units": "km",
+      "coachDetail": "standard"
+    }
   },
-  "output": null
+  "output": {
+    "headline": "3 of 4 sessions done, 33.4 km against a planned 39.0 km.",
+    "whatHappened": "Tuesday's easy 8.1 km at 5:37 /km, Thursday's 9.1 km tempo at 5:15 /km and Sunday's 16.2 km long run at 6:04 /km were done. Friday's easy 6.0 km was missed, and there were no runs outside the plan.",
+    "whatItMeans": "Heart rate fit each effort: 141 bpm easy, 162 bpm on the tempo and 149 bpm on the long run. Volume was 2.6 km below the week before's 36.0 km, so the load stayed steady.",
+    "nextWeek": "4 sessions, 40.0 km: an easy 8.0 km on Tuesday, 9.0 km of intervals on Thursday, an easy 6.0 km on Friday and a 17.0 km long run on Sunday. Keep the easy runs easy, and don't add Friday's missed run.",
+    "changes": []
+  }
 }

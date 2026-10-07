@@ -10,7 +10,12 @@
           "status": "done",
           "distanceM": 6437,
           "durationS": 2880,
-          "run": { "distanceM": 6500, "durationS": 2900, "avgHr": 138, "isIndoor": false }
+          "run": {
+            "distanceM": 6500,
+            "durationS": 2900,
+            "avgHr": 138,
+            "isIndoor": false
+          }
         },
         {
           "date": "2026-09-30",
@@ -19,7 +24,12 @@
           "status": "done",
           "distanceM": 8047,
           "durationS": 3000,
-          "run": { "distanceM": 8100, "durationS": 2990, "avgHr": 158, "isIndoor": false }
+          "run": {
+            "distanceM": 8100,
+            "durationS": 2990,
+            "avgHr": 158,
+            "isIndoor": false
+          }
         },
         {
           "date": "2026-10-01",
@@ -28,7 +38,12 @@
           "status": "done",
           "distanceM": 4828,
           "durationS": 2100,
-          "run": { "distanceM": 4900, "durationS": 2150, "avgHr": 155, "isIndoor": false }
+          "run": {
+            "distanceM": 4900,
+            "durationS": 2150,
+            "avgHr": 155,
+            "isIndoor": false
+          }
         },
         {
           "date": "2026-10-03",
@@ -37,7 +52,12 @@
           "status": "done",
           "distanceM": 12875,
           "durationS": 6000,
-          "run": { "distanceM": 12950, "durationS": 6100, "avgHr": 146, "isIndoor": false }
+          "run": {
+            "distanceM": 12950,
+            "durationS": 6100,
+            "avgHr": 146,
+            "isIndoor": false
+          }
         }
       ],
       "extraRuns": [
@@ -58,11 +78,19 @@
         "plannedDistanceM": 32187,
         "paused": false
       },
-      "weekBefore": { "runs": 4, "distanceM": 30500 },
+      "weekBefore": {
+        "runs": 4,
+        "distanceM": 30500
+      },
       "pause": null
     },
     "plan": {
-      "goal": { "kind": "fitness", "distanceKey": "10k", "raceDate": null, "targetTimeS": null },
+      "goal": {
+        "kind": "fitness",
+        "distanceKey": "10k",
+        "raceDate": null,
+        "targetTimeS": null
+      },
       "weekNumber": 4,
       "phase": "base",
       "weeksToRace": null,
@@ -111,7 +139,16 @@
       "changeAllowed": true,
       "reason": null
     },
-    "settings": { "units": "mi", "coachDetail": "detailed" }
+    "settings": {
+      "units": "mi",
+      "coachDetail": "detailed"
+    }
   },
-  "output": null
+  "output": {
+    "headline": "All 4 sessions done, 23.2 mi against a planned 20.0 mi, with an extra treadmill run.",
+    "whatHappened": "Monday's easy 4.0 mi at 11:58 /mi, 138 bpm. Wednesday's 5.0 mi tempo at 9:54 /mi, 158 bpm. Thursday's 3.0 mi of hill repeats at 155 bpm, and Saturday's 8.0 mi long run at 12:38 /mi, 146 bpm. On Sunday you ran 3.0 mi on a treadmill with no session planned. The watch estimated it at 10:00 /mi and recorded no heart rate.",
+    "whatItMeans": "The planned sessions went as written, and heart rate stayed moderate on the easy and long runs. The extra Sunday run put the week 3.2 mi over the plan. It also took the volume up from 19.0 mi to 23.2 mi, a rise of about 22% in one week. That is a big step for a base phase.",
+    "nextWeek": "4 sessions, 20.5 mi: an easy 4.0 mi on Monday, a 5.0 mi tempo on Wednesday, 3.0 mi of hill repeats on Thursday and an 8.5 mi long run on Saturday. Run the sessions as planned and don't add extra runs, so the volume settles back to the plan.",
+    "changes": []
+  }
 }

@@ -17,6 +17,7 @@ import { latestReview, queueWeeklyReview } from "../../src/services/weekly-revie
 import {
   configureCoachService,
   PLAN_OWNER_EMAIL,
+  PLAN_USAGE,
   startFakeCoachService,
 } from "../fake-coach-service";
 import {
@@ -225,6 +226,36 @@ describe("weekly-review job on the Claude plan", () => {
     await createRunOn(userId, "2026-10-07");
     return userId;
   }
+
+  it("stores the model's review from the plan for the owner who chose it, without a saved key", async () => {
+    coach.use({ run: { kind: "valid", fixture: "weekly-review-valid" } });
+    const userId = await ownerOnPlan();
+
+    const outcome = await reviewJob.handle(getBoss(), runningJob(userId, 0), () => NOW);
+
+    expect(outcome).toMatchObject({ status: "stored", fallbackReason: null });
+    const [review] = await storedReviews(userId);
+    expect(review).toMatchObject({
+      weekStart: WEEK,
+      promptVersion: "weekly-review/v1",
+      fallbackReason: null,
+      usage: PLAN_USAGE,
+    });
+    expect(review?.model).not.toBeNull();
+    expect(coach.runs).toHaveLength(1);
+  });
+
+  it("stores the plan_auth_failed card at once, on the first attempt, when Claude rejects the plan token (token expiry)", async () => {
+    coach.use({ run: { kind: "failure", failure: "plan_auth_failed" } });
+    const userId = await ownerOnPlan();
+
+    const outcome = await reviewJob.handle(getBoss(), runningJob(userId, 0), () => NOW);
+
+    expect(outcome).toMatchObject({ status: "stored", fallbackReason: "plan_auth_failed" });
+    expect(await storedReviews(userId)).toMatchObject([
+      { weekStart: WEEK, model: null, fallbackReason: "plan_auth_failed" },
+    ]);
+  });
 
   it("defers the week's job to the plan's reset without a failed attempt, while Today reads retrying (Claude quota)", async () => {
     coach.use({ run: { kind: "failure", failure: "plan_limited", retryAfterSeconds: 5400 } });

@@ -28,7 +28,12 @@
           "status": "done",
           "distanceM": 4000,
           "durationS": 1800,
-          "run": { "distanceM": 4100, "durationS": 1850, "avgHr": 136, "isIndoor": false }
+          "run": {
+            "distanceM": 4100,
+            "durationS": 1850,
+            "avgHr": 136,
+            "isIndoor": false
+          }
         },
         {
           "date": "2026-10-04",
@@ -37,7 +42,12 @@
           "status": "done",
           "distanceM": 11000,
           "durationS": 3960,
-          "run": { "distanceM": 10500, "durationS": 3900, "avgHr": 158, "isIndoor": false }
+          "run": {
+            "distanceM": 10500,
+            "durationS": 3900,
+            "avgHr": 158,
+            "isIndoor": false
+          }
         }
       ],
       "extraRuns": [],
@@ -50,8 +60,15 @@
         "plannedDistanceM": 15000,
         "paused": true
       },
-      "weekBefore": { "runs": 2, "distanceM": 14000 },
-      "pause": { "reason": "sick", "startDate": "2026-09-26", "endDate": "2026-10-01" }
+      "weekBefore": {
+        "runs": 2,
+        "distanceM": 14000
+      },
+      "pause": {
+        "reason": "sick",
+        "startDate": "2026-09-26",
+        "endDate": "2026-10-01"
+      }
     },
     "plan": {
       "goal": {
@@ -98,7 +115,29 @@
       "changeAllowed": true,
       "reason": null
     },
-    "settings": { "units": "km", "coachDetail": "standard" }
+    "settings": {
+      "units": "km",
+      "coachDetail": "standard"
+    }
   },
-  "output": null
+  "output": {
+    "headline": "Back from illness with 14.6 km run against a planned 15.0 km after skipped sessions.",
+    "whatHappened": "Training was paused for sickness from Saturday 26 September to Thursday 1 October, so Tuesday's easy 8.0 km and Thursday's 9.0 km tempo were skipped. Saturday's walk-run came to 4.1 km at 7:31 /km, 136 bpm, and Sunday's long run to 10.5 km of the planned 11.0 km at 6:11 /km, 158 bpm.",
+    "whatItMeans": "This was a week of coming back from illness, so it says little about fitness. A heart rate of 158 bpm on an easy-paced long run is high, which suggests the body is still recovering.",
+    "nextWeek": "3 sessions, 22.0 km: a 5.0 km walk-run on Tuesday, a 6.0 km tempo on Thursday and an 11.0 km long run on Sunday. Run easy until you feel fully well. If you still feel unwell or your heart rate stays high, see a doctor.",
+    "changes": [
+      {
+        "session": "s2",
+        "kind": "easy",
+        "factor": null,
+        "note": "Run Thursday's tempo as an easy run. You are just back from illness and your heart rate was still high on Sunday."
+      },
+      {
+        "session": "s3",
+        "kind": "scale",
+        "factor": 0.8,
+        "note": "Keep Sunday's long run shorter and at an easy pace while your body finishes recovering from the illness."
+      }
+    ]
+  }
 }
