@@ -1908,7 +1908,7 @@ const reviewRegion = () => screen.queryByRole("region", { name: "Weekly review" 
 const findReviewRegion = () => screen.findByRole("region", { name: "Weekly review" });
 
 describe("TodayScreen weekly review", () => {
-  it("sits between the latest run and the next 7 days when ready, with Past reviews opening the list", async () => {
+  it("sits between the latest run and the next 7 days when ready, with Open weekly reviews opening the list", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
     try {
@@ -1934,7 +1934,7 @@ describe("TodayScreen weekly review", () => {
       // Today's own Next 7 days is the coming week, so the card leaves its preview out.
       expect(within(review).queryByRole("region", { name: "Coming week" })).toBeNull();
 
-      const past = within(review).getByRole("link", { name: "Past reviews" });
+      const past = within(review).getByRole("link", { name: "Open weekly reviews" });
       expect(past).toHaveAttribute("href", "/plan/reviews");
       await userEvent.click(past);
       expect(router.state.location.pathname).toBe("/plan/reviews");

@@ -63,7 +63,7 @@ describe("ReviewsScreen", () => {
     const { router } = renderReviews();
 
     expect(
-      await screen.findByText("No weekly reviews yet. The coach writes one after each week ends."),
+      await screen.findByText("No weekly reviews yet: the coach writes one after each week ends."),
     ).toHaveClass("text-body", "text-ink-2");
     const links = screen.getAllByRole("link").filter((link) => link.textContent !== "Back");
     expect(links).toHaveLength(1);

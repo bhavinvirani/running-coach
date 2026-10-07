@@ -33,7 +33,7 @@ type WeeklyReviewProps = WeeklyReviewState & {
 
 /**
  * The coach's review of the week that ended, between the latest run and the next 7 days, from its Monday
- * to its Sunday, with Past reviews. While the coach writes it, or Claude failed and the job will retry,
+ * to its Sunday, with Open weekly reviews. While the coach writes it, or Claude failed and the job will retry,
  * it is one line; with no review to show, nothing. A failed read never hides Today: the alert and Retry
  * take the card's place, and a failed reload keeps the card with them above it. The coming week is Today's
  * Next 7 days, so the card leaves out its own preview.
@@ -75,7 +75,7 @@ export function WeeklyReview({
         <section aria-label={reviewCopy.title} className="flex flex-col gap-2">
           <Heading>
             <Button asChild variant="secondary">
-              <Link to="/plan/reviews">{reviewCopy.pastReviews}</Link>
+              <Link to="/plan/reviews">{reviewCopy.openList}</Link>
             </Button>
           </Heading>
           {refetchFailed}
@@ -122,7 +122,7 @@ function Region({ children }: { children: ReactNode }) {
   );
 }
 
-/** As tall as Past reviews, so the heading stays put whether or not the button shows. */
+/** As tall as Open weekly reviews, so the heading stays put whether or not the button shows. */
 function Heading({ children }: { children?: ReactNode }) {
   return (
     <div className="flex min-h-11 items-center justify-between gap-4">

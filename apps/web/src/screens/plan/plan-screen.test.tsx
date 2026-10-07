@@ -111,10 +111,10 @@ describe("PlanScreen", () => {
     );
     const setGoal = screen.getByRole("link", { name: "Set goal" });
     expect(setGoal).toHaveAttribute("href", "/plan/goal");
-    // Set goal is the one action; Weekly reviews below it is the secondary way to the list.
+    // Set goal is the one action; Open weekly reviews below it is the secondary way to the list.
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "Set goal",
-      "Weekly reviews",
+      "Open weekly reviews",
     ]);
     expect(screen.queryByRole("region", { name: "Weeks" })).not.toBeInTheDocument();
 
@@ -308,12 +308,12 @@ describe("PlanScreen", () => {
     fakePlanApi();
     const { router } = renderPlan();
 
-    const reviews = await screen.findByRole("link", { name: "Weekly reviews" });
+    const reviews = await screen.findByRole("link", { name: "Open weekly reviews" });
     expect(reviews).toHaveAttribute("href", "/plan/reviews");
     // Its own row: not one of the week cards.
     expect(
       within(screen.getByRole("region", { name: "Weeks" })).queryByRole("link", {
-        name: "Weekly reviews",
+        name: "Open weekly reviews",
       }),
     ).toBeNull();
 
@@ -332,7 +332,7 @@ describe("PlanScreen", () => {
       fakePlanApi({ plan });
       const { router } = renderPlan();
 
-      const reviews = await screen.findByRole("link", { name: "Weekly reviews" });
+      const reviews = await screen.findByRole("link", { name: "Open weekly reviews" });
       expect(reviews).toHaveAttribute("href", "/plan/reviews");
       expect(
         screen.getByRole("link", { name: "Set goal" }).compareDocumentPosition(reviews) &

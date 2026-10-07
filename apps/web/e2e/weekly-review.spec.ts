@@ -13,7 +13,6 @@ import { formatLocalDay, formatWeekRange } from "../src/lib/format";
 import { planChangeLine, snapshotAmount } from "../src/lib/session-adjustment";
 import { comingSessionState, reviewCopy } from "../src/lib/weekly-review";
 import { sessionName } from "../src/lib/workout-steps";
-import { planCopy } from "../src/screens/plan/plan-copy";
 import { expect, test } from "./fixtures/login";
 import {
   seedLastWeek,
@@ -104,14 +103,14 @@ test("Today shows last week's review with its three parts and the plan change wi
   expect((await getReview(page, review.id)).feedback).toBe("up");
 });
 
-test("Past reviews opens the list and the review with the coming week's sessions, and Plan's Weekly reviews reaches the same list", async ({
+test("Open weekly reviews on Today opens the list and the review with the coming week's sessions, and Plan's Open weekly reviews reaches the same list", async ({
   page,
 }) => {
   const review = await seedLastWeekReview();
   await skipSyncOnOpen(page);
 
   await page.goto("/");
-  await reviewRegion(page).getByRole("link", { name: reviewCopy.pastReviews }).click();
+  await reviewRegion(page).getByRole("link", { name: reviewCopy.openList }).click();
   await expect(page).toHaveURL(/\/plan\/reviews$/);
   await expect(page.getByRole("heading", { name: reviewCopy.listTitle, level: 1 })).toBeVisible();
   // The newest week is the list's reference for the year, so its own row names none.
@@ -137,7 +136,7 @@ test("Past reviews opens the list and the review with the coming week's sessions
 
   await page.getByRole("navigation", { name: "Tabs" }).getByRole("link", { name: "Plan" }).click();
   await expect(page).toHaveURL(/\/plan$/);
-  await page.getByRole("link", { name: planCopy.weeklyReviews, exact: true }).click();
+  await page.getByRole("link", { name: reviewCopy.openList, exact: true }).click();
   await expect(page).toHaveURL(/\/plan\/reviews$/);
   await expect(row).toBeVisible();
 });
@@ -194,11 +193,11 @@ test("a runner the coach has not reviewed sees no review on Today and the empty 
   await expect(reviewRegion(page)).toHaveCount(0);
 
   await page.getByRole("navigation", { name: "Tabs" }).getByRole("link", { name: "Plan" }).click();
-  await page.getByRole("link", { name: planCopy.weeklyReviews, exact: true }).click();
+  await page.getByRole("link", { name: reviewCopy.openList, exact: true }).click();
   await expect(page).toHaveURL(/\/plan\/reviews$/);
   await expect(page.getByText(reviewCopy.empty, { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: reviewCopy.openPlan, exact: true }).click();
   await expect(page).toHaveURL(/\/plan$/);
-  await expect(page.getByRole("link", { name: planCopy.weeklyReviews, exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: reviewCopy.openList, exact: true })).toBeVisible();
 });

@@ -165,7 +165,7 @@ describe("app routes", () => {
     stubFetch(signedIn);
     const router = renderApp("/plan");
 
-    await userEvent.click(await screen.findByRole("link", { name: "Weekly reviews" }));
+    await userEvent.click(await screen.findByRole("link", { name: "Open weekly reviews" }));
 
     expect(await screen.findByRole("heading", { name: "Weekly reviews" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/plan/reviews");

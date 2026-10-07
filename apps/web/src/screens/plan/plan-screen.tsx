@@ -4,6 +4,7 @@ import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { weekHolds, weeksLeft } from "@/lib/plan-week";
+import { reviewCopy } from "@/lib/weekly-review";
 import { GoalCard, GoalCardSkeleton } from "./parts/goal-card";
 import { PaceRow, PaceRowSkeleton } from "./parts/pace-row";
 import { WeekCard, WeekCardSkeleton } from "./parts/week-card";
@@ -58,7 +59,7 @@ export function PlanScreen() {
           </Button>
           {/* The coach reviews every week, plan or not, so the reviews stay one tap away. */}
           <Button asChild variant="secondary">
-            <Link to="/plan/reviews">{planCopy.weeklyReviews}</Link>
+            <Link to="/plan/reviews">{reviewCopy.openList}</Link>
           </Button>
         </div>
       </PlanLayout>
@@ -83,7 +84,7 @@ export function PlanScreen() {
         </ul>
       ) : null}
       <Button asChild variant="secondary" className="self-start">
-        <Link to="/plan/reviews">{planCopy.weeklyReviews}</Link>
+        <Link to="/plan/reviews">{reviewCopy.openList}</Link>
       </Button>
       <section aria-label={planCopy.weeks} className="flex flex-col gap-2">
         <h2 className="text-body font-semibold text-ink">{planCopy.weeks}</h2>

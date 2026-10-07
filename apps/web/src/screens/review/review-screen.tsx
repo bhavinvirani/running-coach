@@ -38,7 +38,7 @@ function ReviewView({ id }: { id: string }) {
         <ReviewLayout>
           <div className="flex flex-col items-start gap-4">
             <p role="alert" className="text-body text-ink">
-              {reviewCopy.notFound}
+              {errorMessage(error)}
             </p>
             <Button asChild>
               <Link to="/plan/reviews">{reviewCopy.openList}</Link>

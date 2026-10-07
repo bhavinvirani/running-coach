@@ -88,7 +88,7 @@ describe("ReviewScreen", () => {
     const { router } = renderReview();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/^That weekly review no longer exists\.$/);
+    expect(alert).toHaveTextContent(/^That item no longer exists\. Go back and refresh\.$/);
     expect(alert).toHaveClass("text-body", "text-ink");
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: "Open weekly reviews" }));
@@ -100,7 +100,7 @@ describe("ReviewScreen", () => {
     renderReview("not-a-review");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /^That weekly review no longer exists\.$/,
+      /^That item no longer exists\. Go back and refresh\.$/,
     );
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     expect(calls.filter((call) => call.path.startsWith("/api/reviews"))).toEqual([]);

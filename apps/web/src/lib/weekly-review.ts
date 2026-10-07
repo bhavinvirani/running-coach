@@ -18,7 +18,6 @@ export const reviewCopy = {
   listTitle: "Weekly reviews",
   loadingList: "Loading your weekly reviews",
   loadingReview: "Loading the weekly review",
-  pastReviews: "Past reviews",
   whatHappened: "What happened",
   whatItMeans: "What it means",
   nextWeek: "Next week",
@@ -33,10 +32,9 @@ export const reviewCopy = {
   /** The job waits for the owner's Claude plan usage limit to reset; `when` in the runner's zone. */
   planLimit: (when: string) =>
     `Your Claude plan's usage limit is reached. The coach writes your weekly review ${when}.`,
-  empty: "No weekly reviews yet. The coach writes one after each week ends.",
+  empty: "No weekly reviews yet: the coach writes one after each week ends.",
   openPlan: "Open plan",
-  /** A review that is not the runner's, or an address that names none. */
-  notFound: "That weekly review no longer exists.",
+  /** Opens the list of reviews, newest week first: from Today's card, Plan and a review that is gone. */
   openList: "Open weekly reviews",
 } as const;
 
