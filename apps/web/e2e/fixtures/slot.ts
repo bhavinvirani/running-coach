@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
+import { connect } from "node:net";
 import path from "node:path";
 
 /**
@@ -76,6 +77,42 @@ export function resolveSlot({ env, file, filePath, linkedWorktree }: SlotSource)
     );
   }
   return slot;
+}
+
+/** Whether anything accepts a connection on this loopback port, over IPv4 or IPv6. */
+async function listening(port: number): Promise<boolean> {
+  const answers = (host: string) =>
+    new Promise<boolean>((resolve) => {
+      const socket = connect({ host, port });
+      socket.setTimeout(1_000);
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("timeout", () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.once("error", () => resolve(false));
+    });
+  const [ipv4, ipv6] = await Promise.all([answers("127.0.0.1"), answers("::1")]);
+  return ipv4 || ipv6;
+}
+
+/**
+ * The first of a slot's ports something listens on, or undefined when all are free. Playwright clears
+ * test-results/ before it checks any web server's port, so a second run in the same folder would delete
+ * the running one's traces before failing; playwright.config.ts asks this first.
+ */
+export async function firstBusyPort(values: SlotValues): Promise<number | undefined> {
+  const ports = [
+    values.webPort,
+    values.garminServicePort,
+    values.fakeClaudePort,
+    values.coachServicePort,
+  ];
+  const busy = await Promise.all(ports.map(listening));
+  return ports.find((_, index) => busy[index]);
 }
 
 function readSlotSource(): SlotSource {

@@ -1,6 +1,7 @@
 // @vitest-environment node
+import { createServer, type Server } from "node:net";
 import { describe, expect, it, vi } from "vitest";
-import { resolveSlot, slotValues, type SlotSource } from "./slot";
+import { firstBusyPort, resolveSlot, slotValues, type SlotSource } from "./slot";
 
 // Importing slot.ts resolves this folder's own slot; a fixed one keeps these tests independent of the folder
 // they run in (a linked worktree without .e2e-slot would throw on import). unstubEnvs restores it.
@@ -90,5 +91,39 @@ describe("resolveSlot", () => {
     expect(() => resolveSlot(source({ env: "abc", file: "2" }))).toThrow(
       'The e2e slot from E2E_SLOT is "abc"; it must be one digit from 0 to 9.',
     );
+  });
+});
+
+/** A server on a free loopback port, for a slot whose web port it holds. */
+async function listenOnFreePort(): Promise<Server> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return server;
+}
+
+function portOf(server: Server): number {
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("no port");
+  return address.port;
+}
+
+describe("firstBusyPort", () => {
+  it("names the port a second run in the same folder would find taken", async () => {
+    const server = await listenOnFreePort();
+    try {
+      const port = portOf(server);
+      expect(await firstBusyPort({ ...slotValues(9), webPort: port })).toBe(port);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("finds nothing once that run's servers have stopped", async () => {
+    const server = await listenOnFreePort();
+    const port = portOf(server);
+    await new Promise((resolve) => server.close(resolve));
+    const values = slotValues(9);
+    // Slot 9 is never written by pnpm worktree:add before eight others exist, so its ports are free here.
+    expect(await firstBusyPort({ ...values, webPort: port })).toBeUndefined();
   });
 });

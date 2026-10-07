@@ -8,7 +8,7 @@ import {
   fakeClaudeUrl,
   runner,
 } from "./e2e/fixtures/seed";
-import { e2eSlot } from "./e2e/fixtures/slot";
+import { e2eSlot, firstBusyPort } from "./e2e/fixtures/slot";
 
 // Flows (`pnpm test:e2e`) drive a local Chromium. Screens (`pnpm test:screens`) drive the Chromium inside the
 // official Playwright image through e2e/run-screens.ts, so host fonts and rendering never reach a baseline.
@@ -16,6 +16,19 @@ import { e2eSlot } from "./e2e/fixtures/slot";
 // the coach on a local fake Claude: the Messages API for a key, and the coach service over a fake Claude
 // Code CLI for the owner's Claude plan. This folder's e2e slot (e2e/fixtures/slot.ts) picks every port and
 // the database, so worktrees run e2e side by side.
+
+// A second run in this folder, or servers a killed run left behind, would hold the slot's ports: stop here,
+// before Playwright clears test-results/ under a running suite. Only the runner checks; each worker loads
+// this file too, while its own run holds the ports. Nothing is ever killed.
+if (process.env.TEST_WORKER_INDEX === undefined) {
+  const busy = await firstBusyPort(e2eSlot);
+  if (busy !== undefined) {
+    throw new Error(
+      `Port ${busy} of e2e slot ${e2eSlot.slot} is in use: another e2e run in this folder, or servers a ` +
+        `killed run left behind (lsof -nP -iTCP:${busy} -sTCP:LISTEN names them). Wait for it, or stop them.`,
+    );
+  }
+}
 
 const PORT = e2eSlot.webPort;
 const baseURL = `http://localhost:${PORT}`;
