@@ -1,18 +1,20 @@
-// pnpm coach:eval [--plan] [--write]: runs every run-insight eval case against the live Claude API, once
-// per prompt version before merge (coach-prompts rule). With the owner's key by default: typed at a
-// hidden prompt, used for these calls and forgotten, never an argument, an env var, a log line or a file.
-// With --plan on the owner's Claude plan instead, through the coach service named by COACH_SERVICE_URL
-// and COACH_SERVICE_SECRET; the plan's token stays in that service. Prints each case's model, usage,
-// schema check and voice check; --write saves every card that passes both as the case's recorded
-// output, for `pnpm test` to check from then on.
+// pnpm coach:eval [--prompt <name>] [--plan] [--write]: runs every case in prompts/<name>/eval
+// (run-insight by default) against the live Claude API, once per prompt version before merge
+// (coach-prompts rule). With the owner's key by default: typed at a hidden prompt, used for these calls
+// and forgotten, never an argument, an env var, a log line or a file. With --plan on the owner's Claude
+// plan instead, through the coach service named by COACH_SERVICE_URL and COACH_SERVICE_SECRET; the
+// plan's token stays in that service. Prints each case's model, usage, schema check and voice check;
+// --write saves every output that passes both as the case's recorded output, for `pnpm test` to check
+// from then on.
 import { parseArgs } from "node:util";
 import type { CoachCallCredential } from "../coach/client";
-import { RUN_INSIGHT_EVAL_DIR, runRunInsightEval } from "../coach/run-insight-eval";
+import { evalDir, loadEvalDefinition, runCoachEval } from "../coach/eval";
 import { coachServiceOf, config } from "../lib/config";
 import { safeErrorMessage } from "../lib/logger";
 
 const { values } = parseArgs({
   options: {
+    prompt: { type: "string", default: "run-insight" },
     write: { type: "boolean", default: false },
     plan: { type: "boolean", default: false },
   },
@@ -49,6 +51,12 @@ function readHidden(prompt: string): Promise<string> {
   });
 }
 
+// Before anything else, so a wrong name costs no key prompt and no call.
+const definition = await loadEvalDefinition(values.prompt).catch((err: unknown) => {
+  console.error(safeErrorMessage(err));
+  process.exit(1);
+});
+
 const coachService = coachServiceOf(config);
 if (values.plan && !coachService) {
   console.error(
@@ -76,10 +84,10 @@ async function credentialFromArgs(): Promise<CoachCallCredential> {
 }
 
 try {
-  console.log(`Cases: ${RUN_INSIGHT_EVAL_DIR}`);
+  console.log(`Cases: ${evalDir(definition.prompt)}`);
   const credential = await credentialFromArgs();
 
-  const results = await runRunInsightEval({ credential, write: values.write });
+  const results = await runCoachEval({ definition, credential, write: values.write });
   for (const result of results) {
     const usage = result.usage
       ? `${result.usage.inputTokens} in / ${result.usage.outputTokens} out`

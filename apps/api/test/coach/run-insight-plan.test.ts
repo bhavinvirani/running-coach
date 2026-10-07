@@ -204,7 +204,7 @@ describe("the plan change on the Claude plan (run-insight v2)", () => {
   }
 
   it("stores the plan's output with a change: the next session scaled in place, logged against the card, the card's next step the change's", async () => {
-    coach.use({ run: { kind: "change" } });
+    coach.use({ run: { kind: "valid", fixture: "adjust-scale" } });
     const { userId, run, session } = await ownerWithPlan();
 
     const outcome = await analyzeRun(userId, run.id, { lastAttempt: false, now: NOW });

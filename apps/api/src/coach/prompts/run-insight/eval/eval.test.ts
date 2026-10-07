@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { readRunInsightEvalCases, runInsightOutputProblems } from "../../../run-insight-eval";
+import { readEvalCases } from "../../../eval";
 import { voiceProblems } from "../../../voice";
 import { buildRunInsightFallback, RUN_INSIGHT_FALLBACK_REASONS } from "../fallback";
 import { buildRunInsightInput } from "../input";
 import { runInsightOutputSchema, runInsightSchema } from "../schema";
+import { type RunInsightEvalInput, runInsightOutputProblems } from "./definition";
 
 // The run-insight v2 eval: each case is an input and a recorded output, checked for schema validity,
 // voice (src/coach/voice.ts) and the plan change's rules (runInsightOutputProblems). The outputs are
-// the recorded live v2 run on the Claude plan (`pnpm coach:eval --plan --write`,
-// src/coach/run-insight-eval.ts).
+// the recorded live v2 run on the Claude plan (`pnpm coach:eval --plan --write`, src/coach/eval.ts with
+// definition.ts).
 
-const cases = await readRunInsightEvalCases(import.meta.dirname);
+const cases = await readEvalCases<RunInsightEvalInput>(import.meta.dirname);
 
 describe("run-insight eval", () => {
   it("has 3 to 5 cases: with and without a plan, a change allowed and proposed, a change not allowed", () => {

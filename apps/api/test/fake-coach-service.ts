@@ -19,7 +19,9 @@ import { type Config, config } from "../src/lib/config";
 // A local stand-in for the coach service (services/coach) that runs the owner's coach on their Claude
 // plan: GET /health, and POST /v1/run behind x-coach-secret, answering as its contract in packages/shared
 // says. A test file starts its own; `use` picks how it wakes and what a run answers, and every request
-// is recorded. `configureCoachService` points the API's config at it as the owner's coach service.
+// is recorded. A valid answer is the output of the fake Claude fixture the test names, for any prompt, so
+// a new prompt adds its fixture file and edits nothing here. `configureCoachService` points the API's
+// config at it as the owner's coach service.
 
 /** A fake secret, long enough for COACH_SERVICE_SECRET's 32 characters. */
 export const FAKE_COACH_SECRET = "test-only-coach-service-secret-0123456789";
@@ -27,13 +29,31 @@ export const FAKE_COACH_SECRET = "test-only-coach-service-secret-0123456789";
 /** The owner in these tests: createUser's and signedInAgent's default email. */
 export const PLAN_OWNER_EMAIL = "runner@example.com";
 
-/** The output a fake Claude fixture answers first: run-insight v2's, the card plus its adjustment. */
-export function fixtureOutput(fixture: string): RunInsightOutput {
+/**
+ * The output test/fixtures/claude/<fixture>.json answers first, unparsed, so one fixture serves the key
+ * path (the fake Claude) and the plan path (this service) for any prompt.
+ */
+export function fixtureJson(fixture: string): unknown {
   const file = path.join(import.meta.dirname, `fixtures/claude/${fixture}.json`);
-  const parsed = JSON.parse(readFileSync(file, "utf8")) as {
-    responses: [{ body: { content: [{ json: unknown }] } }];
-  };
-  return runInsightOutputSchema.parse(parsed.responses[0].body.content[0].json);
+  let parsed: { responses?: { body?: { content?: { json?: unknown }[] } }[] };
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8")) as typeof parsed;
+  } catch (error) {
+    const message = `No fake Claude fixture "${fixture}": add test/fixtures/claude/${fixture}.json`;
+    throw new Error(message, { cause: error });
+  }
+  const json = parsed.responses?.[0]?.body?.content?.[0]?.json;
+  if (json === undefined) {
+    throw new Error(
+      `The fixture "${fixture}" answers no output: its first response needs body.content[0].json`,
+    );
+  }
+  return json;
+}
+
+/** A fixture's output parsed as run-insight v2's: the card plus its adjustment. */
+export function fixtureOutput(fixture: string): RunInsightOutput {
+  return runInsightOutputSchema.parse(fixtureJson(fixture));
 }
 
 /** The card as stored from a v2 output: the adjustment never reaches the stored card. */
@@ -46,7 +66,7 @@ export function cardOf(output: RunInsightOutput): RunInsight {
 export const VALID_OUTPUT = fixtureOutput("valid");
 /** VALID_OUTPUT as the stored card. */
 export const VALID_CARD = cardOf(VALID_OUTPUT);
-/** The "adjust-scale" fixture's output: the next session at 0.8, for the change scenario. */
+/** The "adjust-scale" fixture's output: the next session at 0.8. */
 export const CHANGE_OUTPUT = fixtureOutput("adjust-scale");
 
 /** Tokens of a plan run, unlike the key fixtures' 1180 / 164 so a test sees which path answered. */
@@ -63,16 +83,17 @@ export type WakeScenario =
   | { kind: "never" };
 
 export type RunScenario =
-  /** The card, written by the request's model, or its fallback model when Claude Code switched. */
-  | { kind: "valid"; by?: "model" | "fallbackModel" }
-  /** CHANGE_OUTPUT: the card with a change to the next session (scale 0.8). */
-  | { kind: "change" }
+  /**
+   * The output of test/fixtures/claude/<fixture>.json ("valid" by default), written by the request's
+   * model, or its fallback model when Claude Code switched.
+   */
+  | { kind: "valid"; fixture?: string; by?: "model" | "fallbackModel" }
   /** A card missing its fields: the API's schema parse must catch it. */
   | { kind: "schema-invalid" }
   /** The service's failure answer; usage when a model answered, unusably. */
   | { kind: "failure"; failure: CoachRunFailure; retryAfterSeconds?: number; billed?: boolean }
-  /** The valid card after this delay. */
-  | { kind: "slow"; delayMs: number }
+  /** The fixture's output ("valid" by default) after this delay. */
+  | { kind: "slow"; delayMs: number; fixture?: string }
   /** The service's own problem+json error. */
   | { kind: "error"; status: 400 | 500 }
   /** 200 with a body outside the response contract. */
@@ -124,22 +145,27 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function answer(scenario: RunScenario, body: Record<string, unknown>, call: number): unknown {
+/** The fixture a scenario answers, or undefined when it answers none. */
+function answeredFixture(scenario: RunScenario): string | undefined {
+  return scenario.kind === "valid" || scenario.kind === "slow"
+    ? (scenario.fixture ?? "valid")
+    : undefined;
+}
+
+function answer(
+  scenario: RunScenario,
+  output: unknown,
+  body: Record<string, unknown>,
+  call: number,
+): unknown {
   const claudeRequestId = `req_plan_${call}`;
   switch (scenario.kind) {
-    case "change":
-      return {
-        ok: true,
-        output: CHANGE_OUTPUT,
-        model: body.model,
-        usage: PLAN_USAGE,
-        claudeRequestId,
-      };
     case "valid":
     case "slow":
+      // Unparsed: the API parses it with the prompt's own schema.
       return {
         ok: true,
-        output: VALID_OUTPUT,
+        output,
         model:
           scenario.kind === "valid" && scenario.by === "fallbackModel"
             ? body.fallbackModel
@@ -175,6 +201,7 @@ function answer(scenario: RunScenario, body: Record<string, unknown>, call: numb
 export async function startFakeCoachService(): Promise<FakeCoachService> {
   let wake: WakeScenario = { kind: "awake" };
   let run: RunScenario = { kind: "valid" };
+  let output: unknown = fixtureJson("valid");
   let healthFailuresLeft = 0;
   let held = false;
   const runs: RecordedRun[] = [];
@@ -206,13 +233,14 @@ export async function startFakeCoachService(): Promise<FakeCoachService> {
       const call = runs.length;
       if (!coachRunRequestSchema.safeParse(body).success) return problem(res, 400, "validation");
       const scenario = run;
+      const scenarioOutput = output;
       if (scenario.kind === "drop") {
         req.socket.destroy();
         return;
       }
       if (scenario.kind === "error") return problem(res, scenario.status, "internal");
       if (scenario.kind === "slow") await sleep(scenario.delayMs);
-      return send(res, 200, answer(scenario, body ?? {}, call));
+      return send(res, 200, answer(scenario, scenarioOutput, body ?? {}, call));
     })().catch(() => problem(res, 500, "internal"));
   });
 
@@ -230,7 +258,12 @@ export async function startFakeCoachService(): Promise<FakeCoachService> {
         healthFailuresLeft = wake.kind === "booting" ? wake.failures : 0;
         held = false;
       }
-      if (scenario.run) run = scenario.run;
+      if (scenario.run) {
+        const fixture = answeredFixture(scenario.run);
+        // Read now, so a missing fixture fails the test at this call rather than as a 500 later.
+        output = fixture === undefined ? undefined : fixtureJson(fixture);
+        run = scenario.run;
+      }
     },
     runs,
     healthChecks,
