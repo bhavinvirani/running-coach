@@ -76,7 +76,10 @@ export const activityStreamsSchema = z
   );
 export type ActivityStreams = z.infer<typeof activityStreamsSchema>;
 
-/** Seconds spent in one of Garmin's five zones, with the zone's lower bound from the runner's Garmin settings. */
+/**
+ * Seconds spent in one of five zones, with the zone's lower bound: Garmin's own numbers, or with custom
+ * zones (GET /api/hr-zones) the runner's floors and seconds computed from the stored heart-rate series.
+ */
 export const hrZoneTimeSchema = z
   .object({
     zone: z.number().int().min(1).max(5),
@@ -100,7 +103,7 @@ export const activityDetailSchema = z
     streams: activityStreamsSchema,
     /** The GPS track in order, null for an indoor run or a manual entry. */
     route: z.array(routePointSchema).nullable(),
-    /** Garmin's five zones in order, null when the run has no heart rate. */
+    /** The five zones in order, null when the run has no heart rate. */
     hrZones: z.array(hrZoneTimeSchema).nullable(),
   })
   .strict();

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   METERS_PER_FOOT,
+  bpmAtPercentOfMaxHr,
+  percentOfMaxHr,
   METERS_PER_MILE,
   distanceInUnits,
   elevationInUnits,
@@ -60,5 +62,18 @@ describe("isGpsGlitch", () => {
 
   it("does not mark a split with no distance", () => {
     expect(isGpsGlitch(0, 60)).toBe(false);
+  });
+});
+
+describe("percentOfMaxHr and bpmAtPercentOfMaxHr", () => {
+  it("round to whole numbers", () => {
+    expect(percentOfMaxHr(137, 196)).toBe(70);
+    expect(bpmAtPercentOfMaxHr(70, 196)).toBe(137);
+  });
+
+  it("give back Garmin's default floors for a max HR", () => {
+    expect([50, 60, 70, 80, 90].map((percent) => bpmAtPercentOfMaxHr(percent, 196))).toEqual([
+      98, 118, 137, 157, 176,
+    ]);
   });
 });
