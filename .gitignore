@@ -39,6 +39,7 @@ coverage/
 # Personal Claude Code settings
 .claude/settings.local.json
 
-# Playwright output
+# Playwright output, and the Playwright MCP plugin's screenshots (they can show real data)
 playwright-report/
 test-results/
+.playwright-mcp/
