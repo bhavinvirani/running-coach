@@ -29,8 +29,10 @@ export const errorMessages: Record<ErrorCode, string> = {
   claude_plan_limited:
     "Your Claude plan has reached its usage limit. The coach tries again when the limit resets.",
   plan_missing: "Workouts read their paces from your plan. Set a goal first.",
+  // Also an open pause's hold on a move, skip, edit or add: no code of its own, since workouts_push_error
+  // checks every code.
   session_locked:
-    "This session can no longer change: it is past, done or skipped. Refresh to see it.",
+    "This session can no longer change: it is past, done or skipped, or training is paused. Refresh to see it, or tap I'm back on Today.",
 };
 
 export const networkErrorMessage =

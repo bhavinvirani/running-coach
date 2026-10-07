@@ -23,6 +23,8 @@ export const builderCopy = {
   setGoal: "Set goal",
   /** Edit opened on a plan session: only the runner's own workouts are built here. */
   notCustom: "Only workouts you built can be edited. Move or skip plan sessions from their screen.",
+  /** Edit opened on a workout an open pause holds: the API refuses the change until the runner is back. */
+  paused: "Training is paused. Tap I'm back on Today before changing this workout.",
   openSession: "Open session",
   stepLabel: (label: string) => `Step ${label}`,
   kindOf: (label: string) => `Kind of step ${label}`,
