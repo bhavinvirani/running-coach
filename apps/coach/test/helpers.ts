@@ -17,6 +17,13 @@ import { createCoachServer } from "../src/server";
 export const FAKE_CLAUDE_CODE = path.join(import.meta.dirname, "fake-claude-code.mjs");
 export const SECRET = "test-only-coach-service-secret-not-a-real-secret";
 
+/** An output the fake answers with when its keys are the request's JSON Schema properties. */
+export function outputFixture(name: string): unknown {
+  return JSON.parse(
+    readFileSync(path.join(import.meta.dirname, "fixtures", `${name}.json`), "utf8"),
+  );
+}
+
 export function testConfig(env: Record<string, string> = {}): Config {
   const result = parseConfig({
     NODE_ENV: "test",
@@ -45,6 +52,8 @@ export interface FakeEvent {
   code?: number;
   signal?: string;
   ignored?: boolean;
+  /** On exit: the line the fake wrote to stderr when no output fixture, or several, matched the schema. */
+  reason?: string;
 }
 
 export interface Coach {

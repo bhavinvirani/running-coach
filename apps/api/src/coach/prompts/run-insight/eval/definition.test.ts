@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { RunInsightOutput } from "./prompts/run-insight/schema";
-import { runInsightOutputProblems } from "./run-insight-eval";
+import type { RunInsightOutput } from "../schema";
+import { runInsightOutputProblems } from "./definition";
 
 // The plan change's rules the eval adds to the voice for run-insight v2's output.
 
