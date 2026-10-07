@@ -122,22 +122,22 @@
     }
   },
   "output": {
-    "headline": "A week back from illness: 2 of 2 sessions done, 14.6 km against a planned 15.0 km.",
-    "whatHappened": "You were paused sick from Saturday 26 September to Thursday 1 October, so Tuesday's easy 8.0 km and Thursday's 9.0 km tempo were skipped. Saturday's walk-run was 4.1 km at 7:31 /km and 136 bpm. Sunday's long run was 10.5 km at 6:11 /km and 158 bpm.",
-    "whatItMeans": "This was a week of coming back after illness, so it says little about your fitness. A heart rate of 158 bpm is on the high side for a long run at 6:11 /km, which suggests your body is still recovering.",
-    "nextWeek": "3 sessions, 22.0 km: a 5.0 km walk-run on Tuesday, a 6.0 km tempo on Thursday and an 11.0 km long run on Sunday. Run only when you feel well. If your heart rate stays high or you feel unwell again, see a doctor.",
+    "headline": "A week back from illness: 14.6 km against a planned 15.0 km, with both remaining sessions done.",
+    "whatHappened": "You paused training for illness from Saturday 26 September to Thursday 1 October, so Tuesday's easy 8.0 km and Thursday's 9.0 km tempo were skipped. Saturday's walk-run covered 4.1 km at 7:31 /km at 136 bpm. Sunday's long run covered 10.5 km of the planned 11.0 km at 6:11 /km at 158 bpm.",
+    "whatItMeans": "This week was shaped by the illness, so it says little about your fitness. A heart rate of 158 bpm is high for a long run at 6:11 /km, which suggests your body is still recovering.",
+    "nextWeek": "3 sessions, 22.0 km: a 5.0 km walk-run on Tuesday, a 6.0 km tempo on Thursday and an 11.0 km long run on Sunday. Only run when you feel well. If symptoms come back or your heart rate stays high, rest and see a doctor.",
     "changes": [
       {
         "session": "s2",
         "kind": "easy",
         "factor": null,
-        "note": "Run Thursday's tempo as an easy run. You are just back from illness and your heart rate was high on Sunday."
+        "note": "Run Thursday's tempo as an easy run. You are back from illness, and Sunday's heart rate was high for the pace."
       },
       {
         "session": "s3",
         "kind": "scale",
         "factor": 0.8,
-        "note": "Keep Sunday's long run shorter and easy, so you rebuild gradually after being sick."
+        "note": "Shorten Sunday's long run and keep it easy, so your body can finish recovering from the illness."
       }
     ]
   }

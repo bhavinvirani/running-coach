@@ -50,9 +50,9 @@
   },
   "output": {
     "headline": "3 runs, 26.0 km, up from 18.0 km the week before.",
-    "whatHappened": "You ran 6.0 km on Tuesday at 5:50 /km and 145 bpm, 8.0 km on Thursday at 6:03 /km with no heart rate, and 12.0 km on Saturday at 6:07 /km and 150 bpm.",
-    "whatItMeans": "You ran 8.0 km more than the week before, a rise of about 44%, at steady easy paces with heart rate between 145 and 150 bpm.",
-    "nextWeek": "You have no plan, so keep to easy runs with rest days between them, and do not add distance or speed after this week's rise.",
+    "whatHappened": "You ran 6.0 km on Tuesday at 5:50 /km (145 bpm), 8.0 km on Thursday at 6:03 /km (no heart rate recorded) and 12.0 km on Saturday at 6:07 /km (150 bpm).",
+    "whatItMeans": "Heart rates of 145 and 150 bpm fit easy running, but the volume rose by 8.0 km, about 44%, in one week.",
+    "nextWeek": "With no plan, keep to easy runs with rest days between them, and do not add distance or speed beyond this week's 26.0 km.",
     "changes": []
   }
 }

@@ -83,7 +83,11 @@
         "distanceM": 30500
       },
       "pause": null,
-      "openPause": null
+      "openPause": {
+        "reason": "injured",
+        "startDate": "2026-10-05",
+        "endDate": null
+      }
     },
     "plan": {
       "goal": {
@@ -104,7 +108,7 @@
           "status": "planned",
           "distanceM": 6437,
           "durationS": 2880,
-          "changeable": true
+          "changeable": false
         },
         {
           "label": "s2",
@@ -114,7 +118,7 @@
           "status": "planned",
           "distanceM": 8047,
           "durationS": 3000,
-          "changeable": true
+          "changeable": false
         },
         {
           "label": "s3",
@@ -134,11 +138,11 @@
           "status": "planned",
           "distanceM": 13679,
           "durationS": 6300,
-          "changeable": true
+          "changeable": false
         }
       ],
-      "changeAllowed": true,
-      "reason": null
+      "changeAllowed": false,
+      "reason": "paused"
     },
     "settings": {
       "units": "mi",
@@ -146,10 +150,10 @@
     }
   },
   "output": {
-    "headline": "All 4 sessions done, 23.2 mi against a planned 20.0 mi, with one extra treadmill run.",
-    "whatHappened": "Monday's easy 4.0 mi, Wednesday's 5.0 mi tempo at 9:54 /mi, Thursday's 3.0 mi of hill repeats and Saturday's 8.0 mi long run at 12:38 /mi were all done. On Sunday you added a 3.0 mi treadmill run with no heart rate, which no session matched. That made 23.2 mi, 116% of the plan and 4.2 mi more than the 19.0 mi of the week before.",
-    "whatItMeans": "The planned work went as written. Heart rate stayed steady: 138 bpm on the easy run, 146 bpm on the long run and 158 bpm on the tempo. The extra 3.0 mi took the week 3.2 mi over the plan, a 22% rise on the week before. Distance and pace for the treadmill run are the watch's estimate.",
-    "nextWeek": "The plan has 4 sessions for 20.5 mi: an easy 4.0 mi on Monday, a 5.0 mi tempo on Wednesday, 3.0 mi of hill repeats on Thursday and an 8.5 mi long run on Saturday. Stick to these sessions and skip extra runs, so your volume stays at the level the plan sets.",
+    "headline": "All 4 sessions done, 23.2 mi against a planned 20.0 mi, and training is now paused for pain or injury.",
+    "whatHappened": "You did all 4 sessions: Monday's easy 4.0 mi at 11:58 /mi, Wednesday's 5.0 mi tempo at 9:54 /mi, Thursday's 3.0 mi of hill repeats and Saturday's 8.0 mi long run at 12:38 /mi. On Sunday you added a 3.0 mi treadmill run that no session matched. That made 5 runs and 23.2 mi, 116% of the plan and up from 19.0 mi the week before.",
+    "whatItMeans": "The extra 3.0 mi on Sunday is what put the week over the plan, the day after the long run. Heart rate on the planned runs fit the efforts: 138 bpm easy, 146 bpm on the long run. The treadmill run has no heart rate, and its pace is the watch's estimate. The pause for pain or injury from Monday 5 October comes first now.",
+    "nextWeek": "Your plan is on hold while the pause is open. The coming week has 4 sessions over 20.5 mi, including Wednesday's 5.0 mi tempo and Saturday's 8.5 mi long run. For now, rest. Run easy only once you are free of pain, then tap I'm back on Today. If the pain does not get better, see a doctor or physio.",
     "changes": []
   }
 }

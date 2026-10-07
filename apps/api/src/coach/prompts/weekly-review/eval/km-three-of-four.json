@@ -134,9 +134,9 @@
   },
   "output": {
     "headline": "3 of 4 sessions done, 33.4 km against a planned 39.0 km.",
-    "whatHappened": "Tuesday's easy 8.1 km at 5:37 /km, Thursday's 9.1 km tempo at 5:15 /km and Sunday's 16.2 km long run at 6:04 /km were done. Friday's easy 6.0 km was missed, and volume fell from 36.0 km the week before.",
-    "whatItMeans": "Heart rate sat where it should: 141 bpm on the easy run, 149 bpm on the long run and 162 bpm on the tempo. The effort looks under control, and the shortfall comes from the missed run alone.",
-    "nextWeek": "4 sessions, 40.0 km: an easy 8.0 km on Tuesday, 9.0 km of intervals on Thursday, an easy 6.0 km on Friday and a 17.0 km long run on Sunday. Run them as written. Friday's missed run from last week is not added back.",
+    "whatHappened": "Tuesday's easy 8.1 km at 5:37 /km, Thursday's 9.1 km tempo at 5:15 /km and Sunday's 16.2 km long run at 6:04 /km were done. Friday's easy 6.0 km was missed, and there were no runs outside the plan.",
+    "whatItMeans": "Heart rates were in line with the efforts: 141 bpm on the easy run, 162 bpm on the tempo and 149 bpm on the long run. Volume dropped from 36.0 km the week before, only because of the missed easy run.",
+    "nextWeek": "4 sessions, 40.0 km: an easy 8.0 km on Tuesday, 9.0 km of intervals on Thursday, an easy 6.0 km on Friday and a 17.0 km long run on Sunday. Run them as written. Friday's missed run is not added to this week.",
     "changes": []
   }
 }

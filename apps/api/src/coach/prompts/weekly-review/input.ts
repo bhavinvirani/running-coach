@@ -16,7 +16,8 @@ import { describeSession } from "../run-insight/input";
 
 // The user message for weekly-review: the Monday-to-Sunday week that just ended (its sessions as stored,
 // with the run that matched each, the runs no session matched, its totals against the week before, any
-// pause, and a pause opened since and still open), then the goal and the coming week's sessions under labels s1..sN with whether each may change.
+// pause, and a pause opened since and still open), then the goal and the coming week's sessions under
+// labels s1..sN with whether each may change.
 // Built from plain JSON the service passes in (an eval case's input is exactly { week, plan, settings }),
 // in the runner's units through format.ts, with labels instead of ids, so it cannot carry the API key,
 // Garmin tokens, the email, an id or another user's data.
