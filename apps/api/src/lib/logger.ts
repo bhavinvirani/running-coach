@@ -9,6 +9,8 @@ const SENSITIVE_KEYS = [
   "tokenBundle",
   "token",
   "password",
+  // The Garmin two-factor code of the web login: short-lived, but it finishes a login while it lasts.
+  "mfaCode",
   "apiKey",
   "authorization",
   "cookie",
