@@ -11,9 +11,9 @@ import { planCopy, warningSentence } from "./plan-copy";
 import { usePlanScreen } from "./use-plan";
 
 /**
- * Plan tab: the goal, the plan's paces, what the engine had to compromise on, then the weeks, each opening
- * its days. Empty until a goal is saved; the goal and its plan are saved together, so a goal without a
- * plan is empty too.
+ * Plan tab: the goal, the plan's paces, what the engine had to compromise on, the way to the coach's
+ * weekly reviews, then the weeks, each opening its days. Empty until a goal is saved; the goal and its
+ * plan are saved together, so a goal without a plan is empty too.
  */
 export function PlanScreen() {
   const screen = usePlanScreen();
@@ -77,6 +77,9 @@ export function PlanScreen() {
           ))}
         </ul>
       ) : null}
+      <Button asChild variant="secondary" className="self-start">
+        <Link to="/plan/reviews">{planCopy.weeklyReviews}</Link>
+      </Button>
       <section aria-label={planCopy.weeks} className="flex flex-col gap-2">
         <h2 className="text-body font-semibold text-ink">{planCopy.weeks}</h2>
         <ol className="flex flex-col gap-3">

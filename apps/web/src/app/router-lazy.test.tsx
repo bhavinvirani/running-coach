@@ -22,6 +22,8 @@ vi.mock("@/screens/today/today-screen", gone);
 vi.mock("@/screens/plan/plan-screen", gone);
 vi.mock("@/screens/goal/goal-screen", gone);
 vi.mock("@/screens/plan-week/plan-week-screen", gone);
+vi.mock("@/screens/reviews/reviews-screen", gone);
+vi.mock("@/screens/review/review-screen", gone);
 vi.mock("@/screens/workout-builder/workout-builder-screen", gone);
 vi.mock("@/screens/session/session-screen", gone);
 vi.mock("@/screens/progress/progress-screen", gone);
@@ -34,6 +36,8 @@ const tabScreens = [
   { route: "/plan", at: "/plan" },
   { route: "/plan/goal", at: "/plan/goal" },
   { route: "/plan/weeks/:number", at: "/plan/weeks/1" },
+  { route: "/plan/reviews", at: "/plan/reviews" },
+  { route: "/plan/reviews/:id", at: "/plan/reviews/abc" },
   { route: "/plan/sessions/new", at: "/plan/sessions/new" },
   { route: "/plan/sessions/:id", at: "/plan/sessions/abc" },
   { route: "/plan/sessions/:id/edit", at: "/plan/sessions/abc/edit" },

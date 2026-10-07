@@ -28,6 +28,8 @@ export const planCopy = {
   paces: "Paces",
   notes: "Plan notes",
   weeks: "Weeks",
+  /** Opens the coach's weekly reviews, newest week first. */
+  weeklyReviews: "Weekly reviews",
   /** Said after a week's name to a screen reader; on screen the selected border says it. */
   thisWeek: "this week",
 } as const;

@@ -300,6 +300,25 @@ describe("PlanScreen", () => {
     for (const link of links) expect(link).not.toHaveClass("border-line-selected");
   });
 
+  it("opens the coach's weekly reviews from Plan when a plan exists, above the weeks (past reviews visible)", async () => {
+    fakePlanApi();
+    const { router } = renderPlan();
+
+    const reviews = await screen.findByRole("link", { name: "Weekly reviews" });
+    expect(reviews).toHaveAttribute("href", "/plan/reviews");
+    // Its own row: not one of the week cards.
+    expect(
+      within(screen.getByRole("region", { name: "Weeks" })).queryByRole("link", {
+        name: "Weekly reviews",
+      }),
+    ).toBeNull();
+
+    await userEvent.click(reviews);
+
+    expect(await screen.findByText("Route not under test")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/plan/reviews");
+  });
+
   it("opens a week from its card", async () => {
     fakePlanApi();
     const { router } = renderPlan();

@@ -5,12 +5,14 @@ import { useCalendar, useSendToGarmin, useUnscheduleGarmin } from "@/api/calenda
 import { useGarminConnection, useGarminConnectionSeen, useSettings } from "@/api/me";
 import { useEndPause, usePause, useStartPause } from "@/api/pause";
 import { NO_RUN_BESTS, bestDistancesByRun, usePersonalBests } from "@/api/personal-bests";
+import { useLatestReview, useReviewFeedback } from "@/api/reviews";
 import { screenState } from "@/api/screen-state";
 import { useLatestSync, useSyncNow } from "@/api/sync";
 import { addDays, today } from "@/lib/dates";
 import type { SendState } from "@/components/garmin-push-line";
 import type { UnscheduleState } from "./parts/other-garmin-workouts";
 import type { PauseState } from "./parts/use-pause-flow";
+import type { WeeklyReviewState } from "./parts/weekly-review";
 import { syncOutcomeLine } from "./today-copy";
 
 /**
@@ -25,7 +27,8 @@ import { syncOutcomeLine } from "./today-copy";
  * "Syncing…", then its result. The next 7 days come from the calendar, today to six days on in the
  * runner's time zone, with Send to Garmin and Unschedule for the workouts the app did not create. With an
  * active plan (the calendar answers its paces) the open pause is read too, with Pause training and I'm
- * back; a runner without a plan has nothing to pause, so it is never asked for.
+ * back; a runner without a plan has nothing to pause, so it is never asked for. The coach's weekly review
+ * loads beside the run, polls while the coach writes it, and takes thumbs.
  */
 export function useTodayScreen() {
   const latest = useLatestActivity();
@@ -45,6 +48,8 @@ export function useTodayScreen() {
   const pause = usePause(calendar.data !== undefined && calendar.data.paces !== null);
   const startPause = useStartPause();
   const endPause = useEndPause();
+  const latestReview = useLatestReview();
+  const reviewFeedback = useReviewFeedback();
   // The header's Reconnect Garmin is the only place Today says why its sessions are not on Garmin.
   useGarminConnectionSeen(calendar.data?.garmin.connection);
   // Kept here rather than read from the mutation, which forgets one workout's error when the next starts.
@@ -69,6 +74,7 @@ export function useTodayScreen() {
     syncNow: () => mutate(),
     /** The runner's local date; undefined until the settings are known. */
     today: day,
+    timeZone: settings.data?.timezone,
     calendar: screenState(calendar),
     send: {
       sending: send.isPending,
@@ -104,6 +110,13 @@ export function useTodayScreen() {
         endPause.mutate(undefined, { onSuccess: (response) => onEnded(response.reEntry) }),
       reEntry: endPause.data?.reEntry ?? null,
     } satisfies PauseState,
+    review: {
+      state: screenState(latestReview),
+      // The owner on the Claude plan has a credential without a saved key.
+      hasCredential: settings.data !== undefined && settings.data.coachCredential !== "none",
+      setFeedback: (reviewId, feedback) => reviewFeedback.mutate({ reviewId, feedback }),
+      feedbackError: reviewFeedback.error,
+    } satisfies WeeklyReviewState,
   };
 }
 

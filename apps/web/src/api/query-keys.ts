@@ -12,6 +12,7 @@ export type Resource =
   | "calendar"
   | "sessions"
   | "insights"
+  | "reviews"
   | "pause";
 
 type Id = string | number;

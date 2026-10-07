@@ -2,6 +2,7 @@ import type {
   Activity,
   CalendarResponse,
   EndPauseResponse,
+  LatestReviewResponse,
   MeResponse,
   PauseReason,
   PersonalBestsResponse,
@@ -39,6 +40,13 @@ import {
   pausedSessionFixture,
   trainingPauseFixture,
 } from "@/test/fixtures-adaptation";
+import {
+  REVIEW_ID,
+  fallbackReviewFixture,
+  latestReviewReadyFixture,
+  reviewResponseFixture,
+  weeklyReviewCardFixture,
+} from "@/test/fixtures-weekly-review";
 import { renderScreen } from "@/test/render";
 import { TodayScreen } from "./today-screen";
 
@@ -62,7 +70,12 @@ type FakeTodayApi = {
   bestsAfterSync?: PersonalBestsResponse;
   /** /api/me once a sync has answered: the API marks the login expired when Garmin refuses it. */
   meAfterSync?: MeResponse;
+  /** GET /api/reviews/latest: no review to show unless a test says otherwise, or an answer per read. */
+  review?: LatestReviewResponse | (() => Response | Promise<Response>);
 };
+
+/** No weekly review to show: what GET /api/reviews/latest answers in the tests about anything else. */
+const NO_REVIEW: LatestReviewResponse = { state: "none" };
 
 /** GET /api/calendar of a runner without a plan: no paces, so Today shows no next 7 days. */
 function noPlanCalendar({ query }: FakeRequest): Response {
@@ -70,8 +83,8 @@ function noPlanCalendar({ query }: FakeRequest): Response {
 }
 
 /**
- * /api/me, GET /api/activities/latest, GET /api/personal-bests, POST /api/sync and a calendar without a
- * plan, in memory.
+ * /api/me, GET /api/activities/latest, GET /api/personal-bests, POST /api/sync, a calendar without a
+ * plan and the weekly review, in memory.
  */
 function fakeTodayApi({
   me = meFixture(),
@@ -81,6 +94,7 @@ function fakeTodayApi({
   bests = personalBestsFixture(),
   bestsAfterSync,
   meAfterSync,
+  review = NO_REVIEW,
 }: FakeTodayApi = {}) {
   let currentMe = me;
   let current = latest;
@@ -93,6 +107,13 @@ function fakeTodayApi({
   return stubFetch((request) => {
     const { method, path } = request;
     if (method === "GET" && path === "/api/calendar") return noPlanCalendar(request);
+    if (method === "GET" && path === "/api/reviews/latest") {
+      return typeof review === "function" ? review() : json(review);
+    }
+    if (method === "PUT" && path === `/api/reviews/${REVIEW_ID}/feedback`) {
+      const { feedback } = request.body as { feedback: "up" | "down" | null };
+      return json(reviewResponseFixture(weeklyReviewCardFixture({ feedback })));
+    }
     if (method === "GET" && path === "/api/me") {
       return typeof currentMe === "function" ? currentMe() : json(currentMe);
     }
@@ -165,6 +186,7 @@ describe("TodayScreen", () => {
     stubFetch((request) => {
       const { path } = request;
       if (path === "/api/calendar") return noPlanCalendar(request);
+      if (path === "/api/reviews/latest") return json(NO_REVIEW);
       if (path === "/api/me") return json(meFixture());
       if (path === "/api/personal-bests") return json(personalBestsFixture());
       attempts += 1;
@@ -186,6 +208,7 @@ describe("TodayScreen", () => {
     stubFetch((request) => {
       const { path } = request;
       if (path === "/api/calendar") return noPlanCalendar(request);
+      if (path === "/api/reviews/latest") return json(NO_REVIEW);
       if (path === "/api/me") return json(meFixture());
       if (path === "/api/personal-bests") return json(personalBestsFixture());
       return failing ? problem(503, ErrorCode.internal) : json({ activity: activityFixture() });
@@ -876,6 +899,8 @@ type FakeWeekApi = {
    * when it fails partway (`failure`).
    */
   sync?: { change: (session: PlanSession) => PlanSession; failure?: Response };
+  /** GET /api/reviews/latest: no review to show unless a test says otherwise. */
+  review?: LatestReviewResponse;
 };
 
 /** The week with `change` applied to each of its sessions, like the API's next read after a change. */
@@ -903,12 +928,14 @@ function fakeWeekApi({
   startPause,
   endPause = endPauseResponseFixture(),
   sync,
+  review = NO_REVIEW,
 }: FakeWeekApi = {}) {
   let current = calendar;
   let openPause = pause;
   return stubFetch((request) => {
     const { method, path } = request;
     if (method === "GET" && path === "/api/me") return json(typeof me === "function" ? me() : me);
+    if (method === "GET" && path === "/api/reviews/latest") return json(review);
     if (method === "GET" && path === "/api/activities/latest") {
       return json({ activity: activityFixture() });
     }
@@ -1870,4 +1897,267 @@ describe("TodayScreen session status", () => {
       expect(reads()).toBe(before + 1);
     },
   );
+});
+
+/** A runner whose coach has a credential, a saved key: a review is there most of the week. */
+const meWithKey = meFixture({
+  settings: { ...meFixture().settings, hasClaudeKey: true, coachCredential: "key" },
+});
+
+const reviewRegion = () => screen.queryByRole("region", { name: "Weekly review" });
+const findReviewRegion = () => screen.findByRole("region", { name: "Weekly review" });
+
+describe("TodayScreen weekly review", () => {
+  it("sits between the latest run and the next 7 days when ready, with Past reviews opening the list", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+    try {
+      fakeWeekApi({ review: latestReviewReadyFixture() });
+      const { router } = renderToday();
+      await loadedWeek();
+      const review = await findReviewRegion();
+
+      const order = screen
+        .getAllByRole("region")
+        .map((region) => region.getAttribute("aria-label"))
+        .filter(
+          (name) => name === "Latest run" || name === "Weekly review" || name === "Next 7 days",
+        );
+      expect(order).toEqual(["Latest run", "Weekly review", "Next 7 days"]);
+      expect(within(review).getByRole("heading", { name: "Weekly review" })).toHaveClass(
+        "text-body",
+        "font-semibold",
+      );
+      expect(
+        within(review).getByText(weeklyReviewCardFixture().content.headline),
+      ).toBeInTheDocument();
+      // Today's own Next 7 days is the coming week, so the card leaves its preview out.
+      expect(within(review).queryByRole("region", { name: "Coming week" })).toBeNull();
+
+      const past = within(review).getByRole("link", { name: "Past reviews" });
+      expect(past).toHaveAttribute("href", "/plan/reviews");
+      await userEvent.click(past);
+      expect(router.state.location.pathname).toBe("/plan/reviews");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the week's numbers, parts and the engine's change on the card", async () => {
+    fakeTodayApi({ review: latestReviewReadyFixture() });
+    renderToday();
+    const review = await findReviewRegion();
+
+    expect(within(review).getByText("5–11 Oct")).toBeInTheDocument();
+    expect(
+      within(review).getByText("Sessions", { selector: "span" }).parentElement,
+    ).toHaveTextContent("Sessions4of 5");
+    expect(
+      within(review).getByText("Sun 18 Long run 18.0 km → Long run 16.2 km"),
+    ).toBeInTheDocument();
+    expect(within(review).getByRole("button", { name: "Helpful" })).toBeInTheDocument();
+  });
+
+  it("gives the card's distances in mi when the runner uses miles (unit conversion)", async () => {
+    fakeTodayApi({
+      me: meFixture({ settings: { ...meFixture().settings, units: "mi" } }),
+      review: latestReviewReadyFixture(),
+    });
+    renderToday();
+    const review = await findReviewRegion();
+
+    expect(
+      within(review).getByText("Distance", { selector: "span" }).parentElement,
+    ).toHaveTextContent("Distance19.5of 23.6 mi");
+    expect(
+      within(review).getByText("Sun 18 Long run 11.2 mi → Long run 10.1 mi"),
+    ).toBeInTheDocument();
+  });
+
+  it("stores a thumb from Today's card and shows it pressed (thumbs stored)", async () => {
+    const calls = fakeTodayApi({ review: latestReviewReadyFixture() });
+    renderToday();
+    const helpful = await within(await findReviewRegion()).findByRole("button", {
+      name: "Helpful",
+    });
+
+    await userEvent.click(helpful);
+
+    await waitFor(() => expect(helpful).toHaveAttribute("aria-pressed", "true"));
+    expect(calls.filter((call) => call.method === "PUT")).toEqual([
+      expect.objectContaining({
+        path: `/api/reviews/${REVIEW_ID}/feedback`,
+        body: { feedback: "up" },
+      }),
+    ]);
+  });
+
+  it("shows a fallback review's reason in place of what it means, without thumbs or Try again (fallback card)", async () => {
+    const fallback = fallbackReviewFixture("timeout");
+    fakeTodayApi({ review: latestReviewReadyFixture(fallback) });
+    renderToday();
+    const review = await findReviewRegion();
+
+    expect(within(review).getByText(fallback.content.whatItMeans)).toBeInTheDocument();
+    expect(within(review).queryByText("What it means")).not.toBeInTheDocument();
+    expect(within(review).queryByRole("button", { name: "Helpful" })).not.toBeInTheDocument();
+    expect(within(review).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("says the coach is writing the review in one line while it is pending (pending)", async () => {
+    fakeTodayApi({ review: { state: "pending" } });
+    renderToday();
+    const review = await findReviewRegion();
+
+    expect(within(review).getByRole("status")).toHaveTextContent(
+      /^The coach is writing your weekly review\.$/,
+    );
+    expect(within(review).getByRole("status")).toHaveClass("text-body", "text-ink-2");
+    expect(within(review).queryByRole("heading")).not.toBeInTheDocument();
+    expect(within(review).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("says the coach is unavailable and will retry in one line while retrying (retrying)", async () => {
+    fakeTodayApi({ review: { state: "retrying" } });
+    renderToday();
+
+    expect(within(await findReviewRegion()).getByRole("status")).toHaveTextContent(
+      /^Coach unavailable, will retry your weekly review\.$/,
+    );
+  });
+
+  it("says when the coach writes the review once the Claude plan's usage limit resets, in the runner's time zone (retrying, plan usage limit)", async () => {
+    fakeTodayApi({
+      me: meFixture({ settings: { ...meFixture().settings, timezone: "America/New_York" } }),
+      review: { state: "retrying", resumesAt: "2026-10-12T13:00:00Z" },
+    });
+    renderToday();
+
+    expect(within(await findReviewRegion()).getByRole("status")).toHaveTextContent(
+      "Your Claude plan's usage limit is reached. The coach writes your weekly review Mon 12 Oct, 09:00.",
+    );
+  });
+
+  it("shows nothing when there is no review to show (none)", async () => {
+    fakeTodayApi({ review: { state: "none" } });
+    renderToday();
+    await screen.findByRole("region", { name: "Latest run" });
+
+    await waitFor(() => expect(reviewRegion()).not.toBeInTheDocument());
+    expect(screen.queryByText(/weekly review/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps Today when the review fails to load, with the alert and Retry in its place, and loads it on Retry (failed query)", async () => {
+    let failing = true;
+    fakeTodayApi({
+      review: () => (failing ? problem(500, ErrorCode.internal) : json(latestReviewReadyFixture())),
+    });
+    renderToday();
+
+    const review = await findReviewRegion();
+    expect(within(review).getByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(screen.getByRole("region", { name: "Latest run" })).toBeInTheDocument();
+    expect(within(header()!).getByRole("button", { name: "Sync now" })).toBeInTheDocument();
+
+    failing = false;
+    await userEvent.click(within(review).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText(weeklyReviewCardFixture().content.headline)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the card with an alert and Retry when a reload of the review fails", async () => {
+    let failing = false;
+    fakeTodayApi({
+      review: () => (failing ? problem(503, ErrorCode.internal) : json(latestReviewReadyFixture())),
+    });
+    const { queryClient } = renderToday();
+    await screen.findByText(weeklyReviewCardFixture().content.headline);
+
+    failing = true;
+    await act(() => queryClient.refetchQueries({ queryKey: ["reviews"] }));
+
+    const review = await findReviewRegion();
+    expect(await within(review).findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(
+      within(review).getByText(weeklyReviewCardFixture().content.headline),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the card's place while it loads for a runner whose coach has a credential", async () => {
+    fakeTodayApi({ me: meWithKey, review: () => never() });
+    renderToday();
+    await screen.findByRole("region", { name: "Latest run" });
+
+    expect(
+      within(await findReviewRegion()).getByRole("status", { name: "Loading the weekly review" }),
+    ).toBeInTheDocument();
+  });
+
+  it("holds no place while it loads for a runner without a coach credential, who never gets one", async () => {
+    fakeTodayApi({ review: () => never() });
+    renderToday();
+    await screen.findByRole("region", { name: "Latest run" });
+
+    expect(reviewRegion()).not.toBeInTheDocument();
+  });
+
+  it("shows a ready review in Today's empty state, before the first run", async () => {
+    fakeTodayApi({ latest: null, review: latestReviewReadyFixture() });
+    renderToday();
+
+    expect(
+      await screen.findByText("Sync now to bring in your latest run from Garmin."),
+    ).toBeInTheDocument();
+    expect(
+      within(await findReviewRegion()).getByText(weeklyReviewCardFixture().content.headline),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    { case: "pending", review: (): Response => json({ state: "pending" }) },
+    { case: "retrying", review: (): Response => json({ state: "retrying" }) },
+    { case: "failed query", review: (): Response => problem(500, ErrorCode.internal) },
+  ])(
+    "shows nothing of the review in Today's empty state while it is not ready ($case)",
+    async ({ review }) => {
+      const calls = fakeTodayApi({ me: meWithKey, latest: null, review });
+      renderToday();
+      await screen.findByText("Sync now to bring in your latest run from Garmin.");
+      await waitFor(() =>
+        expect(calls.some((call) => call.path === "/api/reviews/latest")).toBe(true),
+      );
+
+      await waitFor(() => expect(reviewRegion()).not.toBeInTheDocument());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it("reads the review again after Sync now, which queues the review of a week that has ended, and says the coach is writing it", async () => {
+    let queued = false;
+    const calls = fakeTodayApi({
+      review: () => json(queued ? { state: "pending" } : { state: "none" }),
+      sync: (_attempt, store) => {
+        store();
+        queued = true;
+        return json({
+          lastSyncAt: "2026-10-12T06:30:00Z",
+          activitiesWritten: 1,
+          activitiesRemoved: 0,
+        });
+      },
+    });
+    renderToday();
+    await screen.findByRole("region", { name: "Latest run" });
+    const reads = () => calls.filter((call) => call.path === "/api/reviews/latest").length;
+    await waitFor(() => expect(reads()).toBe(1));
+
+    await userEvent.click(within(header()!).getByRole("button", { name: "Sync now" }));
+
+    expect(within(await findReviewRegion()).getByRole("status")).toHaveTextContent(
+      "The coach is writing your weekly review.",
+    );
+    // Polled every few seconds from here on, so a slow run may have read it once more.
+    expect(reads()).toBeGreaterThanOrEqual(2);
+  });
 });
