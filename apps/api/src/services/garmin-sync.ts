@@ -14,7 +14,7 @@ import { addDays, dateChunks, daysBetween, localDateOf, noonUtc } from "../lib/l
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
 import { queueBestEfforts } from "./best-efforts";
-import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
+import { garminNotConnected, openGarminAccount, recordGarminSuccess } from "./garmin-account";
 import { queueRunInsights } from "./insights";
 import { gapReEntry } from "./re-entry";
 import { matchPlanSessions } from "./session-match";
@@ -405,7 +405,9 @@ export async function syncNow({ userId }: { userId: string }): Promise<SyncRespo
     .select({ lastSyncAt: garminConnection.lastSyncAt })
     .from(garminConnection)
     .where(eq(garminConnection.userId, userId));
+  // A disconnect waiting on the lock can forget the login between the sync's end and this read.
+  if (!row) throw garminNotConnected();
   // Every finished chunk moves the cursor, and a sync that returns finished at least one.
-  if (!row?.lastSyncAt) throw new Error("The sync finished without saving its cursor");
+  if (!row.lastSyncAt) throw new Error("The sync finished without saving its cursor");
   return { lastSyncAt: row.lastSyncAt.toISOString(), activitiesWritten, activitiesRemoved };
 }

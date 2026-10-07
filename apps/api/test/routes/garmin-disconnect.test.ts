@@ -312,6 +312,28 @@ describe("DELETE /api/garmin/connection", () => {
     expect(await connections()).toEqual([]);
   });
 
+  it("lets a Sync now that a disconnect overtook answer 409 garmin_not_connected, not 500 (overlapping syncs)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await connectGarmin(userId, garminBundle(), { lastSyncAt: new Date("2026-09-26T12:00:00Z") });
+    const sync = garminClient.sync.bind(garminClient);
+    let disconnected: Promise<request.Response> | undefined;
+    vi.spyOn(garminClient, "sync").mockImplementation(async (body, options) => {
+      const answer = await sync(body, options);
+      // Queued on the lock while the sync holds it: it runs the moment the sync releases it, before Sync
+      // now reads the cursor after the plan's and the coach's follow-ups.
+      disconnected ??= Promise.resolve(agent.delete(`${PATH}?workouts=keep`));
+      await sleep(50);
+      return answer;
+    });
+
+    const synced = await agent.post("/api/sync");
+
+    expect((await disconnected)?.status).toBe(200);
+    expect(await connections()).toEqual([]);
+    expectProblem(synced, 409, ErrorCode.garminNotConnected);
+  });
+
   it("returns 400 validation without a valid workouts choice, and changes nothing", async () => {
     const agent = await signedInAgent(app);
     const userId = await ownerId();
