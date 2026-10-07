@@ -8,6 +8,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { refreshSessionViews } from "./calendar";
 import { apiFetch } from "./client";
 import { useGarminConnection } from "./me";
 import { actionKey, resourceKey } from "./query-keys";
@@ -42,20 +43,16 @@ export function useSyncNow() {
     // Also after a failure: a 429 or 502 partway through has already stored the chunks before it. A failed
     // sync can also mark the Garmin login expired, which Settings should show without a reload. The bests
     // learn of the best-efforts job the sync queued, which starts their poll, and a run already checked
-    // gets its PB chip. Returned, so the sync stays pending until the new run is on screen: no
-    // flash of the old one. A sync that removed runs deleted on Garmin also unlinked them from the plan's
-    // sessions, so the plan and each session are read again too.
-    onSettled: (result) =>
+    // gets its PB chip. After every sync, finished or failed, the API marks the plan's sessions done or
+    // missed, may ease them for a return, and unlinks runs Garmin no longer lists, so Today's next 7 days,
+    // the plan and each session are read again too. Returned, so the sync stays pending until the new run
+    // and its session are on screen: no flash of the old ones.
+    onSettled: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: resourceKey("activities") }),
         queryClient.invalidateQueries({ queryKey: resourceKey("me") }),
         queryClient.invalidateQueries({ queryKey: resourceKey("personal-bests") }),
-        ...(result !== undefined && result.activitiesRemoved > 0
-          ? [
-              queryClient.invalidateQueries({ queryKey: resourceKey("plan") }),
-              queryClient.invalidateQueries({ queryKey: resourceKey("sessions") }),
-            ]
-          : []),
+        refreshSessionViews(queryClient),
       ]),
   });
 }

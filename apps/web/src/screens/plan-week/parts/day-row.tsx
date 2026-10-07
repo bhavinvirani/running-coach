@@ -19,19 +19,20 @@ type DayRowProps = {
   day: PlanDay;
   paces: PlanPaces;
   units: Units;
-  /** The runner's local date: days from it on can take a workout of the runner's own. */
-  today: string;
+  /** Whether the day takes a workout of the runner's own: from today on, and not in an open pause. */
+  addable: boolean;
 };
 
 /**
- * One day of the week: its date, with Add from today on, then each session as its type chip with distance
- * and time on the right and its steps in one line under it (a lone run's pace band, so the distance is not
- * said twice), paces in the runner's unit. A custom workout with a title leads with it, and its type's name
- * starts the line under it. Each session opens its own screen. A day without a session reads Rest; a
- * skipped session reads Skipped, with nothing left to run; a done, missed or paused one says so beside its
- * distance; a session the coach or a return changed says what it was on a last line.
+ * One day of the week: its date, with Add when the day takes one, then each session as its type chip with
+ * distance and time on the right and its steps in one line under it (a lone run's pace band, so the
+ * distance is not said twice), paces in the runner's unit. A custom workout with a title leads with it,
+ * and its type's name starts the line under it. Each session opens its own screen. A day without a session
+ * reads Rest; a skipped session reads Skipped, with nothing left to run, or only who skipped it when the
+ * coach or a pause did; a done, missed or paused one says so beside its distance; a session the coach or a
+ * return changed says what it was on a last line.
  */
-export function DayRow({ day, paces, units, today }: DayRowProps) {
+export function DayRow({ day, paces, units, addable }: DayRowProps) {
   const label = formatLocalDay(day.date);
   return (
     <li className="flex flex-col gap-1 py-3">
@@ -39,7 +40,7 @@ export function DayRow({ day, paces, units, today }: DayRowProps) {
         <time dateTime={day.date} className="text-caption text-ink-2">
           {label}
         </time>
-        {day.date >= today ? (
+        {addable ? (
           // A 44 px target inside the caption's line height: it overhangs into the row's padding instead
           // of making days with Add taller than past ones.
           <span className="flex h-4 items-center">

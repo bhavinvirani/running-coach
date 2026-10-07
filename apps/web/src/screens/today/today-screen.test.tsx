@@ -30,6 +30,7 @@ import {
   endPauseResponseFixture,
   garminPushStatusFixture,
   meFixture,
+  pauseSkippedSessionFixture,
   pausedSessionFixture,
   personalBestFixture,
   personalBestsFixture,
@@ -868,6 +869,11 @@ type FakeWeekApi = {
   startPause?: () => Response | Promise<Response>;
   /** POST /api/pause/end: a problem, else the pause closed with this re-entry (endPauseResponseFixture's). */
   endPause?: EndPauseResponse | (() => Response | Promise<Response>);
+  /**
+   * POST /api/sync: what it does to the week's sessions, as the API matches the runs it brings in, also
+   * when it fails partway (`failure`).
+   */
+  sync?: { change: (session: PlanSession) => PlanSession; failure?: Response };
 };
 
 /** The week with `change` applied to each of its sessions, like the API's next read after a change. */
@@ -894,6 +900,7 @@ function fakeWeekApi({
   pause = null,
   startPause,
   endPause = endPauseResponseFixture(),
+  sync,
 }: FakeWeekApi = {}) {
   let current = calendar;
   let openPause = pause;
@@ -924,9 +931,16 @@ function fakeWeekApi({
       if (typeof endPause === "function") return endPause();
       openPause = null;
       current = changeSessions(current, (session) =>
-        session.paused ? { ...session, paused: false, status: "skipped" } : session,
+        session.paused ? skippedByPause(session) : session,
       );
       return json(endPause);
+    }
+    if (method === "POST" && path === "/api/sync" && sync) {
+      current = changeSessions(current, sync.change);
+      return (
+        sync.failure ??
+        json({ lastSyncAt: "2026-10-08T06:30:00Z", activitiesWritten: 1, activitiesRemoved: 0 })
+      );
     }
     if (method === "POST" && path === "/api/calendar/push") {
       current = { ...current, garmin: { ...current.garmin, pushing: true, error: null } };
@@ -939,6 +953,24 @@ function fakeWeekApi({
     }
     return notFound();
   });
+}
+
+/** A session left in the pause on I'm back, as the API skips it: off the watch, with the pause's change. */
+function skippedByPause(session: PlanSession): PlanSession {
+  const { type, title, status, target } = session;
+  return {
+    ...session,
+    paused: false,
+    onGarmin: false,
+    status: "skipped",
+    adjustment: {
+      source: "pause",
+      kind: "rest",
+      activityId: null,
+      original: { type, title, status, target },
+      at: "2026-10-08T06:10:00Z",
+    },
+  };
 }
 
 /** The week's region once the calendar has loaded: its day list or its alert is on screen. */
@@ -1592,7 +1624,7 @@ describe("TodayScreen pause", () => {
     {
       case: "0.7 walk-run",
       reEntry: { daysOff: 9, factor: 0.7, walkRun: true },
-      line: "9 days off: the next sessions are eased to 70% and build back up by at most 10% a week. This week is walk-run.",
+      line: "9 days off: the next sessions are eased to 70% and build back up by at most 10% a week. The next 7 days are walk-run.",
     },
     {
       case: "0.5",
@@ -1602,7 +1634,7 @@ describe("TodayScreen pause", () => {
     {
       case: "1 walk-run",
       reEntry: { daysOff: 3, factor: 1, walkRun: true },
-      line: "This week is walk-run, then the plan carries on.",
+      line: "The next 7 days are walk-run, then the plan carries on.",
     },
     {
       case: "1",
@@ -1629,11 +1661,32 @@ describe("TodayScreen pause", () => {
       expect(screen.getByRole("button", { name: "Not feeling 100%" })).toBeInTheDocument();
       const rows = await weekRows();
       expect(
-        within(rows[0]!).getByRole("link", { name: "Intervals, Skipped" }),
+        within(rows[0]!).getByRole("link", { name: "Intervals, Skipped during your pause" }),
       ).toBeInTheDocument();
       expect(calls.filter((call) => call.path === "/api/pause/end")).toHaveLength(1);
     },
   );
+
+  it("offers no Add while a pause is open, since the API refuses a workout dated in it, and offers it again after I'm back (no add in pause)", async () => {
+    fakeWeekApi({ pause: trainingPauseFixture(), calendar: pausedWeek() });
+    renderToday();
+
+    const card = await findPausedCard();
+    const rows = await weekRows();
+    expect(rows).toHaveLength(7);
+    for (const row of rows) {
+      expect(
+        within(row).queryByRole("link", { name: /^Add a workout on / }),
+      ).not.toBeInTheDocument();
+    }
+    await userEvent.click(within(card).getByRole("button", { name: "I'm back" }));
+
+    expect(await screen.findByRole("status")).toBeInTheDocument();
+    const after = await weekRows();
+    for (const row of after) {
+      expect(within(row).getByRole("link", { name: /^Add a workout on / })).toBeInTheDocument();
+    }
+  });
 
   it("closes the card without a line when the pause was already ended elsewhere (double I'm back)", async () => {
     fakeWeekApi({
@@ -1766,4 +1819,53 @@ describe("TodayScreen session status", () => {
     const rows = await weekRows();
     expect(within(rows[3]!).getByText("Eased for your return, was 8.7 mi")).toBeInTheDocument();
   });
+
+  it("says a session left in the pause was skipped during it, in one line (pause rest)", async () => {
+    fakeWeekApi({
+      calendar: weekCalendar({}, (session) =>
+        session.date === "2026-10-09" ? pauseSkippedSessionFixture("2026-10-09") : session,
+      ),
+    });
+    renderToday();
+
+    const rows = await weekRows();
+    const skipped = within(rows[1]!).getByRole("link", { name: /^Easy,/ });
+    expect(skipped).toHaveAccessibleName("Easy, Skipped during your pause");
+    expect(Array.from(skipped.children).map((line) => line.textContent)).toEqual([
+      "Easy",
+      "Skipped during your pause",
+    ]);
+  });
+
+  it.each([
+    { case: "run matching", failure: undefined },
+    { case: "partial sync", failure: problem(502, ErrorCode.garminUnavailable) },
+  ])(
+    "reads the week again after Sync now and shows the session its run completed as Done ($case)",
+    async ({ failure }) => {
+      const calls = fakeWeekApi({
+        sync: {
+          change: (session) =>
+            session.date === WEEK_FROM
+              ? doneSessionFixture(WEEK_FROM, { onGarmin: true })
+              : session,
+          failure,
+        },
+      });
+      renderToday();
+
+      const rows = await weekRows();
+      expect(
+        within(rows[0]!).getByRole("link", { name: "Intervals, 11.6 km, 1:04:00, On Garmin" }),
+      ).toBeInTheDocument();
+      const reads = () => calls.filter((call) => call.path === "/api/calendar").length;
+      const before = reads();
+      await userEvent.click(within(header()!).getByRole("button", { name: "Sync now" }));
+
+      expect(
+        await screen.findByRole("link", { name: "Intervals, 11.6 km, 1:04:00, Done" }),
+      ).toBeInTheDocument();
+      expect(reads()).toBe(before + 1);
+    },
+  );
 });

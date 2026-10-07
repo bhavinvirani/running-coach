@@ -43,16 +43,17 @@ const WEEKLY_BUILD = 0.1;
 
 /**
  * The line after I'm back: how the plan restarts. Eased by days off ("9 days off: the next sessions are
- * eased to 70% and build back up by at most 10% a week. This week is walk-run."), only walk-run after a
- * short illness or injury, else unchanged.
+ * eased to 70% and build back up by at most 10% a week. The next 7 days are walk-run."), only walk-run
+ * after a short illness or injury, else unchanged. Walk-run covers the 7 days from the return, not the
+ * Monday-to-Sunday week, so the line counts days.
  */
 export function reEntryLine(reEntry: ReEntry): string {
   if (reEntry.factor < 1) {
     const eased = `${formatCount(reEntry.daysOff, "day", "days")} off: the next sessions are eased to ${formatPercent(reEntry.factor)} and build back up by at most ${formatPercent(WEEKLY_BUILD)} a week.`;
-    return reEntry.walkRun ? `${eased} This week is walk-run.` : eased;
+    return reEntry.walkRun ? `${eased} The next 7 days are walk-run.` : eased;
   }
   return reEntry.walkRun
-    ? "This week is walk-run, then the plan carries on."
+    ? "The next 7 days are walk-run, then the plan carries on."
     : "Your plan carries on as planned.";
 }
 

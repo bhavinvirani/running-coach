@@ -1,7 +1,7 @@
 import type { MoveWarning, PlanSession, SessionStatus } from "@running-coach/shared";
 import { daysBetween } from "@/lib/dates";
 import { formatCountValue, formatShortDay } from "@/lib/format";
-import { isCoachRest } from "@/lib/session-adjustment";
+import { isRestChange } from "@/lib/session-adjustment";
 import { sessionTypeName } from "@/lib/session-type";
 
 /** Every sentence and label on the session screen, so the wording is read and changed in one place. */
@@ -36,12 +36,13 @@ const STATUS_WORDS: Readonly<Record<SessionStatus, string | null>> = {
 
 /**
  * What happened to the session, for the line under its name: its status, Paused for one to come in an open
- * pause; null while it is simply planned, and for a coach rest, whose adjustment line says it was skipped.
+ * pause; null while it is simply planned, and for a rest the coach or a pause made, whose adjustment line
+ * says it was skipped and by what.
  */
 export function statusWord(
   session: Pick<PlanSession, "status" | "paused" | "adjustment">,
 ): string | null {
-  if (session.status === "skipped" && isCoachRest(session)) return null;
+  if (session.status === "skipped" && isRestChange(session)) return null;
   if (session.paused && (session.status === "planned" || session.status === "moved")) {
     return "Paused";
   }

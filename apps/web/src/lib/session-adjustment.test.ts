@@ -3,10 +3,12 @@ import {
   coachEasySessionFixture,
   coachRestSessionFixture,
   easedSessionFixture,
+  pauseSkippedSessionFixture,
   planChangeFixture,
   planSessionFixture,
+  walkRunSessionFixture,
 } from "@/test/fixtures";
-import { adjustmentLine, isCoachRest, planChangeLine, snapshotAmount } from "./session-adjustment";
+import { adjustmentLine, isRestChange, planChangeLine, snapshotAmount } from "./session-adjustment";
 
 describe("adjustmentLine", () => {
   it("says nothing for a session as planned", () => {
@@ -54,14 +56,63 @@ describe("adjustmentLine", () => {
   it("gives the planned distance in mi when the runner uses miles (unit conversion)", () => {
     expect(adjustmentLine(easedSessionFixture(), "mi")).toBe("Eased for your return, was 8.7 mi");
   });
+
+  it("says a session left in the pause was skipped during it, not eased (pause rest)", () => {
+    expect(adjustmentLine(pauseSkippedSessionFixture(), "km")).toBe("Skipped during your pause");
+  });
+
+  it("names the walk-run and what it was, type included, though its distance is unchanged (walk-run easy)", () => {
+    // 6 rounds of 5 min fill the planned 30:00, so the distance stays 5.0 km.
+    expect(walkRunSessionFixture("2026-10-09").target.distanceM).toBe(4970);
+    expect(adjustmentLine(walkRunSessionFixture("2026-10-09"), "km")).toBe(
+      "Walk-run for your return, was Easy 5.0 km",
+    );
+  });
+
+  it("names the walk-run and the long run it replaced (walk-run long run)", () => {
+    expect(adjustmentLine(walkRunSessionFixture("2026-10-11"), "km")).toBe(
+      "Walk-run for your return, was Long run 14.0 km",
+    );
+  });
+
+  it("names the walk-run and the quality session it replaced (walk-run tempo)", () => {
+    expect(adjustmentLine(walkRunSessionFixture("2026-10-15"), "km")).toBe(
+      "Walk-run for your return, was Tempo 8.2 km",
+    );
+  });
+
+  it("gives what a walk-run was in mi when the runner uses miles (walk-run unit conversion)", () => {
+    expect(adjustmentLine(walkRunSessionFixture("2026-10-09"), "mi")).toBe(
+      "Walk-run for your return, was Easy 3.1 mi",
+    );
+  });
+
+  it("names the original type of a session the return eased into another type (re-entry type change)", () => {
+    const planned = planSessionFixture("2026-10-15");
+    const eased = planSessionFixture("2026-10-15", {
+      type: "easy",
+      target: { distanceM: 6900, durationS: 2400, zone: "easy" },
+      steps: [{ kind: "run", zone: "easy", distanceM: null, durationS: 2400 }],
+      adjustment: {
+        source: "gap",
+        kind: "re_entry",
+        activityId: null,
+        original: { type: planned.type, title: null, status: "planned", target: planned.target },
+        at: "2026-10-07T17:00:00Z",
+      },
+    });
+    expect(adjustmentLine(eased, "km")).toBe("Eased for your return, was Tempo 8.2 km");
+  });
 });
 
-describe("isCoachRest", () => {
-  it("is true only for a session the coach turned into a rest (coach rest)", () => {
-    expect(isCoachRest(coachRestSessionFixture())).toBe(true);
-    expect(isCoachRest(coachEasySessionFixture())).toBe(false);
-    expect(isCoachRest(easedSessionFixture())).toBe(false);
-    expect(isCoachRest(planSessionFixture("2026-10-09", { status: "skipped" }))).toBe(false);
+describe("isRestChange", () => {
+  it("is true for a session the coach or a pause turned into a rest (coach rest, pause rest)", () => {
+    expect(isRestChange(coachRestSessionFixture())).toBe(true);
+    expect(isRestChange(pauseSkippedSessionFixture())).toBe(true);
+    expect(isRestChange(coachEasySessionFixture())).toBe(false);
+    expect(isRestChange(easedSessionFixture())).toBe(false);
+    expect(isRestChange(walkRunSessionFixture())).toBe(false);
+    expect(isRestChange(planSessionFixture("2026-10-09", { status: "skipped" }))).toBe(false);
   });
 });
 

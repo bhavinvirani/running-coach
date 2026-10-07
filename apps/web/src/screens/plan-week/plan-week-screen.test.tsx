@@ -1,4 +1,4 @@
-import type { MeResponse, PlanResponse, PlanSession } from "@running-coach/shared";
+import type { MeResponse, PlanResponse, PlanSession, TrainingPause } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -14,10 +14,13 @@ import {
   easedSessionFixture,
   meFixture,
   missedSessionFixture,
+  pauseSkippedSessionFixture,
   pausedSessionFixture,
   planFixture,
   planResponseFixture,
   planSessionId,
+  trainingPauseFixture,
+  walkRunSessionFixture,
 } from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { PlanWeekScreen } from "./plan-week-screen";
@@ -25,12 +28,31 @@ import { PlanWeekScreen } from "./plan-week-screen";
 function fakePlanApi({
   me = meFixture(),
   plan = planResponseFixture(),
-}: { me?: MeResponse; plan?: PlanResponse } = {}) {
+  pause = null,
+}: {
+  me?: MeResponse;
+  plan?: PlanResponse;
+  /** GET /api/pause: the open pause (none by default), or an answer that never comes or fails. */
+  pause?: TrainingPause | null | (() => Response | Promise<Response>);
+} = {}) {
   return stubFetch(({ method, path }) => {
     if (method === "GET" && path === "/api/me") return json(me);
     if (method === "GET" && path === "/api/plan") return json(plan);
+    if (method === "GET" && path === "/api/pause") {
+      return typeof pause === "function" ? pause() : json({ pause });
+    }
     return notFound();
   });
+}
+
+/** Where each day's Add leads, null for a day without one, Monday first. */
+function addLinks(rows: HTMLElement[]) {
+  return rows.map(
+    (row) =>
+      within(row)
+        .queryByRole("link", { name: /^Add a workout on / })
+        ?.getAttribute("href") ?? null,
+  );
 }
 
 function renderWeek(number: string | number) {
@@ -70,6 +92,7 @@ describe("PlanWeekScreen", () => {
     let attempts = 0;
     stubFetch(({ path }) => {
       if (path === "/api/me") return json(meFixture());
+      if (path === "/api/pause") return json({ pause: null });
       attempts += 1;
       return attempts === 1 ? problem(500, ErrorCode.internal) : json(planResponseFixture());
     });
@@ -86,6 +109,7 @@ describe("PlanWeekScreen", () => {
     let failing = false;
     stubFetch(({ path }) => {
       if (path === "/api/me") return json(meFixture());
+      if (path === "/api/pause") return json({ pause: null });
       return failing ? problem(503, ErrorCode.internal) : json(planResponseFixture());
     });
     const { queryClient } = renderWeek(2);
@@ -219,13 +243,9 @@ describe("PlanWeekScreen", () => {
     renderWeek(1);
 
     const rows = await dayRows();
-    const adds = rows.map(
-      (row) =>
-        within(row)
-          .queryByRole("link", { name: /^Add a workout on / })
-          ?.getAttribute("href") ?? null,
-    );
-    expect(adds).toEqual([
+    // Add waits for the pause read, which says from which day the API refuses one.
+    await screen.findAllByRole("link", { name: /^Add a workout on / });
+    expect(addLinks(rows)).toEqual([
       null,
       null,
       null,
@@ -237,6 +257,60 @@ describe("PlanWeekScreen", () => {
     expect(
       within(rows[5]!).getByRole("link", { name: "Add a workout on Sat 10 Oct" }),
     ).toHaveTextContent(/^Add$/);
+  });
+
+  it("offers no Add from an open pause's start on, which the API refuses (no add in pause)", async () => {
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+    // Paused from Fri 9 Oct, a day after today as a runner who flew west sees it: Thu 8 still takes Add.
+    fakePlanApi({ pause: trainingPauseFixture({ startDate: "2026-10-09" }) });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    await screen.findAllByRole("link", { name: /^Add a workout on / });
+    expect(addLinks(rows)).toEqual([
+      null,
+      null,
+      null,
+      "/plan/sessions/new?date=2026-10-08",
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("offers no Add until the pause is read, and every day's from today on once there is none (pause loading)", async () => {
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+    let answer: (response: Response) => void = () => undefined;
+    const pause = new Promise<Response>((resolve) => (answer = resolve));
+    fakePlanApi({ pause: () => pause });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    expect(addLinks(rows)).toEqual([null, null, null, null, null, null, null]);
+    act(() => answer(json({ pause: null })));
+
+    expect(
+      await screen.findByRole("link", { name: "Add a workout on Thu 8 Oct" }),
+    ).toBeInTheDocument();
+    expect(addLinks(rows).filter((href) => href !== null)).toHaveLength(4);
+  });
+
+  it("offers Add from today on when the pause could not be read, as the API still refuses one in a pause (pause load error)", async () => {
+    vi.setSystemTime(new Date("2026-10-08T06:00:00Z"));
+    fakePlanApi({ pause: () => problem(500, ErrorCode.internal) });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    await screen.findAllByRole("link", { name: /^Add a workout on / });
+    expect(addLinks(rows).filter((href) => href !== null)).toHaveLength(4);
+  });
+
+  it("never asks for the pause without a plan (no plan)", async () => {
+    const calls = fakePlanApi({ plan: { goal: null, plan: null } });
+    renderWeek(1);
+
+    expect(await screen.findByText("You have no plan yet.")).toBeInTheDocument();
+    expect(calls.some((call) => call.path === "/api/pause")).toBe(false);
   });
 
   it("names a custom workout by its title and reads a skipped session as Skipped, without distance or steps", async () => {
@@ -344,6 +418,33 @@ describe("PlanWeekScreen", () => {
     expect(rest).toHaveTextContent(/^EasySkipped by the coach$/);
     expect(within(rows[6]!).getByRole("link")).toHaveAccessibleName(
       "Long run, Sun 11 Oct, 9.8 km, 59:09, Eased for your return, was 14.0 km",
+    );
+  });
+
+  it("says a session left in the pause was skipped during it, in one line (pause rest)", async () => {
+    fakePlanApi({ plan: withSessions([pauseSkippedSessionFixture("2026-10-09")]) });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    const skipped = within(rows[4]!).getByRole("link");
+    expect(skipped).toHaveAccessibleName("Easy, Fri 9 Oct, Skipped during your pause");
+    expect(skipped).toHaveTextContent(/^EasySkipped during your pause$/);
+    expect(within(skipped).getByText("Skipped during your pause")).toHaveClass(
+      "text-caption",
+      "text-ink-2",
+    );
+  });
+
+  it("reads a walk-run by its rounds with a walk between them, and says what it was (walk-run)", async () => {
+    fakePlanApi({ plan: withSessions([walkRunSessionFixture("2026-10-09")]) });
+    renderWeek(1);
+
+    const rows = await dayRows();
+    expect(within(rows[4]!).getByRole("link")).toHaveAccessibleName(
+      "Walk-run, Easy, Fri 9 Oct, 5.0 km, 30:00, Walk-run for your return, was Easy 5.0 km",
+    );
+    expect(rows[4]).toHaveTextContent(
+      /^Fri 9 OctWalk-run5\.0 km30:00Easy · 6 x 4 min easy with 1 min walkWalk-run for your return, was Easy 5\.0 km$/,
     );
   });
 

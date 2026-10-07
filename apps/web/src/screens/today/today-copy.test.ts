@@ -42,9 +42,9 @@ describe("syncOutcomeLine", () => {
 describe("reEntryLine", () => {
   const back = { fromDate: "2026-10-17", sessionsChanged: 6 };
 
-  it("says the days off, the eased share and the 10% build, then walk-run after illness or injury (I'm back 0.7 walk-run)", () => {
+  it("says the days off, the eased share and the 10% build, then 7 days of walk-run from the return after illness or injury (I'm back 0.7 walk-run)", () => {
     expect(reEntryLine({ ...back, daysOff: 9, factor: 0.7, walkRun: true })).toBe(
-      "9 days off: the next sessions are eased to 70% and build back up by at most 10% a week. This week is walk-run.",
+      "9 days off: the next sessions are eased to 70% and build back up by at most 10% a week. The next 7 days are walk-run.",
     );
   });
 
@@ -54,9 +54,9 @@ describe("reEntryLine", () => {
     );
   });
 
-  it("says only walk-run when a short illness left the volume as planned (I'm back 1 walk-run)", () => {
+  it("says only the 7 days of walk-run from the return when a short illness left the volume as planned (I'm back 1 walk-run)", () => {
     expect(reEntryLine({ ...back, daysOff: 3, factor: 1, walkRun: true })).toBe(
-      "This week is walk-run, then the plan carries on.",
+      "The next 7 days are walk-run, then the plan carries on.",
     );
   });
 

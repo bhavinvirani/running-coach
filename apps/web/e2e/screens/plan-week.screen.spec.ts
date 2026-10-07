@@ -37,7 +37,7 @@ test("plan week shows what the adaptation made of week 3: done, missed, changed 
   // Each session's link carries its state and change, so these wait for every row the capture is about.
   await expect(
     days.getByRole("link", {
-      name: /^Walk-run, Easy, Mon 19 Oct, Done, .*, Eased for your return, was 4\.9 km$/,
+      name: /^Walk-run, Easy, Mon 19 Oct, Done, .*, Walk-run for your return, was Easy 4\.9 km$/,
     }),
   ).toBeVisible();
   await expect(

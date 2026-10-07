@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canChange, moveDays } from "./session-days";
+import { canAdd, canChange, moveDays } from "./session-days";
 
 describe("moveDays", () => {
   it("offers the other days of the session's Monday-to-Sunday week", () => {
@@ -46,5 +46,21 @@ describe("canChange", () => {
     expect(canChange({ paused: true, date: "2026-10-09", status: "planned" }, "2026-10-08")).toBe(
       false,
     );
+  });
+});
+
+describe("canAdd", () => {
+  it("takes a workout of the runner's own from today on, never on a past day", () => {
+    expect(canAdd("2026-10-08", "2026-10-08", null)).toBe(true);
+    expect(canAdd("2026-10-11", "2026-10-08", null)).toBe(true);
+    expect(canAdd("2026-10-07", "2026-10-08", null)).toBe(false);
+  });
+
+  it("takes none on or after an open pause's start, which the API refuses (no add in pause)", () => {
+    expect(canAdd("2026-10-08", "2026-10-08", "2026-10-08")).toBe(false);
+    expect(canAdd("2026-10-12", "2026-10-10", "2026-10-08")).toBe(false);
+    // A pause dated after today, as a runner who flew west sees it: the days before it still take Add.
+    expect(canAdd("2026-10-08", "2026-10-08", "2026-10-09")).toBe(true);
+    expect(canAdd("2026-10-09", "2026-10-08", "2026-10-09")).toBe(false);
   });
 });

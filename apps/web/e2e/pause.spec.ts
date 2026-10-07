@@ -50,7 +50,7 @@ function sessionLink(page: Page, id: string): Locator {
 /**
  * A session link's name as Today reads it out: its name, its type when a title took the name's place,
  * distance, time, its caption and what a change made of it: "Walk-run, Easy, 2.9 km, 20:00, On Garmin,
- * Eased for your return, was Tempo 6.5 km".
+ * Walk-run for your return, was Tempo 6.5 km".
  */
 function linkName(
   session: Pick<PlanSession, "title" | "type" | "target" | "adjustment">,
@@ -189,7 +189,7 @@ test("Sick pauses the week and takes it off the watch, and I'm back after 9 days
   });
 
   const outcome =
-    "9 days off: the next sessions are eased to 70% and build back up by at most 10% a week. This week is walk-run.";
+    "9 days off: the next sessions are eased to 70% and build back up by at most 10% a week. The next 7 days are walk-run.";
   await expect(page.getByText(outcome, { exact: true })).toBeVisible();
   await expect(pausedCard(page, today)).toHaveCount(0);
   await expect(

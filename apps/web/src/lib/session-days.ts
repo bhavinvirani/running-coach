@@ -26,3 +26,12 @@ export function canChange(
     (session.status === "planned" || session.status === "moved")
   );
 }
+
+/**
+ * Whether a day takes Add, a workout of the runner's own: from today on, and before an open pause's start
+ * (`pauseStart`, null without a pause), from which the API refuses one (session_locked): the pause would
+ * skip it when the runner is back.
+ */
+export function canAdd(date: string, today: string, pauseStart: string | null): boolean {
+  return date >= today && (pauseStart === null || date < pauseStart);
+}

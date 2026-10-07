@@ -21,9 +21,11 @@ import {
   garminPushStatusFixture,
   meFixture,
   missedSessionFixture,
+  pauseSkippedSessionFixture,
   pausedSessionFixture,
   planSessionFixture,
   sessionDetailFixture,
+  walkRunSessionFixture,
 } from "@/test/fixtures";
 import { renderScreen } from "@/test/render";
 import { SessionScreen } from "./session-screen";
@@ -444,6 +446,32 @@ describe("SessionScreen", () => {
     expect(await screen.findByText("Skipped by the coach")).toBeInTheDocument();
     expect(screen.queryByText("Skipped")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Skip session" })).not.toBeInTheDocument();
+  });
+
+  it("says a session left in the pause was skipped during it, once and not eased (pause rest)", async () => {
+    const skipped = pauseSkippedSessionFixture();
+    fakeSessionApi({ detail: sessionDetailFixture({ session: skipped }) });
+    renderSession(skipped);
+
+    expect(await screen.findByText("Skipped during your pause")).toHaveClass(
+      "text-caption",
+      "text-ink-2",
+    );
+    expect(screen.queryByText("Skipped")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Eased for your return/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip session" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Garmin" })).not.toBeInTheDocument();
+  });
+
+  it("says a walk-run is one for the return and what it was, though its distance is unchanged (walk-run)", async () => {
+    const walkRun = walkRunSessionFixture("2026-10-09");
+    fakeSessionApi({ detail: sessionDetailFixture({ session: walkRun }) });
+    renderSession(walkRun);
+
+    expect(
+      await screen.findByText("Walk-run for your return, was Easy 5.0 km"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Walk-run")).toBeInTheDocument();
   });
 
   it("says a session eased for the return was its planned distance, in the runner's unit (pause re-entry)", async () => {

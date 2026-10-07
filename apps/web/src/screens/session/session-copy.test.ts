@@ -1,6 +1,6 @@
 import type { SessionStatus } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
-import { coachRestSessionFixture } from "@/test/fixtures";
+import { coachRestSessionFixture, pauseSkippedSessionFixture } from "@/test/fixtures";
 import { moveWarningSentence, repeatLabel, statusWord } from "./session-copy";
 
 describe("moveWarningSentence", () => {
@@ -48,6 +48,10 @@ describe("statusWord", () => {
 
   it("leaves a coach rest to its adjustment line (coach rest)", () => {
     expect(statusWord(coachRestSessionFixture())).toBeNull();
+  });
+
+  it("leaves a session the pause skipped to its adjustment line (pause rest)", () => {
+    expect(statusWord(pauseSkippedSessionFixture())).toBeNull();
   });
 });
 

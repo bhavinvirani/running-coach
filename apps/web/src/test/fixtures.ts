@@ -544,6 +544,66 @@ export function easedSessionFixture(source: "pause" | "gap" = "pause"): PlanSess
 }
 
 /**
+ * A session left in a pause when the runner tapped I'm back: skipped by the pause, off the watch. The easy
+ * run on Fri 9 Oct unless given.
+ */
+export function pauseSkippedSessionFixture(date = "2026-10-09"): PlanSession {
+  const planned = planSessionFixture(date);
+  return planSessionSchema.parse({
+    ...planned,
+    status: "skipped",
+    adjustment: {
+      source: "pause",
+      kind: "rest",
+      activityId: null,
+      original: snapshotOf(planned),
+      at: ADJUSTED_AT,
+    },
+  });
+}
+
+/** The engine's walk-run round: 4 min run, 1 min walk. */
+const WALK_RUN_ROUND_S = 300;
+
+/**
+ * A session in the first 7 days back after illness, as the re-entry turned it into walk-run: rounds of
+ * 4 min run and 1 min walk filling its time, at least 2, its distance cut by the same share, titled
+ * Walk-run and an easy run whatever it was. The easy run on Fri 9 Oct (6 rounds, distance unchanged) unless
+ * given; the long run on Sun 11 Oct becomes 16 rounds, the tempo on Thu 15 Oct an easy run.
+ */
+export function walkRunSessionFixture(date = "2026-10-09"): PlanSession {
+  const planned = planSessionFixture(date);
+  const rounds = Math.max(Math.floor(planned.target.durationS / WALK_RUN_ROUND_S), 2);
+  const durationS = rounds * WALK_RUN_ROUND_S;
+  return planSessionSchema.parse({
+    ...planned,
+    type: "easy",
+    title: "Walk-run",
+    target: {
+      distanceM: Math.round((planned.target.distanceM * durationS) / planned.target.durationS),
+      durationS,
+      zone: "easy",
+    },
+    steps: [
+      {
+        repeat: rounds,
+        steps: [
+          { kind: "run", zone: "easy", distanceM: null, durationS: 240 },
+          { kind: "recovery", zone: "easy", distanceM: null, durationS: 60 },
+        ],
+      },
+    ],
+    adjustment: {
+      source: "pause",
+      kind: "re_entry",
+      activityId: null,
+      original: snapshotOf(planned),
+      at: ADJUSTED_AT,
+    },
+  });
+}
+
+/**
  * What the coach changed after activityFixture's run, as its card shows it: the intervals on Thu 8 Oct
  * turned into the easy run of coachEasySessionFixture, as proposed (not clamped).
  */
