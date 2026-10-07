@@ -65,8 +65,9 @@ export type GarminLoginResponse = z.infer<typeof garminLoginResponseSchema>;
 
 /**
  * POST /connect/mfa: the code for the pending login under `loginId`, tried on that same login, so a wrong
- * code can be followed by the right one. Answers the new bundle, garmin_mfa_rejected, or garmin_login_lost
- * when no login is pending (5 min passed, a restart, too many codes).
+ * code can be followed by the right one. Answers the new bundle; garmin_mfa_rejected or garmin_unavailable
+ * with the login kept for another code; garmin_rate_limited with it dropped; or garmin_login_lost when no
+ * login is pending (5 min passed, a restart, too many codes) or Garmin ended it after taking the code.
  */
 export const garminLoginCodeRequestSchema = z
   .object({ loginId: garminLoginIdSchema, mfaCode: garminMfaCodeSchema })

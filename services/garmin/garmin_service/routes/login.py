@@ -6,6 +6,11 @@ code_needed. /connect/mfa tries the code on that same login, so a refused code c
 the right one. Both answer a bundle only when it holds both DI tokens. Neither call is paced or
 retried (password_login), and nothing here is written to disk.
 
+What /connect/mfa answers tells the web app whether the login still waits: garmin_mfa_rejected 422
+and garmin_unavailable 502 keep it, so another code (or the same one) goes to the same login;
+garmin_login_lost 409 and garmin_rate_limited 429 (and a bug's 500) mean it is gone and the runner
+starts again with the email and password (after the wait, for a 429).
+
 Logs carry the login id, the outcome and exception class names: never the email, password, code
 or bundle.
 """
@@ -77,7 +82,12 @@ def connect_code(body: LoginCodeRequest, logins: PendingLoginsDep) -> LoginCodeR
                 raise
             raise failure from exc
         logins.drop(body.login_id, pending)
-    bundle = _reusable_bundle(pending.garmin)
+    bundle = pending.garmin.client.dumps()
+    if not has_tokens(bundle):
+        # The code was spent on a login no other process can use; another code cannot help.
+        raise login_lost(
+            "Garmin accepted the code but signed in without a token the app can reuse."
+        )
     log.info("garmin login connected", extra={"login_id": body.login_id, "with_code": True})
     return LoginCodeResponse(token_bundle=bundle)
 
@@ -88,8 +98,12 @@ def _code_failure(
     """What a failed code answers (None: a bug, answered 500), and whether its login stays.
 
     A refused code keeps the login, up to MAX_CODES. An outage keeps it while the library's MFA
-    session survived, so the same code can be sent again. A 429 drops it: another code now would
-    only extend Garmin's block. Anything else ends it.
+    session survived, so the same code can be sent again: a 502 from here always means the login
+    waits. A 429 drops it (another code now would only extend Garmin's block) and answers the 429.
+    Any other Garmin or network failure drops it and answers garmin_login_lost: with the MFA
+    session gone, no code can finish it. In garminconnect 0.3.17 the session ends only once Garmin
+    accepted the code, so that is a login that failed after the code (the token check or the
+    profile load that follow it).
     """
     error = from_code_exception(exc)
     if error is not None and code_refused(pending.garmin, exc):
@@ -108,14 +122,9 @@ def _code_failure(
     if not kept:
         logins.drop(login_id, pending)
     _log_code_failure(login_id, pending, kept=kept)
-    if error is not None and error.code is ErrorCode.GARMIN_MFA_REJECTED:
-        # An auth error after Garmin accepted the code (the profile load that follows it).
-        return ServiceError(
-            502,
-            ErrorCode.GARMIN_UNAVAILABLE,
-            "Garmin accepted the code but did not finish the login. Start again.",
-        )
-    return error
+    if error is None or kept or error.code is ErrorCode.GARMIN_RATE_LIMITED:
+        return error
+    return login_lost("Garmin accepted the code but did not finish the login.")
 
 
 def _log_code_failure(login_id: str, pending: PendingLogin, *, kept: bool) -> None:

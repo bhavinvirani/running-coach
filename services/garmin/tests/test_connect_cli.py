@@ -48,7 +48,16 @@ from garmin_service.connect_cli import (
     app_origin,
     run,
 )
-from tests.helpers import JSON_SCHEMA_DIR, LOGIN_BUNDLE, FakeLogin, assert_valid
+from tests.helpers import (
+    JSON_SCHEMA_DIR,
+    LOGIN_BUNDLE,
+    FakeLogin,
+    VerifyAnswer,
+    assert_valid,
+    no_answer,
+    non_json_answer,
+    verify_failure,
+)
 
 APP_EMAIL = "runner@example.com"
 APP_PASSWORD = "app-password-not-real"
@@ -343,6 +352,17 @@ def test_an_empty_2fa_code_asks_again_without_calling_garmin(fake_app: FakeApp) 
             id="network error while verifying the code",
         ),
         pytest.param(TimeoutError("timed out"), GARMIN_DOWN, id="timeout while verifying the code"),
+        pytest.param(
+            # The library folds these into its "MFA verification failed" auth error.
+            verify_failure(no_answer(), non_json_answer(403)),
+            GARMIN_DOWN,
+            id="no verify endpoint answered about the code",
+        ),
+        pytest.param(
+            verify_failure(VerifyAnswer(429), no_answer()),
+            GARMIN_LIMITED,
+            id="a 429 on one verify endpoint",
+        ),
     ],
 )
 def test_a_429_or_network_error_on_the_2fa_code_exits_1_without_asking_again(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -34,7 +35,15 @@ from tests.helpers import (
     TEST_SECRET,
     Clock,
     FakeLogin,
+    VerifyAnswer,
+    VerifyOutcome,
+    WaitingGarmin,
+    code_accepted_answer,
+    code_refused_answer,
     logins_in_order,
+    no_answer,
+    non_json_answer,
+    timed_out,
 )
 
 PROBLEM_JSON = "application/problem+json"
@@ -429,6 +438,108 @@ def test_an_outage_counts_no_code_against_the_limit(make_client: AppFactory) -> 
     assert statuses == [422, 502, 422, 200]
 
 
+# The two verify endpoints' outcomes of one code check, made fresh per test.
+Check = Callable[[], tuple[VerifyOutcome, VerifyOutcome]]
+
+
+def connected_after(check: Check) -> WaitingGarmin:
+    """A login whose verify endpoints answer `check` to the first code, then accept the next."""
+    return WaitingGarmin(*check(), code_accepted_answer())
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        pytest.param(lambda: (no_answer(), no_answer()), id="connection error on both"),
+        pytest.param(lambda: (timed_out(), timed_out()), id="timeout on both"),
+        pytest.param(
+            lambda: (non_json_answer(403), non_json_answer(403)), id="403 non-JSON on both"
+        ),
+        pytest.param(
+            lambda: (non_json_answer(503), no_answer()), id="503 non-JSON and connection error"
+        ),
+    ],
+)
+def test_code_returns_502_and_keeps_the_login_when_no_verify_endpoint_answers_about_the_code(
+    make_client: AppFactory, check: Check
+) -> None:
+    garmin = connected_after(check)
+    client = make_client(password_login=garmin.factory())
+    start(client)
+
+    down = send_code(client)
+    connected = send_code(client)
+
+    assert_problem(down, 502, "garmin_unavailable")
+    assert connected.json() == {"tokenBundle": LOGIN_BUNDLE}
+    # The same code went to the same MFA session: two endpoints, then the first accepted it.
+    assert len(garmin.session.posts) == 3
+
+
+def test_outages_on_the_verify_endpoints_count_no_code_against_the_limit(
+    make_client: AppFactory,
+) -> None:
+    refused = (code_refused_answer(), code_refused_answer())
+    garmin = WaitingGarmin(
+        no_answer(),
+        no_answer(),
+        non_json_answer(403),
+        non_json_answer(403),
+        *refused,
+        *refused,
+        *refused,
+    )
+    client = make_client(password_login=garmin.factory())
+    start(client)
+
+    answers = [send_code(client).json()["code"] for _ in range(5)]
+
+    assert answers == [
+        "garmin_unavailable",
+        "garmin_unavailable",
+        "garmin_mfa_rejected",
+        "garmin_mfa_rejected",
+        "garmin_login_lost",
+    ]
+
+
+def test_a_refusal_with_no_answer_from_the_other_verify_endpoint_counts_as_a_wrong_code(
+    make_client: AppFactory,
+) -> None:
+    # Garmin checked the code on one endpoint; both share the login's session.
+    garmin = WaitingGarmin(
+        *[outcome for _ in range(MAX_CODES) for outcome in (code_refused_answer(), no_answer())]
+    )
+    client = make_client(password_login=garmin.factory())
+    start(client)
+
+    statuses = [send_code(client, WRONG_CODE).status_code for _ in range(MAX_CODES)]
+
+    assert statuses == [422, 422, 409]
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        pytest.param(lambda: (VerifyAnswer(429), no_answer()), id="a 429 and a connection error"),
+        pytest.param(lambda: (code_refused_answer(), VerifyAnswer(429)), id="a refusal and a 429"),
+        pytest.param(lambda: (VerifyAnswer(429), VerifyAnswer(429)), id="a 429 on both"),
+    ],
+)
+def test_code_returns_429_and_drops_the_login_when_a_verify_endpoint_answers_429(
+    make_client: AppFactory, check: Check
+) -> None:
+    garmin = connected_after(check)
+    client = make_client(password_login=garmin.factory())
+    start(client)
+
+    body = assert_problem(send_code(client), 429, "garmin_rate_limited")
+
+    assert body["retryAfterSeconds"] == 3600
+    assert_problem(send_code(client), 409, "garmin_login_lost")
+    assert len(garmin.session.posts) == 2
+
+
 @pytest.mark.parametrize(
     "error",
     [
@@ -442,7 +553,7 @@ def test_an_outage_counts_no_code_against_the_limit(make_client: AppFactory) -> 
         ),
     ],
 )
-def test_code_returns_502_and_drops_the_login_when_it_fails_after_garmin_accepted_the_code(
+def test_code_returns_409_login_lost_when_it_fails_after_garmin_accepted_the_code(
     make_client: AppFactory, error: BaseException
 ) -> None:
     # Garmin.resume_login loads the profile once the code is accepted and the MFA session cleared.
@@ -452,18 +563,68 @@ def test_code_returns_502_and_drops_the_login_when_it_fails_after_garmin_accepte
     client = scripted(make_client, garmin)
     start(client)
 
-    assert_problem(send_code(client), 502, "garmin_unavailable")
+    body = assert_problem(send_code(client), 409, "garmin_login_lost")
+    assert "accepted the code" in body["detail"]
     assert_problem(send_code(client), 409, "garmin_login_lost")
     assert garmin.codes == [FIXTURE_MFA_CODE]
 
 
-def test_code_returns_502_without_a_bundle_when_the_login_has_no_di_tokens(
-    make_client: AppFactory,
+@pytest.mark.parametrize(
+    "make_garmin",
+    [
+        pytest.param(
+            lambda: WaitingGarmin(code_accepted_answer(), token_accepted=False),
+            id="token rejected by the API tier",
+        ),
+        pytest.param(
+            lambda: WaitingGarmin(
+                code_accepted_answer(),
+                profile_error=GarminConnectAuthenticationError("Invalid user settings found"),
+            ),
+            id="profile load refused",
+        ),
+        pytest.param(
+            lambda: WaitingGarmin(
+                code_accepted_answer(),
+                profile_error=requests.exceptions.ConnectionError("reset by peer"),
+            ),
+            id="profile load network error",
+        ),
+    ],
+)
+def test_code_returns_409_login_lost_when_the_library_ended_the_mfa_session_after_the_code(
+    make_client: AppFactory, make_garmin: Callable[[], WaitingGarmin]
 ) -> None:
-    client = scripted(make_client, FakeLogin(needs_mfa=True, bundle=NO_TOKENS))
+    # A 502 from /connect/mfa means the login waits; this one cannot take another code.
+    garmin = make_garmin()
+    client = make_client(password_login=garmin.factory())
     start(client)
 
-    body = assert_problem(send_code(client), 502, "garmin_unavailable")
+    body = assert_problem(send_code(client), 409, "garmin_login_lost")
+
+    assert "accepted the code" in body["detail"]
+    assert "email and password" in body["detail"]
+    assert garmin.client._mfa_pending is False
+    assert_problem(send_code(client), 409, "garmin_login_lost")
+    assert len(garmin.session.posts) == 1
+
+
+@pytest.mark.parametrize(
+    "make_garmin",
+    [
+        pytest.param(lambda: FakeLogin(needs_mfa=True, bundle=NO_TOKENS), id="scripted"),
+        pytest.param(lambda: WaitingGarmin(code_accepted_answer(), tokens=False), id="library"),
+    ],
+)
+def test_code_returns_409_login_lost_without_a_bundle_when_the_login_has_no_di_tokens(
+    make_client: AppFactory, make_garmin: Callable[[], FakeLogin | WaitingGarmin]
+) -> None:
+    # The library's web-cookie fallback, when the DI token exchange fails, dumps null tokens.
+    client = make_client(password_login=make_garmin().factory())
+    start(client)
+
+    body = assert_problem(send_code(client), 409, "garmin_login_lost")
+
     assert "token" in body["detail"]
     assert_problem(send_code(client), 409, "garmin_login_lost")
 

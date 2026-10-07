@@ -8,6 +8,9 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+import requests
+from garminconnect import Garmin
+from garminconnect.client import Client
 from jsonschema import Draft202012Validator
 
 from garmin_service.client import GARMIN_RETRY_ATTEMPTS, Connect, GarminSession, login
@@ -414,3 +417,154 @@ def logins_in_order(*logins: FakeLogin) -> GarminFactory:
         return garmin
 
     return make
+
+
+# A login waiting for its code, with garminconnect's own code check behind it.
+
+# An auth-API answer whose body is no JSON, the way requests and curl_cffi fail to parse one.
+_NOT_JSON = object()
+
+
+class VerifyAnswer:
+    """One HTTP answer of an MFA verify endpoint, as the library's session hands it back."""
+
+    def __init__(self, status_code: int, body: Any = _NOT_JSON) -> None:
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> Any:
+        if self._body is _NOT_JSON:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+        return self._body
+
+
+def code_refused_answer() -> VerifyAnswer:
+    # Any JSON without SUCCESSFUL is Garmin's refusal to the library; the type name is a guess.
+    return VerifyAnswer(200, {"responseStatus": {"type": "INVALID_MFA_CODE"}})
+
+
+def code_accepted_answer() -> VerifyAnswer:
+    return VerifyAnswer(
+        200, {"responseStatus": {"type": "SUCCESSFUL"}, "serviceTicketId": "ST-0-not-real"}
+    )
+
+
+def json_status_answer(status_code: str) -> VerifyAnswer:
+    """Garmin's JSON error body naming a status, which the library reads as a string."""
+    return VerifyAnswer(200, {"error": {"status-code": status_code}})
+
+
+def non_json_answer(status_code: int) -> VerifyAnswer:
+    """An HTML page instead of Garmin's JSON: a Cloudflare challenge (403) or an error page."""
+    return VerifyAnswer(status_code)
+
+
+def no_answer() -> BaseException:
+    """What requests raises when the verify endpoint cannot be reached; quotes included."""
+    return requests.exceptions.ConnectionError(
+        "HTTPSConnectionPool(host='sso.garmin.com', port=443): Max retries exceeded with url: "
+        "/portal/api/mfa/verifyCode?clientId=GarminConnect (Caused by NewConnectionError("
+        '"<urllib3.connection.HTTPSConnection object>: Failed to establish a new connection: '
+        '[Errno 61] Connection refused"))'
+    )
+
+
+def timed_out() -> BaseException:
+    return requests.exceptions.ReadTimeout(
+        "HTTPSConnectionPool(host='sso.garmin.com', port=443): Read timed out. (read timeout=30)"
+    )
+
+
+VerifyOutcome = VerifyAnswer | BaseException
+
+
+class ScriptedVerifySession:
+    """The live HTTP session of a login waiting for its code: answers each post to a verify
+    endpoint with the next outcome, raising it when it is an exception."""
+
+    def __init__(self, outcomes: Sequence[VerifyOutcome]) -> None:
+        self._outcomes = list(outcomes)
+        self.posts: list[str] = []
+
+    def post(self, url: str, **_kwargs: Any) -> VerifyAnswer:
+        self.posts.append(url)
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+class ScriptedClient(Client):
+    """garminconnect's Client with the two calls after an accepted code scripted: the ticket
+    exchange stores tokens (or none, like the web-cookie fallback) and the token check answers
+    `token_accepted`. The code check itself, _complete_mfa, is the library's."""
+
+    def __init__(self, *, tokens: bool, token_accepted: bool) -> None:
+        super().__init__()
+        self._gives_tokens = tokens
+        self._token_accepted = token_accepted
+
+    def _establish_session(
+        self, ticket: str, sess: Any = None, service_url: str | None = None
+    ) -> None:
+        tokens = json.loads(LOGIN_BUNDLE)
+        if self._gives_tokens:
+            self.di_token = tokens["di_token"]
+            self.di_refresh_token = tokens["di_refresh_token"]
+            self.di_client_id = tokens["di_client_id"]
+        else:
+            self.jwt_web = "jwt-web-not-real"
+
+    def _verify_token(self) -> bool:
+        return self._token_accepted
+
+
+class WaitingGarmin(Garmin):
+    """A real garminconnect.Garmin whose password login stops where a portal-flow login waits for
+    its code, with ScriptedVerifySession as the MFA session: resume_login runs the library's own
+    code check, so its failures are the library's, not hand-written. Nothing goes on the wire."""
+
+    def __init__(
+        self,
+        *outcomes: VerifyOutcome,
+        tokens: bool = True,
+        token_accepted: bool = True,
+        profile_error: BaseException | None = None,
+    ) -> None:
+        super().__init__("runner@example.com", "not-a-real-password", return_on_mfa=True)
+        self.client = ScriptedClient(tokens=tokens, token_accepted=token_accepted)
+        self.session = ScriptedVerifySession(outcomes)
+        self._profile_error = profile_error
+
+    def login(self, /, tokenstore: str | None = None) -> tuple[str | None, str | None]:
+        self.client._mfa_pending = True
+        self.client._mfa_flow = "portal"
+        self.client._mfa_session = self.session
+        self.client._mfa_login_params = {}
+        self.client._mfa_post_headers = {}
+        return "needs_mfa", None
+
+    def _load_profile_and_settings(self) -> None:
+        if self._profile_error is not None:
+            raise self._profile_error
+
+    def factory(self) -> GarminFactory:
+        """A factory that hands out this one login for every start."""
+
+        def make(_email: str, password: str) -> WaitingGarmin:
+            self.password = password
+            return self
+
+        return make
+
+
+def verify_failure(*outcomes: VerifyOutcome) -> BaseException:
+    """What resume_login raises when the verify endpoints answer `outcomes` (0.3.17: the flow's own
+    endpoint, then the other one), from the library's own code."""
+    garmin = WaitingGarmin(*outcomes)
+    garmin.login()
+    try:
+        garmin.resume_login({}, "123456")
+    except Exception as exc:
+        return exc
+    raise AssertionError("Garmin accepted the code")

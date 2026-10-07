@@ -18,6 +18,7 @@ chains read differently there: from_login_exception and from_code_exception.
 
 from __future__ import annotations
 
+import ast
 import logging
 import re
 import traceback
@@ -50,6 +51,14 @@ MAX_RETRY_AFTER_S = 24 * 3600
 
 # The library's own formats: "API Error 429 - ..." from the HTTP layer, "... client error (403)".
 _STATUS_IN_MESSAGE = re.compile(r"(?:API Error|client error \()\s*(\d{3})")
+
+# A failed code check's message and its outcomes per verify endpoint (Client._complete_mfa, 0.3.17).
+_VERIFY_FAILED = "MFA verification failed: "
+_VERIFY_RATE_LIMITED = re.compile(r"HTTP 429|429 in JSON body")
+# No answer about the code: no HTTP answer at all (network error or the 30 s timeout), a page that
+# is not Garmin's JSON (a Cloudflare challenge, a proxy's error page), or a 5xx named in Garmin's
+# JSON. Any other JSON is Garmin's answer about the code: a refusal.
+_VERIFY_NO_ANSWER = re.compile(r"connection error .*|HTTP \d{3} non-JSON|5\d\d", re.DOTALL)
 
 _GARMIN_EXCEPTIONS: tuple[type[Exception], ...] = (
     GarminConnectAuthenticationError,
@@ -195,6 +204,48 @@ def _from_garmin_or_network(exc: BaseException) -> ServiceError | None:
     return None
 
 
+def _verify_outcomes(exc: BaseException) -> list[str] | None:
+    """Each verify endpoint's outcome when exc is the library's failed code check, else None.
+
+    Client._complete_mfa posts the code to two endpoints, catches every failure and raises
+    GarminConnectAuthenticationError(f"MFA verification failed: {failures}") with no cause: a list
+    of "<verify url>: <outcome>" (0.3.17 source). The URL holds no ": ", the code is not in it.
+    """
+    for e in _chain(exc):
+        message = str(e)
+        if not (
+            isinstance(e, GarminConnectAuthenticationError) and message.startswith(_VERIFY_FAILED)
+        ):
+            continue
+        try:
+            failures = ast.literal_eval(message.removeprefix(_VERIFY_FAILED))
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            return None
+        if not isinstance(failures, list) or not all(isinstance(f, str) for f in failures):
+            return None
+        return [failure.partition(": ")[2] for failure in failures]
+    return None
+
+
+def _from_verify_failures(exc: BaseException) -> ServiceError | None:
+    """garmin_rate_limited when an endpoint answered 429, garmin_unavailable when none answered
+    about the code; None for a refusal, or a failure of another shape, left to the general mapping.
+
+    One endpoint refusing while the other did not answer is a refusal: Garmin did check the code,
+    and both endpoints share the login's session, so the same code would be refused again. Read as
+    an outage, the runner would resend a wrong code believing Garmin was down; read as a refusal, a
+    right code costs at most one of the MAX_CODES tries.
+    """
+    outcomes = _verify_outcomes(exc)
+    if not outcomes:
+        return None
+    if any(_VERIFY_RATE_LIMITED.fullmatch(outcome) for outcome in outcomes):
+        return rate_limited()
+    if all(_VERIFY_NO_ANSWER.fullmatch(outcome) for outcome in outcomes):
+        return unavailable()
+    return None
+
+
 def _from_password_login(
     exc: BaseException, rejected: Callable[[], ServiceError]
 ) -> ServiceError | None:
@@ -202,10 +253,16 @@ def _from_password_login(
     turning down what the runner typed. Only a 429 and that refusal keep their meaning; anything
     else, a 404 or 403 in a strategy's text too, is Garmin not finishing the login.
 
+    A failed code check is an auth error whatever happened on the wire, so its message is read
+    first (_from_verify_failures): an outage there must not count as a wrong code.
+
     Garmin.resume_login lets a network error out with no library exception around it. During a
     login nothing else is on the wire, so that is Garmin not answering. The read routes keep
     from_garmin_exception, which leaves such an error unmapped.
     """
+    verify_error = _from_verify_failures(exc)
+    if verify_error is not None:
+        return verify_error
     error = _from_garmin_or_network(exc)
     if error is None or error.code is ErrorCode.GARMIN_RATE_LIMITED:
         return error
@@ -228,8 +285,10 @@ def from_code_exception(exc: BaseException) -> ServiceError | None:
     """Map a failed resume_login(code); None when it is neither Garmin nor the network.
 
     A refused code is GarminConnectAuthenticationError("MFA verification failed: ...") or "Widget
-    MFA failed: ...": garmin_mfa_rejected. Whether the login can take another code is not in the
-    exception but in the instance (password_login.code_refused).
+    MFA failed: ...": garmin_mfa_rejected. The first lists each verify endpoint's outcome: a 429 on
+    either is garmin_rate_limited, no answer about the code from both (network errors, non-JSON
+    pages) garmin_unavailable, so an outage is not counted as a wrong code. Whether the login can
+    take another code is not in the exception but in the instance (password_login.code_refused).
     """
     return _from_password_login(exc, mfa_rejected)
 

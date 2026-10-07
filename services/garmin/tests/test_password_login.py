@@ -17,7 +17,7 @@ from garmin_service.password_login import (
     mfa_pending,
     real_garmin,
 )
-from tests.helpers import LOGIN_BUNDLE, NO_TOKENS, FakeLogin
+from tests.helpers import LOGIN_BUNDLE, NO_TOKENS, FakeLogin, no_answer, verify_failure
 
 REFUSED = GarminConnectAuthenticationError("MFA verification failed: [...]")
 
@@ -73,6 +73,8 @@ def test_code_refused_needs_a_refusal_and_a_login_that_still_waits() -> None:
     assert code_refused(waiting, REFUSED) is True
     assert code_refused(accepted, REFUSED) is False
     assert code_refused(waiting, requests.exceptions.ConnectionError("reset")) is False
+    # The library's auth error for a code check neither verify endpoint answered.
+    assert code_refused(waiting, verify_failure(no_answer(), no_answer())) is False
     assert code_refused(waiting, ValueError("bug")) is False
 
 
