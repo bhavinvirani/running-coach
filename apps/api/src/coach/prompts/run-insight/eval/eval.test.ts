@@ -7,8 +7,8 @@ import { runInsightOutputSchema, runInsightSchema } from "../schema";
 
 // The run-insight v2 eval: each case is an input and a recorded output, checked for schema validity,
 // voice (src/coach/voice.ts) and the plan change's rules (runInsightOutputProblems). The outputs are
-// written by hand until the owner records live ones with `pnpm coach:eval --write`
-// (src/coach/run-insight-eval.ts).
+// the recorded live v2 run on the Claude plan (`pnpm coach:eval --plan --write`,
+// src/coach/run-insight-eval.ts).
 
 const cases = await readRunInsightEvalCases(import.meta.dirname);
 

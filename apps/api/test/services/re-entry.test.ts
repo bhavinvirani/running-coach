@@ -313,6 +313,37 @@ describe("gap re-entry after a sync", () => {
     expect(await gapReEntry(userId, NOW)).toBeNull();
   });
 
+  it("eases a plan that starts at the distance's floor by the full re-entry: empty baseline weeks and a run 40 days before the goal carry nothing, so 42 days off run at 0.5, not 0.5 / 0.5 (regenerating a plan)", async () => {
+    const { userId, thursday, saturday } = await runner({
+      gap: 42,
+      plan: {
+        // The goal saved on Sunday 11 October, 40 days after P: no running in its 4 weeks, so week 1,
+        // this week, starts at the floor, not at an eased share of a recent volume.
+        createdAt: new Date("2026-10-11T12:00:00Z"),
+        startDate: "2026-10-12",
+        inputs: {
+          ...PLAN_INPUTS,
+          baseline: { weeklyVolumesM: [0, 0, 0, 0], longestRunM: 0, daysSinceLastRun: 40 },
+        },
+      },
+    });
+    garminLists([garminRun(R_DATE)]);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+    expect((await storedSession(saturday.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+    const rows = await storedAdjustments(userId);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        source: "gap",
+        requested: { factor: 0.5, walkRun: false, daysOff: 42 },
+        applied: { factor: 0.5, walkRun: false, daysOff: 42 },
+      });
+    }
+  });
+
   it("eases once, keyed on the first run back, when one sync inserts three runs after 10 days off", async () => {
     const { userId, thursday, saturday } = await runner({ gap: 12 });
     garminLists([garminRun("2026-10-11"), garminRun("2026-10-12"), garminRun(R_DATE)]);

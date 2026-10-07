@@ -8,7 +8,7 @@ import {
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
-import { trainingPause } from "../../src/db/schema";
+import { activity, trainingPause } from "../../src/db/schema";
 import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
 import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { endPause, startPause } from "../../src/services/pause";
@@ -445,6 +445,37 @@ describe("POST /api/pause/end", () => {
     ]);
   });
 
+  it("eases a plan that starts at the distance's floor by the full re-entry: empty baseline weeks and a run 40 days before the goal carry nothing, so 43 days off run at 0.5, not 0.5 / 0.5 (regenerating a plan)", async () => {
+    const userId = await createUser();
+    await createRunOn(userId, "2026-09-01");
+    await createPause(userId, { startedOn: "2026-09-02", reason: "break" });
+    // The goal saved on Sunday 11 October, 40 days after the run: no running in its 4 weeks, so week 1,
+    // this week, starts at the floor, not at an eased share of a recent volume.
+    const active = await createPlan(userId, {
+      createdAt: new Date("2026-10-11T12:00:00Z"),
+      startDate: "2026-10-12",
+      inputs: {
+        ...PLAN_INPUTS,
+        baseline: { weeklyVolumesM: [0, 0, 0, 0], longestRunM: 0, daysSinceLastRun: 40 },
+      },
+    });
+    const today = await createSession(userId, active.id, { date: TODAY });
+    const friday = await createSession(userId, active.id, { date: FRIDAY });
+
+    const { reEntry } = await endPause(userId, NOW);
+
+    expect(reEntry).toEqual({
+      daysOff: 43,
+      factor: 0.5,
+      walkRun: false,
+      fromDate: TODAY,
+      sessionsChanged: 2,
+    });
+    for (const session of [today, friday]) {
+      expect((await storedSession(session.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+    }
+  });
+
   it("counts only the days since a run the gap re-entry eased that morning: paused the same day, I'm back 3 days later answers factor 1, walk-run only after sick (illness or injury pause, no double re-entry)", async () => {
     const userId = await createUser();
     await createRunOn(userId, "2026-10-01");
@@ -483,6 +514,53 @@ describe("POST /api/pause/end", () => {
       });
     }
   });
+
+  it.each([
+    ["the phone's copy of it remains", true],
+    ["it was the only run", false],
+  ])(
+    "eases one break once when the run the gap re-entry eased that morning is deleted on Garmin during the pause and %s: I'm back 3 days later answers factor 1 (duplicate or edited activities, no double re-entry)",
+    async (_, phoneCopy) => {
+      const userId = await createUser();
+      await createRunOn(userId, "2026-09-30");
+      const active = await createPlan(userId, { createdAt: new Date("2026-09-01T00:00:00Z") });
+      const today = await createSession(userId, active.id, { date: TODAY });
+      const friday = await createSession(userId, active.id, { date: FRIDAY });
+      // Saturday 10 October: the watch's run ends 10 days off, the phone records the same run 5 s later.
+      const watch = await createRunOn(userId, "2026-10-10");
+      if (phoneCopy) {
+        await createRunOn(userId, "2026-10-10", {
+          startUtc: new Date("2026-10-10T08:00:05Z"),
+          startLocal: "2026-10-10 08:00:05",
+        });
+      }
+      expect(await gapReEntry(userId, new Date("2026-10-10T09:00:00Z"))).toMatchObject({
+        factor: 0.7,
+        daysOff: 10,
+      });
+      const gapRows = await storedAdjustments(userId);
+      expect(gapRows.map((row) => row.activityId)).toEqual([watch.id, watch.id]);
+      await createPause(userId, { startedOn: "2026-10-10", reason: "break" });
+      // The runner deletes the watch's run on Garmin, and the next sync removes it as
+      // removeRunsDeletedOnGarmin does: its gap rows stay, unlinked.
+      await db.delete(activity).where(eq(activity.id, watch.id));
+      expect((await storedAdjustments(userId)).map((row) => row.activityId)).toEqual([null, null]);
+
+      const { reEntry } = await endPause(userId, new Date("2026-10-13T10:00:00Z"));
+
+      expect(reEntry).toEqual({
+        daysOff: 3,
+        factor: 1,
+        walkRun: false,
+        fromDate: "2026-10-13",
+        sessionsChanged: 0,
+      });
+      for (const session of [today, friday]) {
+        expect((await storedSession(session.id)).target.distanceM).toBe(PLANNED_M * 0.7);
+      }
+      expect(await storedAdjustments(userId)).toHaveLength(2);
+    },
+  );
 
   it("eases a plan built from a 0.5 baseline once its first week is past: a return 7 weeks later runs at 0.5, never skipped (no double re-entry)", async () => {
     const userId = await createUser();

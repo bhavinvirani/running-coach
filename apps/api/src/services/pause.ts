@@ -156,9 +156,12 @@ function longestStretch(
 /**
  * The break "I'm back" ends: the longest stretch without a run from the last run before the pause's start
  * (the start itself without one) through today, counting the runs from the start on, so a run synced
- * during the pause neither hides the days before it nor stretches the days after it. A run from the start
- * on that the gap re-entry eased (a sync the morning of the pause) ended the break before it, which is not
- * eased twice: the stretch then starts at the latest such run and counts only the runs after it.
+ * during the pause neither hides the days before it nor stretches the days after it. A run the gap
+ * re-entry eased since that stretch began (a sync the morning of the pause) ended the break before it,
+ * which is not eased twice: the stretch then starts at the latest such run from the start on and counts
+ * only the runs after it, or, when that run was deleted since (its gap rows stay unlinked, as in
+ * gapReEntry), at the pause's start, which the eased run cannot be after: no gap re-entry runs while a
+ * pause is open.
  */
 async function breakBefore(
   tx: DbTransaction,
@@ -178,33 +181,30 @@ async function breakBefore(
     .from(activity)
     .where(and(eq(activity.userId, userId), runDateWithin(pause.startedOn, today)))
     .orderBy(asc(activity.startLocal), asc(activity.id));
-  // The run before the start already starts the stretch, so only the runs from the start on matter.
-  const gapEased =
-    during.length === 0
-      ? []
-      : await tx
-          .selectDistinct({ activityId: planAdjustment.activityId })
-          .from(planAdjustment)
-          .where(
-            and(
-              eq(planAdjustment.userId, userId),
-              eq(planAdjustment.source, "gap"),
-              inArray(
-                planAdjustment.activityId,
-                during.map((run) => run.id),
-              ),
-            ),
-          );
+  const pauseStart: BreakMark = { date: pause.startedOn, startedAt: pause.createdAt };
+  const stretchStart = before ?? pauseStart;
+  const duringIds = during.map((run) => run.id);
+  // The run before the start already starts the stretch, so only the runs from the start on matter, and
+  // a run deleted since, whose date is gone with it.
+  const gapEased = await tx
+    .selectDistinct({ activityId: planAdjustment.activityId })
+    .from(planAdjustment)
+    .where(
+      and(
+        eq(planAdjustment.userId, userId),
+        eq(planAdjustment.source, "gap"),
+        gte(planAdjustment.createdAt, stretchStart.startedAt),
+        duringIds.length === 0
+          ? isNull(planAdjustment.activityId)
+          : or(isNull(planAdjustment.activityId), inArray(planAdjustment.activityId, duringIds)),
+      ),
+    );
   const eased = new Set(gapEased.map((row) => row.activityId));
   const lastEased = during.findLastIndex((run) => eased.has(run.id));
   if (lastEased >= 0) {
     return longestStretch(during[lastEased]!, during.slice(lastEased + 1), today);
   }
-  return longestStretch(
-    before ?? { date: pause.startedOn, startedAt: pause.createdAt },
-    during,
-    today,
-  );
+  return longestStretch(eased.has(null) ? pauseStart : stretchStart, during, today);
 }
 
 /**

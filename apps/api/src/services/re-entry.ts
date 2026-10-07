@@ -1,6 +1,7 @@
 import {
   baselineReEntryFactor,
   RE_ENTRY_SHORT_BREAK_DAYS,
+  reEnteredVolumeM,
   reEntryFactor,
   reEntryPlan,
 } from "@running-coach/engine";
@@ -39,7 +40,8 @@ export const GAP_RE_ENTRY_WINDOW_DAYS = 7;
  * re-entry factor of its baseline when it was built during the break (after `breakStart`, the run or the
  * pause that began it) and the return falls in or before its first week, which carries that easing; else
  * 1. A plan built before the break, or a return after its first week, carries nothing, and neither does a
- * baseline without runs (factor 0): its plan starts at the distance's floor, not at an eased share.
+ * plan that starts at the floor: with no volume left after re-entry (no runs, or only empty baseline
+ * weeks) the engine starts week 1 at the distance's floor, not at an eased share.
  */
 export function carriedFactor(
   active: Pick<PlanRow, "createdAt" | "inputs" | "startDate">,
@@ -49,8 +51,8 @@ export function carriedFactor(
   const builtDuringBreak = active.createdAt > breakStart;
   const inFirstWeek = daysBetween(active.startDate, returnDate) < PLAN_FIRST_WEEK_DAYS;
   if (!builtDuringBreak || !inFirstWeek) return 1;
-  const carried = baselineReEntryFactor(active.inputs.baseline);
-  return carried > 0 ? carried : 1;
+  if (reEnteredVolumeM(active.inputs.baseline) === 0) return 1;
+  return baselineReEntryFactor(active.inputs.baseline);
 }
 
 export interface WriteReEntryInput {
