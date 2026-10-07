@@ -19,13 +19,15 @@ import {
   REPETITION_REP_M,
   RACE_WEEK_DAYS,
   TAPER_TEMPO_MIN_DAYS,
+  THRESHOLD_BLOCK_MIN_M,
+  THRESHOLD_BLOCK_ROTATION,
   THRESHOLD_BLOCK_STEP_M,
-  THRESHOLD_BLOCKS,
   THRESHOLD_RECOVERY_S,
+  THRESHOLD_SINGLE_MAX_S,
   WARMUP_S,
   WORK_CAP_SHARE,
 } from "../constants";
-import { stepDistanceM } from "./session-target";
+import { stepDistanceM, stepDurationS } from "./session-target";
 
 /** The zones quality work runs in; the race zone is the goal race's own pace. */
 export type WorkZone = Extract<PaceZone, "threshold" | "interval" | "repetition" | "race">;
@@ -38,10 +40,21 @@ export interface Work {
   recoveryS: number;
 }
 
+export interface QualityWorkInput {
+  zone: WorkZone;
+  distanceKey: RaceDistanceKey;
+  /** The most work the session may hold (workCapM). */
+  capM: number;
+  /** Tempo blocks rotate by it. */
+  weekNumber: number;
+  paces: PlanPaces;
+}
+
 export interface QualityStepsInput {
   work: Work;
-  /** Meters added to the warmup so the session takes volume the easy runs cannot. */
+  /** Meters added to the warmup and the cooldown so the session takes volume the easy runs cannot. */
   warmupPadM: number;
+  cooldownPadM: number;
   paces: PlanPaces;
 }
 
@@ -92,9 +105,10 @@ export function taperKeepsWork({ zone, daysOut }: { zone: WorkZone; daysOut: num
 
 /**
  * Each session's zone, first session first. With two, the first alternates intervals (odd weeks) and
- * repetitions (even weeks) in base and build and is race practice in the peak and taper; the second is
- * always tempo. With one, base and build cycle tempo, intervals, tempo, repetitions by week, the peak
- * alternates race practice (odd weeks) and tempo (even weeks), and taper and race weeks run race
+ * repetitions (even weeks) in base and build, tempo second; the peak runs race practice and tempo, race
+ * practice first in odd weeks and tempo first in even ones, so peak weeks never repeat; the taper runs
+ * race practice first. With one, base and build cycle tempo, intervals, tempo, repetitions by week, the
+ * peak alternates race practice (odd weeks) and tempo (even weeks), and taper and race weeks run race
  * practice: a runner on one session a week still meets tempo.
  */
 export function qualityZones({
@@ -109,7 +123,8 @@ export function qualityZones({
   const odd = weekNumber % 2 === 1;
   const early = phase === "base" || phase === "build";
   if (qualityCount({ phase, daysPerWeek }) === 2) {
-    return [early ? (odd ? "interval" : "repetition") : "race", "threshold"];
+    if (early) return [odd ? "interval" : "repetition", "threshold"];
+    return phase === "peak" && !odd ? ["threshold", "race"] : ["race", "threshold"];
   }
   if (early) return [ONE_QUALITY_ROTATION[(weekNumber - 1) % ONE_QUALITY_ROTATION.length]!];
   return [phase === "peak" && !odd ? "threshold" : "race"];
@@ -133,16 +148,35 @@ function fromMenu(
   return reps === 0 ? null : { zone, repM: shorter, reps, recoveryS };
 }
 
-/** The most work of the zone's menu that fits the cap; null when not even one rep fits. */
-export function qualityWork({
-  zone,
-  distanceKey,
-  capM,
-}: {
-  zone: WorkZone;
-  distanceKey: RaceDistanceKey;
-  capM: number;
-}): Work | null {
+/**
+ * Threshold work in blocks of whole 100 m: the week's count from THRESHOLD_BLOCK_ROTATION, fewer while a
+ * block would be under 1 km, none when even one would be; one block only up to 20 min at threshold pace,
+ * else 2.
+ */
+function thresholdWork(
+  { distanceKey, capM, weekNumber, paces }: QualityWorkInput,
+  zone: WorkZone,
+): Work | null {
+  const rotation = THRESHOLD_BLOCK_ROTATION[distanceKey];
+  const blockM = (blocks: number) =>
+    Math.floor(capM / blocks / THRESHOLD_BLOCK_STEP_M) * THRESHOLD_BLOCK_STEP_M;
+  let blocks = rotation[(weekNumber - 1) % rotation.length]!;
+  while (blocks > 1 && blockM(blocks) < THRESHOLD_BLOCK_MIN_M) blocks -= 1;
+  if (blockM(blocks) < THRESHOLD_BLOCK_MIN_M) return null;
+  const singleS = stepDurationS(
+    { kind: "work", zone: "threshold", distanceM: blockM(1), durationS: null },
+    paces,
+  );
+  if (blocks === 1 && singleS > THRESHOLD_SINGLE_MAX_S) blocks = 2;
+  return { zone, repM: blockM(blocks), reps: blocks, recoveryS: THRESHOLD_RECOVERY_S };
+}
+
+/**
+ * The most work of the zone's menu that fits the cap; null when not even one rep fits. Threshold work
+ * rotates its blocks by week (thresholdWork).
+ */
+export function qualityWork(input: QualityWorkInput): Work | null {
+  const { zone, distanceKey, capM } = input;
   switch (zone) {
     case "interval":
       return fromMenu(zone, INTERVAL_REP_M, capM, INTERVAL_RECOVERY_S);
@@ -150,11 +184,8 @@ export function qualityWork({
       return fromMenu(zone, REPETITION_REP_M, capM, REPETITION_RECOVERY_S);
     case "race":
       return fromMenu(zone, RACE_PRACTICE_REP_M[distanceKey], capM, RACE_PRACTICE_RECOVERY_S);
-    case "threshold": {
-      const reps = THRESHOLD_BLOCKS[distanceKey];
-      const repM = Math.floor(capM / reps / THRESHOLD_BLOCK_STEP_M) * THRESHOLD_BLOCK_STEP_M;
-      return repM === 0 ? null : { zone, repM, reps, recoveryS: THRESHOLD_RECOVERY_S };
-    }
+    case "threshold":
+      return thresholdWork(input, zone);
   }
 }
 
@@ -164,16 +195,20 @@ export function dropRep(work: Work): Work | null {
 }
 
 /**
- * Warmup, the work, cooldown. Warmup and cooldown are by time; a padded warmup is by distance so the
+ * Warmup, the work, cooldown. Warmup and cooldown are by time; a padded one is by distance so the
  * session holds exactly the meters the week gave it.
  */
-export function qualitySteps({ work, warmupPadM, paces }: QualityStepsInput): SessionSteps {
-  const warmup: Step = { kind: "warmup", zone: "easy", distanceM: null, durationS: WARMUP_S };
+export function qualitySteps({
+  work,
+  warmupPadM,
+  cooldownPadM,
+  paces,
+}: QualityStepsInput): SessionSteps {
+  const padded = (step: Step, padM: number): Step =>
+    padM === 0 ? step : { ...step, distanceM: stepDistanceM(step, paces) + padM, durationS: null };
   const rep: Step = { kind: "work", zone: work.zone, distanceM: work.repM, durationS: null };
   return [
-    warmupPadM === 0
-      ? warmup
-      : { ...warmup, distanceM: stepDistanceM(warmup, paces) + warmupPadM, durationS: null },
+    padded({ kind: "warmup", zone: "easy", distanceM: null, durationS: WARMUP_S }, warmupPadM),
     ...(work.reps === 1
       ? [rep]
       : [
@@ -190,6 +225,9 @@ export function qualitySteps({ work, warmupPadM, paces }: QualityStepsInput): Se
             ],
           },
         ]),
-    { kind: "cooldown", zone: "easy", distanceM: null, durationS: COOLDOWN_S },
+    padded(
+      { kind: "cooldown", zone: "easy", distanceM: null, durationS: COOLDOWN_S },
+      cooldownPadM,
+    ),
   ];
 }

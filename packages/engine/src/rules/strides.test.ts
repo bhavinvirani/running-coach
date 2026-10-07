@@ -2,7 +2,7 @@ import { sessionStepsSchema, type PlanPaces, type Step } from "@running-coach/sh
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { sessionTarget, stepDurationS } from "./session-target";
-import { stridesM, stridesRepeat, withStrides } from "./strides";
+import { stridesM, stridesRepeat, stridesRunIndex, withStrides } from "./strides";
 
 const PACES: PlanPaces = {
   easy: { fastSPerKm: 300, slowSPerKm: 340 }, // 320 s/km: 20 min is 3750 m
@@ -14,6 +14,14 @@ const PACES: PlanPaces = {
 };
 // Each stride: 20 s at 220 s/km (91 m) and a 60 s jog at 320 s/km (188 m).
 const FOUR_STRIDES_M = 4 * (91 + 188);
+// An easy run holds 6 strides and 20 min before them from 3749 + 1674 m.
+const SIX_STRIDES_M = 6 * (91 + 188);
+const MON = 0;
+const TUE = 1;
+const WED = 2;
+const THU = 3;
+const FRI = 4;
+const SAT = 5;
 
 describe("strides", () => {
   it("repeats a 20 s quick run in the repetition zone and a 60 s easy jog", () => {
@@ -72,6 +80,89 @@ describe("strides", () => {
           } else {
             expect(steps).toEqual([{ kind: "run", zone: "easy", distanceM, durationS: null }]);
           }
+        },
+      ),
+    );
+  });
+
+  it("puts the week's strides on its latest easy run", () => {
+    expect(
+      stridesRunIndex({
+        runs: [
+          { day: TUE, distanceM: 6000 },
+          { day: SAT, distanceM: 6500 },
+          { day: THU, distanceM: 7000 },
+        ],
+        afterLongDay: MON,
+        qualityCount: 1,
+        paces: PACES,
+      }),
+    ).toBe(1);
+  });
+
+  it("never puts strides on the day after the long run", () => {
+    const pick = (runs: { day: number; distanceM: number }[]) =>
+      stridesRunIndex({ runs, afterLongDay: MON, qualityCount: 0, paces: PACES });
+    expect(
+      pick([
+        { day: MON, distanceM: 8000 },
+        { day: WED, distanceM: 6000 },
+      ]),
+    ).toBe(1);
+    expect(pick([{ day: MON, distanceM: 8000 }])).toBeNull();
+  });
+
+  it("puts strides only on a run that keeps 20 min before them: 3749 m left of it, not 3748 m", () => {
+    const pick = (runs: { day: number; distanceM: number }[]) =>
+      stridesRunIndex({ runs, afterLongDay: MON, qualityCount: 1, paces: PACES });
+    expect(
+      pick([
+        { day: WED, distanceM: 3749 + SIX_STRIDES_M },
+        { day: FRI, distanceM: 3748 + SIX_STRIDES_M },
+      ]),
+    ).toBe(0);
+    expect(pick([{ day: FRI, distanceM: 3748 + SIX_STRIDES_M }])).toBeNull();
+  });
+
+  it("puts strides only in a week of at most 1 quality session", () => {
+    const pick = (qualityCount: number) =>
+      stridesRunIndex({
+        runs: [{ day: WED, distanceM: 8000 }],
+        afterLongDay: MON,
+        qualityCount,
+        paces: PACES,
+      });
+    expect(pick(0)).toBe(0);
+    expect(pick(1)).toBe(0);
+    expect(pick(2)).toBeNull();
+  });
+
+  it("picks the latest run that is not the day after the long run and holds 20 min and 6 strides, or none", () => {
+    fc.assert(
+      fc.property(
+        fc.uniqueArray(
+          fc.record({
+            day: fc.integer({ min: 0, max: 6 }),
+            distanceM: fc.integer({ min: 1, max: 15_000 }),
+          }),
+          { selector: (run) => run.day, maxLength: 5 },
+        ),
+        fc.integer({ min: 0, max: 6 }),
+        fc.integer({ min: 0, max: 2 }),
+        (runs, afterLongDay, qualityCount) => {
+          const picked = stridesRunIndex({ runs, afterLongDay, qualityCount, paces: PACES });
+          const holds = (run: { day: number; distanceM: number }) =>
+            run.day !== afterLongDay &&
+            withStrides({ distanceM: run.distanceM, count: 6, paces: PACES }).length === 2;
+          const eligible = qualityCount <= 1 ? runs.filter(holds) : [];
+          if (eligible.length === 0) {
+            expect(picked).toBeNull();
+            return;
+          }
+          expect(picked).not.toBeNull();
+          const run = runs[picked!]!;
+          expect(holds(run)).toBe(true);
+          expect(run.day).toBe(Math.max(...eligible.map((r) => r.day)));
         },
       ),
     );

@@ -56,13 +56,16 @@ function weekOne(of: PlanGenerationInput, phase: "base" | "build", targetM: numb
     targetM,
     maxRunM: maxRunM(longestRunSeedM(of.baseline.longestRunM)),
     lastHardDate: null,
+    fastFinish: false,
   }).week;
 }
 
 describe("build week", () => {
   it("keeps the long run the week's longest run: a 3-day week's one-block tempo that would pass it runs easy", () => {
     // A base week of 15 km: 20 min on the easy day would leave a 5763 m long run beside a 5798 m tempo.
-    // The tempo's one block is its last rep, so the tempo runs easy and the long run keeps 6136 m.
+    // The tempo's one block is its last rep, so the tempo runs easy and the long run keeps 6136 m. The two
+    // easy runs split the 8864 m left 58 to 42, Thursday first in an odd week; 500 m steps would take
+    // Thursday past 85% of the long run (5215 m), so the week stays unrounded.
     const fitness: PlanGenerationInput = {
       goal: {
         kind: "fitness",
@@ -81,8 +84,8 @@ describe("build week", () => {
     expect(week.distanceM).toBe(15_000);
     expect(week.sessions.map((session) => [session.type, session.target.distanceM])).toEqual([
       ["long", 6136],
-      ["easy", 4432],
-      ["easy", 4432],
+      ["easy", 5142],
+      ["easy", 3722],
     ]);
   });
 

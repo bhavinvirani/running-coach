@@ -17,12 +17,12 @@ import {
   RACE_WEEK_PRACTICE,
   RACE_WEEK_PRIMER_DAYS_OUT,
   RACE_WEEK_STRIDES,
-  RUN_ROUND_M,
 } from "../constants";
 import { addDays, daysBetween, weekdayIndex, weekdayOf } from "../dates";
 import { hardShareHolds, hardTimeS } from "./easy-share";
 import { isSpacedFromHardDay } from "./hard-days";
 import { qualitySteps, workCapM } from "./quality";
+import { roundedRunM } from "./run-rounding";
 import { bandMidpointSPerKm, distanceForDurationM, sessionTarget } from "./session-target";
 import { stridesM, withStrides } from "./strides";
 import { isRaceBandWeek } from "./taper-share";
@@ -133,11 +133,8 @@ export function raceWeekDays({
 }
 
 /** Whole 500 m under `targetM`, never under 20 min; the exact meters when no 500 m step fits. */
-function roundedRunM(targetM: number, minRunM: number): number {
-  const meters = Math.max(targetM, minRunM);
-  const rounded = Math.floor(meters / RUN_ROUND_M) * RUN_ROUND_M;
-  return rounded >= minRunM ? rounded : meters;
-}
+const roundedDayM = (targetM: number, minRunM: number) =>
+  roundedRunM(Math.max(targetM, minRunM), minRunM);
 
 interface Planned {
   day: RaceWeekDay;
@@ -176,7 +173,7 @@ export function raceWeekSessions({
     lengthM:
       day.kind === "practice"
         ? 0
-        : Math.min(roundedRunM(distanceForDurationM(easyS(day), easyPaceSPerKm), minRunM), maxRunM),
+        : Math.min(roundedDayM(distanceForDurationM(easyS(day), easyPaceSPerKm), minRunM), maxRunM),
   }));
   let reps = RACE_WEEK_PRACTICE[distanceKey].reps;
   let strides = true;
@@ -190,6 +187,7 @@ export function raceWeekSessions({
       const steps = qualitySteps({
         work: { zone: "race", repM, reps, recoveryS: RACE_PRACTICE_RECOVERY_S },
         warmupPadM: 0,
+        cooldownPadM: 0,
         paces,
       });
       return { date: day.date, type: "race_practice", target: sessionTarget(steps, paces), steps };
@@ -260,7 +258,7 @@ export function raceWeekSessions({
     let left = meters(over.of) - over.capM;
     for (const p of shortenable) {
       if (left <= 0) break;
-      const next = roundedRunM(p.lengthM - left, minRunM);
+      const next = roundedDayM(p.lengthM - left, minRunM);
       left -= p.lengthM - next;
       p.lengthM = next;
     }

@@ -165,6 +165,9 @@ export const PEAK_VOLUME_M: Readonly<Record<RaceDistanceKey, number>> = {
 // Daniels: a recovery week every 4th week at about 80% of the volume around it.
 export const DOWN_WEEK_EVERY = 4;
 export const DOWN_WEEK_FACTOR = 0.8;
+// A race plan counts its down weeks back from the taper, so the 3 weeks before it always load; none
+// before week 3, where there is little to recover from. Source: this app's own choice after Pfitzinger.
+export const DOWN_WEEK_FIRST = 3;
 
 // SPEC "Plan engine": long run at most 30% of weekly volume or 150 min. The share keeps the long run
 // from growing past it; it does not shrink the longest run the runner already runs (long-run.ts).
@@ -228,13 +231,17 @@ export const RACE_PRACTICE_REP_M: Readonly<Record<RaceDistanceKey, readonly [num
 };
 export const MIN_REPS_FOR_LONGER = 2;
 
-// Daniels: T as one tempo block for 5K and 10K, cruise blocks for the longer races.
-export const THRESHOLD_BLOCKS: Readonly<Record<RaceDistanceKey, number>> = {
-  "5k": 1,
-  "10k": 1,
-  half: 2,
-  marathon: 2,
+// Daniels: T as a tempo run or cruise blocks; the count rotates by week ((week - 1) % 3), so plateau
+// weeks differ: 1, 2, 3 blocks for 5K and 10K, 2, 3, 4 cruise blocks for the longer races.
+export const THRESHOLD_BLOCK_ROTATION: Readonly<Record<RaceDistanceKey, readonly number[]>> = {
+  "5k": [1, 2, 3],
+  "10k": [1, 2, 3],
+  half: [2, 3, 4],
+  marathon: [2, 3, 4],
 };
+// Daniels: cruise blocks of at least 1 km, and a steady tempo run of at most 20 min at T pace.
+export const THRESHOLD_BLOCK_MIN_M = 1000;
+export const THRESHOLD_SINGLE_MAX_S = 1200;
 // Threshold blocks are whole 100 m so the watch shows round distances.
 // Source: Daniels' Running Formula sets T blocks by distance; the 100 m rounding is this app's own.
 export const THRESHOLD_BLOCK_STEP_M = 100;
@@ -249,6 +256,12 @@ export const RACE_PRACTICE_RECOVERY_S = 120;
 // Source: Daniels' Running Formula, whose quality sessions start and end with E running.
 export const WARMUP_S = 900;
 export const COOLDOWN_S = 600;
+// Meters the easy runs cannot hold go to the quality sessions, 60% to the warm-up and 40% to the
+// cool-down, each step at most 25 min; the rest is not run. Source: this app's own choice after
+// Runna's sessions, whose warm-ups stay under half an hour.
+export const WARMUP_MAX_S = 1500;
+export const COOLDOWN_MAX_S = 1500;
+export const WARMUP_PAD_SHARE = 0.6;
 
 // The shortest easy run worth lacing up for: 20 min.
 // Source: this app's own choice: a shorter run is mostly the first minutes of a warmup.
@@ -299,8 +312,29 @@ export const RACE_BAND_EXTRA_S = 1800;
 export const STRIDE_RUN_S = 20;
 export const STRIDE_RECOVERY_S = 60;
 
-// Easy runs set by time land on whole 500 m, as Runna's plans show them.
+// Easy runs land on whole 500 m, as Runna's plans show them; the week's longest carries the remainder.
 export const RUN_ROUND_M = 500;
+
+// Easy runs in a week, in percent of their meters, the largest first: unequal days, as Pfitzinger's
+// medium-long and recovery runs. 5 runs is 6 days with the quality session run easy.
+// Source: this app's own choice; the shares come from the coach design for slice #56.
+export const EASY_SPLIT: Readonly<Record<number, readonly number[]>> = {
+  1: [100],
+  2: [58, 42],
+  3: [42, 33, 25],
+  4: [34, 27, 22, 17],
+  5: [28, 23, 19, 16, 14],
+};
+// SPEC "Plan engine": an easy run at most 85% of the week's long run, so the long run stands out.
+export const EASY_RUN_MAX_SHARE_OF_LONG = 0.85;
+
+// Pfitzinger's progression long run: the last 20% at marathon pace, in whole 500 m, 1 to 5 km, on every
+// second build or peak week that is not a down week.
+export const FAST_FINISH = { share: 0.2, minM: 1000, maxM: 5000, stepM: 500 } as const;
+
+// Strides on one easy run in a week of at most 1 quality session: Daniels' 6 x 20 s light, quick runs.
+export const EASY_RUN_STRIDES = 6;
+export const STRIDES_MAX_QUALITY = 1;
 
 // SPEC "Plan engine": 48 h between hard days.
 export const HARD_DAY_MIN_GAP_DAYS = 2;

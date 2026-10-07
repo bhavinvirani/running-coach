@@ -79,6 +79,7 @@ function holds(
     targetM: volumeM,
     maxRunM: week.maxRunM,
     lastHardDate: null,
+    fastFinish: false,
   });
   const { sessions } = built.week;
   const quality = sessions.filter((session) => QUALITY_TYPES.has(session.type));
@@ -89,7 +90,10 @@ function holds(
   );
 }
 
-/** The largest week the search looks at: twice every run at its cap, or at 20 min if the cap is less. */
+/**
+ * Twice the largest week the search looks at (every run at its cap, or at 20 min if the cap is less):
+ * the properties check past where the search stops that no larger week holds what it did not find.
+ */
 const largestSearchedM = (ctx: PlanContext, week: NeededWeekInput) =>
   2 * ctx.daysPerWeek * Math.max(week.maxRunM, ctx.minRunM);
 
@@ -122,8 +126,8 @@ const OVERSHOT: readonly (readonly [RaceDistanceKey, number, number, PlanPhase, 
     ["5k", 900, 9414, "base", 6, 39_702],
     ["5k", 2243, 7544, "base", 6, 16_888],
     ["10k", 905, 23_281, "build", 6, 48_192],
-    ["marathon", 2388, 6572, "build", 6, 17_818],
-    ["half", 1778, 34_699, "base", 3, 9901],
+    ["marathon", 2388, 6572, "build", 6, 17_622],
+    ["half", 1778, 34_699, "base", 3, 11_301],
     ["10k", 2690, 8767, "peak", 5, 13_901],
   ];
 
@@ -213,7 +217,8 @@ describe("needed volume", () => {
   it("with a run cap under 20 min no week holds the days: returns the largest week searched", () => {
     const ctx = contextOf(runner(4));
     const week: NeededWeekInput = { phase: "base", weekStart: MONDAY, maxRunM: ctx.minRunM - 1 };
-    expect(neededWeeklyM(ctx, week)).toBe(2 * 4 * ctx.minRunM);
+    expect(neededWeeklyM(ctx, week)).toBe(4 * ctx.minRunM);
+    expect(holds(ctx, week, 4 * ctx.minRunM, false)).toBe(false);
     expect(holds(ctx, week, 2 * 4 * ctx.minRunM, false)).toBe(false);
   });
 

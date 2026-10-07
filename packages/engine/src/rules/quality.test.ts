@@ -87,14 +87,14 @@ describe("quality", () => {
     expect(qualityZones({ phase: "peak", weekNumber: 11, daysPerWeek: 3 })).toEqual(["race"]);
   });
 
-  it("with two sessions in peak, runs race practice first and tempo second every week", () => {
+  it("with two sessions in peak, runs race practice first in odd weeks and tempo first in even weeks", () => {
     expect(qualityZones({ phase: "peak", weekNumber: 9, daysPerWeek: 4 })).toEqual([
       "race",
       "threshold",
     ]);
     expect(qualityZones({ phase: "peak", weekNumber: 10, daysPerWeek: 6 })).toEqual([
-      "race",
       "threshold",
+      "race",
     ]);
   });
 
@@ -144,69 +144,177 @@ describe("quality", () => {
   });
 
   it("takes 1000 m intervals when 2 fit and 800 m below that, 3 min easy between", () => {
-    expect(qualityWork({ zone: "interval", distanceKey: "10k", capM: 2000 })).toEqual({
+    expect(
+      qualityWork({
+        zone: "interval",
+        distanceKey: "10k",
+        capM: 2000,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toEqual({
       zone: "interval",
       repM: 1000,
       reps: 2,
       recoveryS: 180,
     });
-    expect(qualityWork({ zone: "interval", distanceKey: "10k", capM: 1999 })).toEqual({
+    expect(
+      qualityWork({
+        zone: "interval",
+        distanceKey: "10k",
+        capM: 1999,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toEqual({
       zone: "interval",
       repM: 800,
       reps: 2,
       recoveryS: 180,
     });
-    expect(qualityWork({ zone: "interval", distanceKey: "10k", capM: 800 })).toMatchObject({
+    expect(
+      qualityWork({ zone: "interval", distanceKey: "10k", capM: 800, weekNumber: 1, paces: PACES }),
+    ).toMatchObject({
       repM: 800,
       reps: 1,
     });
-    expect(qualityWork({ zone: "interval", distanceKey: "10k", capM: 799 })).toBeNull();
+    expect(
+      qualityWork({ zone: "interval", distanceKey: "10k", capM: 799, weekNumber: 1, paces: PACES }),
+    ).toBeNull();
   });
 
   it("takes 400 m repetitions when 2 fit and 200 m below that, 2 min easy between", () => {
-    expect(qualityWork({ zone: "repetition", distanceKey: "5k", capM: 800 })).toEqual({
+    expect(
+      qualityWork({
+        zone: "repetition",
+        distanceKey: "5k",
+        capM: 800,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toEqual({
       zone: "repetition",
       repM: 400,
       reps: 2,
       recoveryS: 120,
     });
-    expect(qualityWork({ zone: "repetition", distanceKey: "5k", capM: 799 })).toMatchObject({
+    expect(
+      qualityWork({
+        zone: "repetition",
+        distanceKey: "5k",
+        capM: 799,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toMatchObject({
       repM: 200,
       reps: 3,
     });
-    expect(qualityWork({ zone: "repetition", distanceKey: "5k", capM: 199 })).toBeNull();
+    expect(
+      qualityWork({
+        zone: "repetition",
+        distanceKey: "5k",
+        capM: 199,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toBeNull();
   });
 
-  it("runs threshold as one block for 5K and 10K and two for the half and marathon, in whole 100 m", () => {
-    expect(qualityWork({ zone: "threshold", distanceKey: "10k", capM: 4050 })).toEqual({
-      zone: "threshold",
-      repM: 4000,
-      reps: 1,
-      recoveryS: 60,
-    });
-    expect(qualityWork({ zone: "threshold", distanceKey: "half", capM: 4050 })).toEqual({
-      zone: "threshold",
-      repM: 2000,
-      reps: 2,
-      recoveryS: 60,
-    });
-    expect(qualityWork({ zone: "threshold", distanceKey: "half", capM: 199 })).toBeNull();
+  it("rotates tempo blocks by week: the half and marathon 2, 3, then 4 blocks, 5K and 10K 1, 2, then 3, in whole 100 m", () => {
+    const tempo = (distanceKey: "10k" | "half", weekNumber: number, capM: number) =>
+      qualityWork({ zone: "threshold", distanceKey, capM, weekNumber, paces: PACES });
+    expect([1, 2, 3, 4].map((week) => tempo("half", week, 6050))).toEqual([
+      { zone: "threshold", repM: 3000, reps: 2, recoveryS: 60 },
+      { zone: "threshold", repM: 2000, reps: 3, recoveryS: 60 },
+      { zone: "threshold", repM: 1500, reps: 4, recoveryS: 60 },
+      { zone: "threshold", repM: 3000, reps: 2, recoveryS: 60 },
+    ]);
+    expect([1, 2, 3].map((week) => tempo("10k", week, 4550))).toEqual([
+      { zone: "threshold", repM: 4500, reps: 1, recoveryS: 60 },
+      { zone: "threshold", repM: 2200, reps: 2, recoveryS: 60 },
+      { zone: "threshold", repM: 1500, reps: 3, recoveryS: 60 },
+    ]);
+    expect(
+      qualityWork({
+        zone: "threshold",
+        distanceKey: "marathon",
+        capM: 8000,
+        weekNumber: 6,
+        paces: PACES,
+      }),
+    ).toMatchObject({ repM: 2000, reps: 4 });
+  });
+
+  it("runs fewer tempo blocks when a block would be under 1 km", () => {
+    const tempo = (weekNumber: number, capM: number) =>
+      qualityWork({ zone: "threshold", distanceKey: "half", capM, weekNumber, paces: PACES });
+    expect(tempo(3, 4000)).toMatchObject({ repM: 1000, reps: 4 });
+    expect(tempo(3, 3999)).toMatchObject({ repM: 1300, reps: 3 });
+    expect(tempo(2, 3000)).toMatchObject({ repM: 1000, reps: 3 });
+    expect(tempo(2, 2999)).toMatchObject({ repM: 1400, reps: 2 });
+    expect(tempo(1, 2000)).toMatchObject({ repM: 1000, reps: 2 });
+    expect(tempo(1, 1999)).toMatchObject({ repM: 1900, reps: 1 });
+  });
+
+  it("runs no tempo when even one block would be under 1 km", () => {
+    const tempo = (capM: number) =>
+      qualityWork({ zone: "threshold", distanceKey: "5k", capM, weekNumber: 1, paces: PACES });
+    expect(tempo(1000)).toMatchObject({ repM: 1000, reps: 1 });
+    expect(tempo(999)).toBeNull();
+    expect(
+      qualityWork({
+        zone: "threshold",
+        distanceKey: "half",
+        capM: 199,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toBeNull();
+  });
+
+  it("runs one tempo block up to 20 min at threshold pace and 2 blocks past it", () => {
+    // At 255 s/km, 4700 m takes 1199 s and 4800 m 1224 s.
+    const tempo = (capM: number) =>
+      qualityWork({ zone: "threshold", distanceKey: "10k", capM, weekNumber: 1, paces: PACES });
+    expect(tempo(4799)).toMatchObject({ repM: 4700, reps: 1 });
+    expect(tempo(4800)).toMatchObject({ repM: 2400, reps: 2 });
   });
 
   it("runs race practice in blocks by distance", () => {
-    expect(qualityWork({ zone: "race", distanceKey: "5k", capM: 2000 })).toMatchObject({
+    expect(
+      qualityWork({ zone: "race", distanceKey: "5k", capM: 2000, weekNumber: 1, paces: PACES }),
+    ).toMatchObject({
       repM: 1000,
       reps: 2,
     });
-    expect(qualityWork({ zone: "race", distanceKey: "5k", capM: 1999 })).toMatchObject({
+    expect(
+      qualityWork({ zone: "race", distanceKey: "5k", capM: 1999, weekNumber: 1, paces: PACES }),
+    ).toMatchObject({
       repM: 400,
       reps: 4,
     });
-    expect(qualityWork({ zone: "race", distanceKey: "marathon", capM: 7200 })).toMatchObject({
+    expect(
+      qualityWork({
+        zone: "race",
+        distanceKey: "marathon",
+        capM: 7200,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toMatchObject({
       repM: 2000,
       reps: 3,
     });
-    expect(qualityWork({ zone: "race", distanceKey: "marathon", capM: 10_000 })).toEqual({
+    expect(
+      qualityWork({
+        zone: "race",
+        distanceKey: "marathon",
+        capM: 10_000,
+        weekNumber: 1,
+        paces: PACES,
+      }),
+    ).toEqual({
       zone: "race",
       repM: 5000,
       reps: 2,
@@ -225,6 +333,7 @@ describe("quality", () => {
       qualitySteps({
         work: { zone: "interval", repM: 1000, reps: 3, recoveryS: 180 },
         warmupPadM: 0,
+        cooldownPadM: 0,
         paces: PACES,
       }),
     ).toEqual([
@@ -245,6 +354,7 @@ describe("quality", () => {
       qualitySteps({
         work: { zone: "threshold", repM: 4000, reps: 1, recoveryS: 60 },
         warmupPadM: 500,
+        cooldownPadM: 0,
         paces: PACES,
       }),
     ).toEqual([
@@ -255,20 +365,44 @@ describe("quality", () => {
     ]);
   });
 
+  it("pads the cooldown by distance too", () => {
+    expect(
+      qualitySteps({
+        work: { zone: "threshold", repM: 4000, reps: 1, recoveryS: 60 },
+        warmupPadM: 600,
+        cooldownPadM: 400,
+        paces: PACES,
+      }),
+    ).toEqual([
+      { kind: "warmup", zone: "easy", distanceM: 3413, durationS: null },
+      { kind: "work", zone: "threshold", distanceM: 4000, durationS: null },
+      // 600 s at 320 s/km is 1875 m, plus 400 m.
+      { kind: "cooldown", zone: "easy", distanceM: 2275, durationS: null },
+    ]);
+  });
+
   it("keeps every session's work within its cap, in whole meters, for every zone and distance", () => {
     fc.assert(
       fc.property(
         fc.constantFrom(...ZONES),
         fc.constantFrom(...raceDistanceKeySchema.options),
         fc.integer({ min: 0, max: 150_000 }),
-        (zone, distanceKey, weekVolumeM) => {
+        fc.integer({ min: 1, max: 52 }),
+        (zone, distanceKey, weekVolumeM, weekNumber) => {
           const capM = workCapM(zone, weekVolumeM);
           expect(capM).toBeLessThanOrEqual(SHARE[zone] * weekVolumeM);
-          const work = qualityWork({ zone, distanceKey, capM });
+          const work = qualityWork({ zone, distanceKey, capM, weekNumber, paces: PACES });
           if (work === null) return;
           expect(Number.isInteger(work.repM) && work.repM > 0 && work.reps >= 1).toBe(true);
           expect(work.repM * work.reps).toBeLessThanOrEqual(capM);
           expect(work.zone).toBe(zone);
+          if (zone === "threshold" && work.reps > 1) {
+            expect(work.repM).toBeGreaterThanOrEqual(1000);
+            expect(work.repM % 100).toBe(0);
+          }
+          if (zone === "threshold" && work.reps === 1) {
+            expect(work.repM * 0.255).toBeLessThanOrEqual(1200.5);
+          }
         },
       ),
     );

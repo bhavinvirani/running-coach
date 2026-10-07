@@ -4,18 +4,29 @@ import type { Weekday } from "@running-coach/shared";
 const DAY_MS = 86_400_000;
 const WEEKDAYS: readonly Weekday[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+// Parsed by hand: the plan builder reads dates by the hundred thousand, and Date's own parser and a
+// toISOString round trip were a third of its time.
 function utcMs(date: string): number {
-  const ms = new Date(`${date}T00:00:00Z`).getTime();
-  // The format check plus the round trip rejects 2026-02-30, which Date would roll into March.
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  // The format check plus the month's own length rejects 2026-02-30, which Date would roll into March.
   if (
     !ISO_DATE.test(date) ||
-    Number.isNaN(ms) ||
-    new Date(ms).toISOString().slice(0, 10) !== date
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > (month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1]!)
   ) {
     throw new RangeError(`Expected a YYYY-MM-DD date, got ${date}`);
   }
-  return ms;
+  // setUTCFullYear, unlike Date.UTC, keeps years under 100 as they are.
+  const at = new Date(0);
+  at.setUTCFullYear(year, month - 1, day);
+  return at.getTime();
 }
 
 export function addDays(date: string, days: number): string {

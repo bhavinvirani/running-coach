@@ -128,6 +128,8 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
       keepsBaselineLongest: false,
       targetM: ceilingM(k),
       maxRunM: weekRunCapM(k),
+      weekNumber: k + 1,
+      fastFinish: false,
     });
 
   // The race week's days begin in the week before it unless the race is on a Sunday.

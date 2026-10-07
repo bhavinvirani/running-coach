@@ -1,11 +1,27 @@
 import type { PlanPaces, Repeat, SessionSteps, Step } from "@running-coach/shared";
-import { MIN_RUN_S, STRIDE_RECOVERY_S, STRIDE_RUN_S } from "../constants";
+import {
+  EASY_RUN_STRIDES,
+  MIN_RUN_S,
+  STRIDE_RECOVERY_S,
+  STRIDE_RUN_S,
+  STRIDES_MAX_QUALITY,
+} from "../constants";
 import { stepDistanceM, stepDurationS } from "./session-target";
 
 export interface WithStridesInput {
   /** The run's distance as the plan gave it, strides included. */
   distanceM: number;
   count: number;
+  paces: PlanPaces;
+}
+
+export interface StridesRunInput {
+  /** The week's easy runs: weekday (0 for Monday) and meters, in any order. */
+  runs: readonly { day: number; distanceM: number }[];
+  /** The weekday after the long run's. */
+  afterLongDay: number;
+  /** The quality sessions the week holds. */
+  qualityCount: number;
   paces: PlanPaces;
 }
 
@@ -42,4 +58,25 @@ export function withStrides({ distanceM, count, paces }: WithStridesInput): Sess
   const runM = distanceM - stridesM(count, paces);
   const run: Step = { ...plain, distanceM: runM };
   return stepDurationS(run, paces) >= MIN_RUN_S ? [run, stridesRepeat(count)] : [plain];
+}
+
+/**
+ * Which easy run carries the week's 6 strides: in a week of at most 1 quality session, the latest run
+ * that is not the day after the long run and keeps 20 min easy before them; null for none. One run a
+ * week at most, so a week never holds strides twice.
+ */
+export function stridesRunIndex({
+  runs,
+  afterLongDay,
+  qualityCount,
+  paces,
+}: StridesRunInput): number | null {
+  if (qualityCount > STRIDES_MAX_QUALITY) return null;
+  const eligible = [...runs.keys()].filter(
+    (k) =>
+      runs[k]!.day !== afterLongDay &&
+      withStrides({ distanceM: runs[k]!.distanceM, count: EASY_RUN_STRIDES, paces }).length > 1,
+  );
+  if (eligible.length === 0) return null;
+  return eligible.reduce((latest, k) => (runs[k]!.day > runs[latest]!.day ? k : latest));
 }

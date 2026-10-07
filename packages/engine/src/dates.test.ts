@@ -35,6 +35,15 @@ describe("dates", () => {
   it("rejects a string that is not a calendar date as a programmer error", () => {
     expect(() => addDays("2026-13-01", 1)).toThrow(RangeError);
     expect(() => weekdayOf("not a date")).toThrow(RangeError);
+    for (const date of ["2026-02-29", "1900-02-29", "2026-04-31", "2026-00-10", "2026-01-00"]) {
+      expect(() => weekdayOf(date), date).toThrow(RangeError);
+    }
+  });
+
+  it("knows leap years and years before 100: 2024-02-29, 2000-02-29 and 0099-03-01", () => {
+    expect(addDays("2024-02-28", 1)).toBe("2024-02-29");
+    expect(addDays("2000-02-29", 1)).toBe("2000-03-01");
+    expect(addDays("0099-02-28", 1)).toBe("0099-03-01");
   });
 
   it("round-trips: adding the days between two dates gives the second date", () => {

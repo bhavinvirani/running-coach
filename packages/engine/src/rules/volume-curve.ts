@@ -1,5 +1,11 @@
-import { DOWN_WEEK_EVERY, DOWN_WEEK_FACTOR } from "../constants";
+import { DOWN_WEEK_EVERY, DOWN_WEEK_FACTOR, DOWN_WEEK_FIRST } from "../constants";
 import { maxWeeklyVolumeM } from "./weekly-volume";
+
+export interface DownWeekInput {
+  weekNumber: number;
+  /** A race plan's first taper week; null for a fitness plan, which has none. */
+  firstTaperWeek: number | null;
+}
 
 export interface BaseCurveInput {
   startVolumeM: number;
@@ -33,9 +39,15 @@ export function baseCurveM({ startVolumeM, peakVolumeM, weeks }: BaseCurveInput)
   return curve;
 }
 
-/** Weeks 4, 8, 12 and so on recover; the week after picks the curve up where it was. */
-export function isDownWeek(weekNumber: number): boolean {
-  return weekNumber % DOWN_WEEK_EVERY === 0;
+/**
+ * Whether a week recovers; the week after picks the curve up where it was. A race plan counts back from
+ * its taper, so the 3 weeks before it always load: a taper from week 19 recovers in weeks 15, 11, 7 and
+ * 3, none before week 3. A fitness plan recovers every 4th week: 4, 8 and 12.
+ */
+export function isDownWeek({ weekNumber, firstTaperWeek }: DownWeekInput): boolean {
+  if (firstTaperWeek === null) return weekNumber % DOWN_WEEK_EVERY === 0;
+  const weeksBefore = firstTaperWeek - weekNumber;
+  return weekNumber >= DOWN_WEEK_FIRST && weeksBefore > 0 && weeksBefore % DOWN_WEEK_EVERY === 0;
 }
 
 export function downWeekM(curveM: number): number {

@@ -25,6 +25,7 @@ import { planLength } from "../rules/plan-length";
 import { predictTimeS, racePace } from "../rules/prediction";
 import { bandMidpointSPerKm } from "../rules/session-target";
 import { pacesFromVdot, roundVdot, vdotFromPerformance } from "../rules/vdot";
+import { fastFinishWeeks } from "../rules/fast-finish";
 import { baseCurveM, isDownWeek, weekTargetM } from "../rules/volume-curve";
 import { minRunDistanceM } from "../rules/week-fill";
 import { buildTrainingWeek, longRunDayCapM, type BuiltWeek, type PlanContext } from "./build-week";
@@ -47,9 +48,11 @@ interface Setup {
 }
 
 /**
- * The base, build and peak weeks, each climbing at most 10% or recovering every 4th week. A long run
- * close enough to the race (a Thursday race's last peak Sunday, 11 days out) keeps its cap by days to
- * the race, a share of the largest long run before it.
+ * The base, build and peak weeks, each climbing at most 10% or recovering: a race plan's down weeks
+ * counted back from its taper, a fitness plan's every 4th week. Every second build or peak week that is
+ * not a down week ends its long run at marathon pace. A long run close enough to the race (a Thursday
+ * race's last peak Sunday, 11 days out) keeps its cap by days to the race, a share of the largest long
+ * run before it.
  */
 function buildPreTaperWeeks(
   ctx: PlanContext,
@@ -65,11 +68,15 @@ function buildPreTaperWeeks(
     peakVolumeM: PEAK_VOLUME_M[ctx.distanceKey],
     weeks: phases.length,
   });
+  // A race plan's taper starts the week after these; a fitness plan has none.
+  const firstTaperWeek = ctx.raceDate === null ? null : phases.length + 1;
+  const downs = phases.map((_, index) => isDownWeek({ weekNumber: index + 1, firstTaperWeek }));
+  const finishes = fastFinishWeeks(phases.map((phase, index) => ({ phase, down: downs[index]! })));
   const built: BuiltWeek[] = [];
   let previousNonDownM: number | null = null;
   phases.forEach((phase, index) => {
     const number = index + 1;
-    const down = isDownWeek(number);
+    const down = downs[index]!;
     const targetM = down
       ? weekTargetM({
           kind: "down",
@@ -101,6 +108,7 @@ function buildPreTaperWeeks(
         }) ?? Infinity,
       ),
       lastHardDate: built.findLast((w) => w.lastHardDate !== null)?.lastHardDate ?? null,
+      fastFinish: finishes[index]!,
     });
     if (!down) previousNonDownM = week.week.distanceM;
     built.push(week);
