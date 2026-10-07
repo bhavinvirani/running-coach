@@ -1,4 +1,9 @@
-import { ErrorCode, type SessionSteps, weeklyReviewSchema } from "@running-coach/shared";
+import {
+  ErrorCode,
+  type PlanPhase,
+  type SessionSteps,
+  weeklyReviewSchema,
+} from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
@@ -64,6 +69,8 @@ interface RunnerOptions {
   fridayStatus?: PlanSessionRow["status"];
   /** No key: the coach has no credential. */
   noKey?: boolean;
+  /** The coming week's phase (s1 to s3), base by default. */
+  comingPhase?: PlanPhase;
 }
 
 /**
@@ -106,14 +113,17 @@ async function runner(fixture: string, options: RunnerOptions = {}) {
     status: "done",
     activityId: sundayRun.id,
   });
-  const s1 = await createSession(userId, active.id, { date: "2026-10-13" });
+  const phase = options.comingPhase ?? "base";
+  const s1 = await createSession(userId, active.id, { date: "2026-10-13", phase });
   const s2 = await createSession(userId, active.id, {
     date: "2026-10-15",
+    phase,
     type: "tempo",
     steps: TEMPO_STEPS,
   });
   const s3 = await createSession(userId, active.id, {
     date: "2026-10-16",
+    phase,
     steps: easySteps(6000),
     status: options.fridayStatus ?? "planned",
   });
@@ -437,6 +447,50 @@ describe("writeWeeklyReview", () => {
 
     expect(await pushJobs(userId)).toHaveLength(1);
   });
+
+  it.each(["taper", "race"] as const)(
+    "lets no session of a coming %s week rise: s1's 1.3 clamps to no rise and is logged rejected no_change, while the tempo still turns easy and the rest still skips",
+    async (phase) => {
+      const { userId, s1, s2, s3 } = await runner("weekly-review-changes", { comingPhase: phase });
+
+      const outcome = await write(userId);
+
+      expect(outcome).toMatchObject({ status: "stored", changed: true });
+      await expectUnchanged(s1);
+      expect(await storedSession(s2.id)).toMatchObject({ type: "easy", status: "planned" });
+      expect((await storedSession(s3.id)).status).toBe("skipped");
+      expect(await rowsInOrder(userId, [s1, s2, s3])).toEqual([
+        expect.objectContaining({
+          planSessionId: s1.id,
+          kind: "scale",
+          outcome: "rejected",
+          reason: "no_change",
+          requested: { kind: "scale", factor: 1.3 },
+          applied: null,
+          after: null,
+        }),
+        expect.objectContaining({ planSessionId: s2.id, kind: "easy", outcome: "applied" }),
+        expect.objectContaining({ planSessionId: s3.id, kind: "rest", outcome: "applied" }),
+      ]);
+      expect(Object.keys(storedContent(await onlyReview(userId)).notes).sort()).toEqual(
+        [s2.id, s3.id].sort(),
+      );
+    },
+  );
+
+  it.each(["build", "peak"] as const)(
+    "still lets an easy run of a coming %s week rise to the week's cap (plan changes clamped)",
+    async (phase) => {
+      const { userId, s1 } = await runner("weekly-review-changes", { comingPhase: phase });
+
+      await write(userId);
+
+      expect((await storedSession(s1.id)).target.distanceM).toBe(8300);
+      expect(
+        (await storedAdjustments(userId)).find((row) => row.planSessionId === s1.id),
+      ).toMatchObject({ outcome: "clamped", applied: { kind: "scale", factor: 1.0375 } });
+    },
+  );
 
   it("lets two rises share the week's cap: the first by date rises in full, the second only to what is left (plan changes clamped)", async () => {
     const userId = await createUser();

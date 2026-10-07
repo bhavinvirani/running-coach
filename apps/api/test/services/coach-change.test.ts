@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { PlanDelta } from "@running-coach/shared";
+import type { PlanDelta, PlanPhase } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
@@ -582,6 +582,71 @@ describe("applyCoachChange in the week after a pause", () => {
     expect(result).toMatchObject({ outcome: "applied", changed: true });
     expect((await storedSession(session.id)).target.distanceM).toBe(8800);
   });
+});
+
+describe("applyCoachChange in a taper or race week", () => {
+  /**
+   * Thursday's easy 8 km in a week of `phase`, with 8 km done in the week before and a 10 km run this
+   * morning, so in any other week the caps would let it rise its full 10% to 8.8 km.
+   */
+  async function inPhase(phase: PlanPhase) {
+    const { userId, planId, run, session } = await runner({ phase });
+    await createSession(userId, planId, { date: "2026-10-06", status: "done" });
+    return { userId, run, session: session! };
+  }
+
+  it.each(["taper", "race"] as const)(
+    "clamps a rise of a %s-week session to no rise, which leaves it as planned: logged rejected no_change and nothing changed",
+    async (phase) => {
+      const { userId, run, session } = await inPhase(phase);
+      expect((await coachChangeTarget(userId, run.id, NOW)).allowed).toBe(true);
+
+      const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+      expect(result).toEqual({
+        outcome: "rejected",
+        reason: "no_change",
+        planChange: null,
+        changed: false,
+      });
+      expect(await storedSession(session.id)).toEqual(session);
+      expect(await storedAdjustments(userId)).toEqual([
+        expect.objectContaining({
+          planSessionId: session.id,
+          source: "coach",
+          outcome: "rejected",
+          reason: "no_change",
+          requested: { kind: "scale", factor: 1.1 },
+          applied: null,
+          after: null,
+        }),
+      ]);
+    },
+  );
+
+  it.each(["taper", "race"] as const)("still applies a cut to a %s-week session", async (phase) => {
+    const { userId, run, session } = await inPhase(phase);
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 0.8 });
+
+    expect(result).toMatchObject({ outcome: "applied", changed: true });
+    expect((await storedSession(session.id)).target.distanceM).toBe(6400);
+  });
+
+  it.each(["base", "build", "peak"] as const)(
+    "still lets a %s-week session rise its full 10%%",
+    async (phase) => {
+      const { userId, run, session } = await inPhase(phase);
+
+      const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+      expect(result).toMatchObject({ outcome: "applied", changed: true });
+      expect((await storedSession(session.id)).target.distanceM).toBe(8800);
+      expect(await storedAdjustments(userId)).toEqual([
+        expect.objectContaining({ outcome: "applied", applied: { kind: "scale", factor: 1.1 } }),
+      ]);
+    },
+  );
 });
 
 describe("planChangesFor", () => {
