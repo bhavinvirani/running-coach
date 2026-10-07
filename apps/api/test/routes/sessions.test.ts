@@ -547,6 +547,23 @@ describe("sessions during a pause", () => {
     expect(await pushJobs(userId)).toEqual([]);
   });
 
+  it("returns 409 session_locked for a new custom workout on or after the open pause's start, and stores nothing (illness or injury pause)", async () => {
+    const { agent, userId } = await owner();
+    await createPause(userId, { startedOn: MONDAY });
+
+    for (const date of [MONDAY, THURSDAY]) {
+      const response = await agent.post("/api/sessions").send({ ...hills, date });
+      expect(expectProblem(response, 409, ErrorCode.sessionLocked).detail).toBe(
+        "Training is paused. Tap I'm back on Today before adding a workout.",
+      );
+    }
+
+    expect(await db.select().from(planSession).where(eq(planSession.userId, userId))).toEqual([]);
+    expect(await pushJobs(userId)).toEqual([]);
+    const before = await agent.post("/api/sessions").send({ ...hills, date: "2030-01-06" });
+    expect(before.status).toBe(201);
+  });
+
   it("changes sessions again once the pause has ended", async () => {
     const { agent, userId, planId } = await owner();
     const tuesday = await createSession(userId, planId, { date: TUESDAY });

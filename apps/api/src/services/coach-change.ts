@@ -66,7 +66,11 @@ export async function nextSessionAfter(
   return row ?? null;
 }
 
-/** What the engine reads around the session: its week, the week before, recent runs and the goal. */
+/**
+ * What the engine reads around the session: its week; the week before's planned distance, skipped and
+ * missed sessions left out (none in the plan's first week, which has no week before it); recent runs; the
+ * goal; and the changes already made to it, by the coach or by a pause or gap re-entry (eased).
+ */
 async function deltaContext(
   executor: Executor,
   {
@@ -97,9 +101,15 @@ async function deltaContext(
   const weekSessions = around
     .filter((other) => other.date >= monday && other.id !== session.id)
     .map(({ date, type, status, target }) => ({ date, type, status, target }));
-  const previousWeekM = around
-    .filter((other) => other.date < monday && other.status !== "skipped")
-    .reduce((sum, other) => sum + other.target.distanceM, 0);
+  const previousWeekM =
+    monday <= mondayOf(active.startDate)
+      ? null
+      : around
+          .filter(
+            (other) =>
+              other.date < monday && other.status !== "skipped" && other.status !== "missed",
+          )
+          .reduce((sum, other) => sum + other.target.distanceM, 0);
   // As the plan's baseline reads it: measured runs only, a typed-in distance is not a measured one.
   const [longest] = await executor
     .select({ distanceM: max(activity.distanceM) })
@@ -115,17 +125,12 @@ async function deltaContext(
     .select({ daysPerWeek: goal.daysPerWeek })
     .from(goal)
     .where(eq(goal.id, active.goalId));
-  const [adjusted] = await executor
-    .select({ id: planAdjustment.id })
+  const changedBy = await executor
+    .selectDistinct({ source: planAdjustment.source })
     .from(planAdjustment)
     .where(
-      and(
-        eq(planAdjustment.planSessionId, session.id),
-        eq(planAdjustment.source, "coach"),
-        inArray(planAdjustment.outcome, ACCEPTED),
-      ),
-    )
-    .limit(1);
+      and(eq(planAdjustment.planSessionId, session.id), inArray(planAdjustment.outcome, ACCEPTED)),
+    );
   return {
     today,
     session: {
@@ -140,7 +145,8 @@ async function deltaContext(
     paces: active.paces,
     // The caller found no open pause.
     paused: false,
-    coachAdjusted: adjusted !== undefined,
+    coachAdjusted: changedBy.some(({ source }) => source === "coach"),
+    eased: changedBy.some(({ source }) => source === "pause" || source === "gap"),
   };
 }
 
@@ -230,7 +236,11 @@ export interface ApplyCoachChangeInput {
   activityId: string;
   /** The insight that proposed the change, stored in the same transaction. */
   coachMessageId: string;
+  /** The session the prompt saw (coachChangeTarget before the call); null when it saw none. */
+  sessionId: string | null;
   delta: PlanDelta;
+  /** The change's own next step for the card; a change without it is invalid. */
+  nextStep: string | null;
   now: Date;
 }
 
@@ -286,24 +296,41 @@ function factorOf(delta: PlanDelta): number | null {
 }
 
 /**
+ * The engine's answer for the recomputed target. A target other than the session the prompt saw (skipped
+ * or moved during the Claude call, or none seen) is no_session: the proposal was written for that one. A
+ * change without its own next step is invalid, unless the engine rejects any change to the session first
+ * (a rest asks, as coachChangeTarget does), since the card could not say what changed.
+ */
+function decide(target: Target, input: ApplyCoachChangeInput): DeltaResult {
+  if (!target.ok) return { ok: false, reason: target.reason };
+  if (target.session.id !== input.sessionId) return { ok: false, reason: "no_session" };
+  if (input.nextStep === null) {
+    const check = validateDelta(target.context, { kind: "rest" });
+    return check.ok ? { ok: false, reason: "invalid" } : check;
+  }
+  return validateDelta(target.context, input.delta);
+}
+
+/**
  * Inside the caller's transaction, after the Claude call: decides the target again (the plan may have
- * changed meanwhile), its session locked FOR UPDATE, lets validateDelta accept, clamp or reject the
- * proposal, and logs it (source coach) ON CONFLICT DO NOTHING on the one-per-run index: a second call for
- * the run changes nothing and answers the stored outcome. An accepted change is written to the session.
- * A run deleted meanwhile is rejected as stale with nothing logged, since the log row would point at it.
+ * changed meanwhile), its session locked FOR UPDATE, rejects the proposal when that is not the session the
+ * prompt saw or it has no next step of its own (decide), else lets validateDelta accept, clamp or reject
+ * it, and logs it (source coach) ON CONFLICT DO NOTHING on the one-per-run index: a second call for the
+ * run changes nothing and answers the stored outcome. An accepted change is written to the session. A run
+ * deleted meanwhile is rejected as stale with nothing logged, since the log row would point at it.
  */
 export async function applyCoachChange(
   tx: DbTransaction,
-  { userId, activityId, coachMessageId, delta, now }: ApplyCoachChangeInput,
+  input: ApplyCoachChangeInput,
 ): Promise<CoachChangeResult> {
+  const { userId, activityId, coachMessageId, sessionId, delta, now } = input;
   const target = await resolveTarget(tx, { userId, activityId, now, lock: true });
   if (!target.ok && !target.runFound) {
     return { outcome: "rejected", reason: "stale_run", planChange: null, changed: false };
   }
-  const result: DeltaResult = target.ok
-    ? validateDelta(target.context, delta)
-    : { ok: false, reason: target.reason };
-  const session = target.ok ? target.session : null;
+  const result = decide(target, input);
+  // A target the prompt did not see is no session of this proposal's: logged without one.
+  const session = target.ok && target.session.id === sessionId ? target.session : null;
   const outcome: AdjustmentOutcome = !result.ok
     ? "rejected"
     : result.clamped

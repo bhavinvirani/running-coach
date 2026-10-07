@@ -2,7 +2,7 @@ import { insightResponseSchema } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
-import { coachMessage, type PlanSessionRow } from "../../src/db/schema";
+import { coachMessage, planSession, type PlanSessionRow } from "../../src/db/schema";
 import * as analyzeRunQueue from "../../src/jobs/analyze-run-queue";
 import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
 import * as pushQueue from "../../src/jobs/push-workouts-queue";
@@ -289,6 +289,16 @@ describe("analyzeRun with a plan change (run-insight v2)", () => {
       },
     );
 
+    it("rejects a change without its own next step as invalid and keeps the plain next step (change without text)", async () => {
+      const setup = await runner("adjust-scale-no-text");
+
+      await expectRejected(setup, "adjust-scale-no-text", "invalid");
+      expect((await storedAdjustments(setup.userId))[0]?.requested).toEqual({
+        kind: "scale",
+        factor: 0.8,
+      });
+    });
+
     it("rejects a scale without a factor as invalid and logs the proposal (factor null)", async () => {
       const setup = await runner("adjust-scale-null");
 
@@ -298,6 +308,25 @@ describe("analyzeRun with a plan change (run-insight v2)", () => {
         factor: null,
       });
     });
+  });
+
+  it("rejects as no_session and changes no other session when the runner skips the one the prompt saw while Claude writes (missed or moved sessions)", async () => {
+    const { userId, run, session } = await runner("adjust-scale");
+    const saturday = await createSession(userId, session.planId, { date: "2026-10-17" });
+    const passThrough = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (input, init) => {
+      await db.update(planSession).set({ status: "skipped" }).where(eq(planSession.id, session.id));
+      return passThrough(input, init);
+    });
+
+    await analyze(userId, run.id);
+
+    expect((await onlyCard(userId)).content).toEqual(cardOf(fixtureOutput("adjust-scale")));
+    await expectUnchanged(saturday);
+    expect(await storedAdjustments(userId)).toEqual([
+      expect.objectContaining({ planSessionId: null, outcome: "rejected", reason: "no_session" }),
+    ]);
+    expect(await pushJobs(userId)).toEqual([]);
   });
 
   it("applies one change when the job fires twice, one after the other or at once (a daily job firing twice)", async () => {

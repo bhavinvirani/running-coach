@@ -41,7 +41,7 @@ describe("run-insight eval", () => {
     });
 
     it.each(RUN_INSIGHT_FALLBACK_REASONS)(
-      "fallback card for %s fits the stored card's schema and the voice, without a change",
+      "fallback card for %s fits the stored card's schema and the voice, without a change, rest_and_check only during a pause for illness or injury",
       (reason) => {
         const card = runInsightSchema.parse(
           buildRunInsightFallback(
@@ -53,6 +53,10 @@ describe("run-insight eval", () => {
           ),
         );
         expect(voiceProblems(card, runInsightSchema)).toEqual([]);
+        const { pause } = input.context;
+        expect(card.caution).toBe(
+          pause !== null && pause.reason !== "break" ? "rest_and_check" : "none",
+        );
       },
     );
 

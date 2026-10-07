@@ -23,7 +23,8 @@ import type { RunInsight } from "./schema";
 // The card shown when there is no usable model output: no key, a refusal, max_tokens, invalid JSON, a
 // timeout, Claude being down, a rejected key, a request Claude turned down (no credit left) or a
 // rejected plan token. Built from the run's numbers, the next planned session and an open pause alone,
-// in the stored card's shape (runInsightSchema). It never proposes a plan change: only the model does.
+// in the stored card's shape (runInsightSchema), with caution rest_and_check during a pause for illness or
+// injury. It never proposes a plan change: only the model does.
 // The reason is the shared enum the API stores.
 
 export type RunInsightFallbackReason = CoachFallbackReason;
@@ -65,7 +66,7 @@ function nextStepOf(
 ): string {
   // Paused sessions are on hold: never "run it as written" while the runner is ill, hurt or away.
   if (pause) {
-    const since = `Training is paused since ${formatLocalDate(pause.startDate)}.`;
+    const since = `Training has been paused since ${formatLocalDate(pause.startDate)}.`;
     if (pause.reason === "break") {
       return `${since} Tap I'm back on Today when you are ready to train. ${SAFETY}`;
     }
@@ -110,6 +111,7 @@ export function buildRunInsightFallback(
     whatHappened: facts.join(" "),
     whatItMeans: WHY[reason],
     nextStep: nextStepOf(plan, settings, pause),
-    caution: "none",
+    // Ill or hurt: rest and check, as the coach's own card would say (coach-prompts rule: safety).
+    caution: pause !== null && pause.reason !== "break" ? "rest_and_check" : "none",
   };
 }

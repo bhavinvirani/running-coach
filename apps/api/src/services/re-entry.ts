@@ -5,7 +5,7 @@ import {
   reEntryPlan,
 } from "@running-coach/engine";
 import type { ReEntry } from "@running-coach/shared";
-import { and, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { type DbTransaction, db } from "../db/client";
 import {
   activity,
@@ -17,8 +17,8 @@ import {
 } from "../db/schema";
 import { addDays, daysBetween, mondayOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
-import { runDate } from "./run-dates";
-import { activePlan, runnerToday } from "./runner-state";
+import { runDate, runDateWithin } from "./run-dates";
+import { activePlan, openPause, runnerToday } from "./runner-state";
 import { adjustedOf } from "./session-view";
 
 // The plan eased for a return after time off (SPEC: Plan engine): when the runner ends a pause ("I'm back",
@@ -28,20 +28,26 @@ import { adjustedOf } from "./session-view";
 
 const log = logger.child({ module: "re-entry" });
 
+/** A plan's first week: the days from its start date that its baseline's re-entry eases. */
+const PLAN_FIRST_WEEK_DAYS = 7;
+
+/** Each sync looks this many local dates back, today included, for a run that ended a gap. */
+export const GAP_RE_ENTRY_WINDOW_DAYS = 7;
+
 /**
- * True when the active plan already starts from the re-entry this break calls for: it was built after the
- * last run before the break (none counts as after), from a baseline whose re-entry factor is no higher
- * than the break's. Easing it again would cut the return twice.
+ * The share of volume the active plan already eases this return by, for reEntryPlan's carriedFactor: the
+ * re-entry factor of its baseline when it was built during the break (after `breakStart`, the run or the
+ * pause that began it) and the return falls in or before its first week, which carries that easing; else
+ * 1. A plan built before the break, or a return after its first week, carries nothing.
  */
-export function planCarriesReEntry(
-  active: Pick<PlanRow, "createdAt" | "inputs">,
-  lastRunStart: Date | null,
-  daysOff: number,
-): boolean {
-  return (
-    (lastRunStart === null || active.createdAt > lastRunStart) &&
-    baselineReEntryFactor(active.inputs.baseline) <= reEntryFactor(daysOff)
-  );
+export function carriedFactor(
+  active: Pick<PlanRow, "createdAt" | "inputs" | "startDate">,
+  breakStart: Date,
+  returnDate: string,
+): number {
+  const builtDuringBreak = active.createdAt > breakStart;
+  const inFirstWeek = daysBetween(active.startDate, returnDate) < PLAN_FIRST_WEEK_DAYS;
+  return builtDuringBreak && inFirstWeek ? baselineReEntryFactor(active.inputs.baseline) : 1;
 }
 
 export interface WriteReEntryInput {
@@ -50,10 +56,10 @@ export interface WriteReEntryInput {
   active: PlanRow;
   /** The first day back. */
   fromDate: string;
-  /** Days from the last run to the return, as measured. */
+  /** The longest stretch without a run that the return follows, in days. */
   daysOff: number;
-  /** What the engine is given: 0 when the plan already carries the re-entry (planCarriesReEntry). */
-  engineDaysOff: number;
+  /** What the plan's first week already eases this return by (carriedFactor), 1 for nothing. */
+  carriedFactor: number;
   walkRun: boolean;
   /** pause: "I'm back" for pauseId; gap: the run activityId ended the gap. */
   source: { kind: "pause"; pauseId: string } | { kind: "gap"; activityId: string };
@@ -83,8 +89,9 @@ export async function writeReEntry(
     .for("update");
   const result = reEntryPlan({
     fromDate,
-    daysOff: input.engineDaysOff,
+    daysOff: input.daysOff,
     walkRun,
+    carriedFactor: input.carriedFactor,
     sessions: sessions.map((row) => ({
       ...adjustedOf(row),
       id: row.id,
@@ -98,7 +105,7 @@ export async function writeReEntry(
     walkRun,
     daysOff: input.daysOff,
   };
-  const applied: ReEntryRequest = { factor: result.factor, walkRun, daysOff: input.engineDaysOff };
+  const applied: ReEntryRequest = { factor: result.factor, walkRun, daysOff: input.daysOff };
   const byId = new Map(sessions.map((row) => [row.id, row]));
   let sessionsChanged = 0;
   for (const change of result.changes) {
@@ -151,86 +158,133 @@ export async function writeReEntry(
   return { factor: result.factor, sessionsChanged };
 }
 
+type RunMark = { id: string; startUtc: Date; date: string };
+
 /**
- * After a sync: eases the plan when the newest run it inserted (R, by UTC start) ends 7 or more days
- * without a run, counted in local dates from the run before it (P). Nothing when R is not the runner's
- * newest run (a late upload of an old run ends no break today), when there is no P, when the gap is
- * shorter, when a pause overlaps it ("I'm back" eased that return), when R already eased the plan, when
- * there is no active plan, or when the plan was built after P from a baseline that already carries this
- * re-entry. The return starts the day after R, or today when that is later. Only syncs call it: the
- * history import's runs end no break today. Returns what it applied, null when it eased nothing.
+ * The newest run R of the last GAP_RE_ENTRY_WINDOW_DAYS local dates, today included, that ends 7 or more
+ * days without a run, counted in local dates from the run before it by UTC start (P, any date), with P;
+ * null when there is none.
  */
-export async function gapReEntry(
+async function newestGapEnd(
+  tx: DbTransaction,
   userId: string,
-  insertedIds: readonly string[],
-  now = new Date(),
-): Promise<Pick<ReEntry, "factor" | "daysOff" | "fromDate" | "sessionsChanged"> | null> {
-  if (insertedIds.length === 0) return null;
-  const today = await runnerToday(db, userId, now);
-  return db.transaction(async (tx) => {
-    const active = await activePlan(tx, userId, { lock: true });
-    if (!active) return null;
-    const runColumns = { id: activity.id, startUtc: activity.startUtc, date: runDate };
-    const newestFirst = [desc(activity.startUtc), desc(activity.id)];
-    const [newest] = await tx
-      .select(runColumns)
-      .from(activity)
-      .where(and(eq(activity.userId, userId), inArray(activity.id, [...insertedIds])))
-      .orderBy(...newestFirst)
-      .limit(1);
-    if (!newest) return null;
-    const [later] = await tx
-      .select({ id: activity.id })
-      .from(activity)
-      .where(and(eq(activity.userId, userId), gt(activity.startUtc, newest.startUtc)))
-      .limit(1);
-    if (later) return null;
+  today: string,
+): Promise<{ run: RunMark; previous: RunMark } | null> {
+  const runColumns = { id: activity.id, startUtc: activity.startUtc, date: runDate };
+  const newestFirst = [desc(activity.startUtc), desc(activity.id)];
+  const candidates = await tx
+    .select(runColumns)
+    .from(activity)
+    .where(
+      and(
+        eq(activity.userId, userId),
+        runDateWithin(addDays(today, 1 - GAP_RE_ENTRY_WINDOW_DAYS), today),
+      ),
+    )
+    .orderBy(...newestFirst);
+  for (const run of candidates) {
     const [previous] = await tx
       .select(runColumns)
       .from(activity)
-      .where(and(eq(activity.userId, userId), lt(activity.startUtc, newest.startUtc)))
+      .where(and(eq(activity.userId, userId), lt(activity.startUtc, run.startUtc)))
       .orderBy(...newestFirst)
       .limit(1);
+    // The runner's first run ends no break, and neither does any older candidate.
     if (!previous) return null;
-    const gap = daysBetween(previous.date, newest.date);
-    if (gap < RE_ENTRY_SHORT_BREAK_DAYS) return null;
+    if (daysBetween(previous.date, run.date) >= RE_ENTRY_SHORT_BREAK_DAYS) return { run, previous };
+  }
+  return null;
+}
 
-    const [pause] = await tx
+/**
+ * After every sync, whatever it inserted: eases the plan when a run of the last 7 local dates (R, the
+ * newest such) ends 7 or more days without a run, counted in local dates from the run before it (P). A
+ * sync that failed to ease is retried by the next one, since each one looks at the same days again.
+ * Nothing when the plan was already eased for this break (a gap row created since P started, also when
+ * an older run of the comeback is uploaded late, but not one for a run before P), during an open pause
+ * ("I'm back" will measure the break), when a pause that held R's date ended on or after it ("I'm back"
+ * counted R), or without an active plan. A pause that ended after P's date and before R's starts the
+ * break at its ended_on instead, which must still leave 7 days. A plan built during the break eases by
+ * what its first week does not carry yet (carriedFactor). The return starts the day after R, or today
+ * when that is later; the rows are keyed on R. Only syncs call it: the history import ends no break
+ * today. Returns what it applied, null when it eased nothing.
+ */
+export async function gapReEntry(
+  userId: string,
+  now = new Date(),
+): Promise<Pick<ReEntry, "factor" | "daysOff" | "fromDate" | "sessionsChanged"> | null> {
+  const today = await runnerToday(db, userId, now);
+  return db.transaction(async (tx) => {
+    // The plan's lock serializes this with "I'm back" and with a second sync for the same run.
+    const active = await activePlan(tx, userId, { lock: true });
+    if (!active) return null;
+    if (await openPause(tx, userId)) return null;
+    const found = await newestGapEnd(tx, userId, today);
+    if (!found) return null;
+    const { run, previous } = found;
+
+    const [eased] = await tx
+      .select({ id: planAdjustment.id })
+      .from(planAdjustment)
+      .leftJoin(activity, eq(activity.id, planAdjustment.activityId))
+      .where(
+        and(
+          eq(planAdjustment.userId, userId),
+          eq(planAdjustment.source, "gap"),
+          gte(planAdjustment.createdAt, previous.startUtc),
+          // A run deleted since keeps its rows unlinked: they still count.
+          or(isNull(activity.id), gt(activity.startUtc, previous.startUtc)),
+        ),
+      )
+      .limit(1);
+    if (eased) return null;
+
+    const [countedRun] = await tx
       .select({ id: trainingPause.id })
       .from(trainingPause)
       .where(
         and(
           eq(trainingPause.userId, userId),
-          lte(trainingPause.startedOn, newest.date),
-          or(isNull(trainingPause.endedOn), gte(trainingPause.endedOn, previous.date)),
+          lte(trainingPause.startedOn, run.date),
+          gte(trainingPause.endedOn, run.date),
         ),
       )
       .limit(1);
-    if (pause) return null;
-    // Checked under the plan's lock: a second sync for the same run waits for the first and stops here.
-    const [eased] = await tx
-      .select({ id: planAdjustment.id })
-      .from(planAdjustment)
-      .where(and(eq(planAdjustment.activityId, newest.id), eq(planAdjustment.source, "gap")))
+    if (countedRun) return null;
+    // The latest "I'm back" between P's date and R's: the break since then is the one this run ends.
+    const [ended] = await tx
+      .select({ endedOn: trainingPause.endedOn, updatedAt: trainingPause.updatedAt })
+      .from(trainingPause)
+      .where(
+        and(
+          eq(trainingPause.userId, userId),
+          gt(trainingPause.endedOn, previous.date),
+          lt(trainingPause.endedOn, run.date),
+        ),
+      )
+      .orderBy(desc(trainingPause.endedOn))
       .limit(1);
-    if (eased) return null;
-    if (planCarriesReEntry(active, previous.startUtc, gap)) return null;
+    const breakFrom = ended?.endedOn ?? previous.date;
+    // ended_on is written once, by "I'm back", which stamps updated_at with the moment it was tapped.
+    const breakStart = ended ? ended.updatedAt : previous.startUtc;
+    const daysOff = daysBetween(breakFrom, run.date);
+    if (daysOff < RE_ENTRY_SHORT_BREAK_DAYS) return null;
 
-    const dayAfter = addDays(newest.date, 1);
+    const dayAfter = addDays(run.date, 1);
     const fromDate = dayAfter > today ? dayAfter : today;
     const { factor, sessionsChanged } = await writeReEntry(tx, {
       userId,
       active,
       fromDate,
-      daysOff: gap,
-      engineDaysOff: gap,
+      daysOff,
+      carriedFactor: carriedFactor(active, breakStart, fromDate),
       walkRun: false,
-      source: { kind: "gap", activityId: newest.id },
+      source: { kind: "gap", activityId: run.id },
     });
     log.info(
-      { userId, activityId: newest.id, daysOff: gap, factor, fromDate, sessionsChanged },
+      { userId, activityId: run.id, daysOff, factor, fromDate, sessionsChanged },
       "plan eased after a gap without runs",
     );
-    return { factor, daysOff: gap, fromDate, sessionsChanged };
+    return { factor, daysOff, fromDate, sessionsChanged };
   });
 }

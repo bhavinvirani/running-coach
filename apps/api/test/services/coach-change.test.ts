@@ -3,12 +3,13 @@ import type { PlanDelta } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
-import { activity, coachMessage } from "../../src/db/schema";
+import { activity, coachMessage, planSession } from "../../src/db/schema";
 import {
   applyCoachChange,
   coachChangeTarget,
   planChangesFor,
 } from "../../src/services/coach-change";
+import { endPause } from "../../src/services/pause";
 import {
   createAdjustment,
   createPause,
@@ -33,9 +34,10 @@ const THURSDAY = "2026-10-15";
 async function runner(
   next: Partial<Parameters<typeof createSession>[2]> | null = {},
   run: Parameters<typeof createRunOn>[2] = {},
+  planValues: Parameters<typeof createPlan>[1] = {},
 ) {
   const userId = await createUser();
-  const active = await createPlan(userId);
+  const active = await createPlan(userId, planValues);
   const reviewed = await createRunOn(userId, TODAY, run);
   const session =
     next === null ? null : await createSession(userId, active.id, { date: THURSDAY, ...next });
@@ -58,10 +60,37 @@ async function coachCard(userId: string, activityId: string): Promise<string> {
   return row!.id;
 }
 
-async function apply(userId: string, activityId: string, delta: PlanDelta, now = NOW) {
+const CHANGED_STEP = "Keep Thursday's run a little shorter than planned.";
+
+/**
+ * The change as the insight job applies it: the session the prompt saw (coachChangeTarget now, unless
+ * `sessionId` names it) and the change's own next step.
+ */
+async function apply(
+  userId: string,
+  activityId: string,
+  delta: PlanDelta,
+  {
+    now = NOW,
+    sessionId,
+    nextStep = CHANGED_STEP,
+  }: { now?: Date; sessionId?: string | null; nextStep?: string | null } = {},
+) {
+  const seen =
+    sessionId === undefined
+      ? (await coachChangeTarget(userId, activityId, now)).sessionId
+      : sessionId;
   const coachMessageId = await coachCard(userId, activityId);
   const result = await db.transaction((tx) =>
-    applyCoachChange(tx, { userId, activityId, coachMessageId, delta, now }),
+    applyCoachChange(tx, {
+      userId,
+      activityId,
+      coachMessageId,
+      sessionId: seen,
+      delta,
+      nextStep,
+      now,
+    }),
   );
   return { coachMessageId, result };
 }
@@ -228,8 +257,12 @@ describe("applyCoachChange", () => {
     ]);
   });
 
-  it("clamps a rise at 110% of the longest run of the last 30 days (clamped delta)", async () => {
-    const { userId, run, session } = await runner({}, { distanceM: 7500 });
+  it("clamps a rise at 110% of the longest run of the last 30 days, with no weekly cap in the plan's first week (clamped delta)", async () => {
+    const { userId, run, session } = await runner(
+      {},
+      { distanceM: 7500 },
+      { startDate: "2026-10-12" },
+    );
 
     const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
 
@@ -306,7 +339,9 @@ describe("applyCoachChange", () => {
         userId,
         activityId: run.id,
         coachMessageId: first.coachMessageId,
+        sessionId: session!.id,
         delta: { kind: "rest" },
+        nextStep: "Rest on Thursday.",
         now: NOW,
       }),
     );
@@ -336,7 +371,9 @@ describe("applyCoachChange", () => {
         userId,
         activityId: run.id,
         coachMessageId: randomUUID(),
+        sessionId: session!.id,
         delta: { kind: "rest" },
+        nextStep: "Rest on Thursday.",
         now: NOW,
       }),
     );
@@ -349,6 +386,141 @@ describe("applyCoachChange", () => {
     });
     expect(await storedSession(session!.id)).toEqual(session);
     expect(await storedAdjustments(userId)).toEqual([]);
+  });
+});
+
+describe("applyCoachChange on the session the prompt saw", () => {
+  it.each([
+    ["skipped", { status: "skipped" as const }],
+    ["moved past the next one", { date: "2026-10-18", status: "moved" as const }],
+  ])(
+    "rejects as no_session and changes nothing when the session the prompt saw was %s during the Claude call (missed or moved sessions)",
+    async (_, change) => {
+      const { userId, planId, run, session } = await runner();
+      const saturday = await createSession(userId, planId, { date: "2026-10-17" });
+      const { sessionId } = await coachChangeTarget(userId, run.id, NOW);
+      expect(sessionId).toBe(session!.id);
+      await db.update(planSession).set(change).where(eq(planSession.id, session!.id));
+
+      const { result } = await apply(userId, run.id, { kind: "scale", factor: 0.8 }, { sessionId });
+
+      expect(result).toEqual({
+        outcome: "rejected",
+        reason: "no_session",
+        planChange: null,
+        changed: false,
+      });
+      expect(await storedSession(saturday.id)).toEqual(saturday);
+      expect(await storedAdjustments(userId)).toEqual([
+        expect.objectContaining({
+          planSessionId: null,
+          outcome: "rejected",
+          reason: "no_session",
+          requested: { kind: "scale", factor: 0.8 },
+          before: null,
+        }),
+      ]);
+    },
+  );
+
+  it("rejects as no_session when the prompt saw no session and one is there by the time the change lands", async () => {
+    const { userId, run, session } = await runner();
+
+    const { result } = await apply(userId, run.id, { kind: "rest" }, { sessionId: null });
+
+    expect(result).toMatchObject({ outcome: "rejected", reason: "no_session", changed: false });
+    expect(await storedSession(session!.id)).toEqual(session);
+  });
+
+  it("rejects a change without its own next step as invalid, logs it and changes nothing", async () => {
+    const { userId, run, session } = await runner();
+
+    const { result } = await apply(userId, run.id, { kind: "rest" }, { nextStep: null });
+
+    expect(result).toMatchObject({ outcome: "rejected", reason: "invalid", changed: false });
+    expect(await storedSession(session!.id)).toEqual(session);
+    expect(await storedAdjustments(userId)).toEqual([
+      expect.objectContaining({
+        planSessionId: session!.id,
+        outcome: "rejected",
+        reason: "invalid",
+        requested: { kind: "rest" },
+        applied: null,
+      }),
+    ]);
+  });
+});
+
+describe("applyCoachChange after a break", () => {
+  /**
+   * A runner back from a 14-day break on Wednesday, whose plan started this Monday, so week 1 has no
+   * weekly cap and only the re-entry stops a rise: Thursday's easy 12 km eased to 6 km by "I'm back"
+   * this morning, then this morning's run reviewed.
+   */
+  async function eased() {
+    const userId = await createUser();
+    await createRunOn(userId, "2026-09-30");
+    const active = await createPlan(userId, {
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+      startDate: "2026-10-12",
+    });
+    const thursday = await createSession(userId, active.id, {
+      date: THURSDAY,
+      steps: [{ kind: "run", zone: "easy", distanceM: 12_000, durationS: null }],
+    });
+    await createPause(userId, { startedOn: "2026-10-01", reason: "break" });
+    const { reEntry } = await endPause(userId, new Date("2026-10-14T06:00:00Z"));
+    expect(reEntry).toMatchObject({ daysOff: 14, factor: 0.5 });
+    const run = await createRunOn(userId, TODAY);
+    const session = await storedSession(thursday.id);
+    expect(session.target.distanceM).toBe(6000);
+    return { userId, run, session };
+  }
+
+  it("changes nothing for a rise of a session a 14-day pause eased: it may only shrink (training pause)", async () => {
+    const { userId, run, session } = await eased();
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "rejected", reason: "no_change", changed: false });
+    expect(await storedSession(session.id)).toEqual(session);
+  });
+
+  it("still applies a cut to a session a 14-day pause eased (training pause)", async () => {
+    const { userId, run, session } = await eased();
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 0.8 });
+
+    expect(result).toMatchObject({ outcome: "applied", changed: true });
+    expect((await storedSession(session.id)).target.distanceM).toBe(4800);
+  });
+
+  it("allows no rise after a week whose sessions were all missed (missed sessions)", async () => {
+    const { userId, planId, run, session } = await runner({}, { distanceM: 10_000 });
+    await createSession(userId, planId, { date: "2026-10-06", status: "missed" });
+    await createSession(userId, planId, { date: "2026-10-08", status: "missed" });
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "rejected", reason: "no_change" });
+    expect(await storedSession(session!.id)).toEqual(session);
+  });
+
+  it("clamps a rise to 10% over the week before, its missed sessions left out (missed sessions, clamped delta)", async () => {
+    const { userId, planId, run, session } = await runner({}, { distanceM: 10_000 });
+    await createSession(userId, planId, { date: "2026-10-06", status: "done" });
+    await createSession(userId, planId, { date: "2026-10-08", status: "missed" });
+    await createSession(userId, planId, {
+      date: "2026-10-12",
+      status: "done",
+      target: { ...session!.target, distanceM: 400 },
+    });
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    // The week before planned 8 km that count: this week may reach 8.8 km, Monday's 0.4 km included.
+    expect(result.outcome).toBe("clamped");
+    expect((await storedSession(session!.id)).target.distanceM).toBeCloseTo(8400, -2);
   });
 });
 

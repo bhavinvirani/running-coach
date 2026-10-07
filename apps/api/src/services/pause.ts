@@ -6,7 +6,7 @@ import type {
   ReEntry,
   TrainingPause,
 } from "@running-coach/shared";
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { type DbTransaction, db } from "../db/client";
 import {
   activity,
@@ -15,10 +15,10 @@ import {
   trainingPause,
   type TrainingPauseRow,
 } from "../db/schema";
-import { daysBetween } from "../lib/local-date";
+import { addDays, daysBetween } from "../lib/local-date";
 import { logger } from "../lib/logger";
-import { planCarriesReEntry, writeReEntry } from "./re-entry";
-import { runDate, runDateUpTo } from "./run-dates";
+import { carriedFactor, writeReEntry } from "./re-entry";
+import { runDate, runDateUpTo, runDateWithin } from "./run-dates";
 import { activePlan, openPause, runnerToday } from "./runner-state";
 import { matchSessionsUpTo } from "./session-match";
 import { adjustedOf } from "./session-view";
@@ -128,14 +128,69 @@ async function skipPausedSessions(
   return rows.length;
 }
 
+/** A day on the way back: a run's local date and start, or the pause's start without a run before it. */
+interface BreakMark {
+  date: string;
+  startedAt: Date;
+}
+
+/**
+ * The longest stretch of days without a run from `anchor` through `today`: the largest day gap between
+ * consecutive dates of the anchor, the runs (ascending) and today, with the mark it starts from (the
+ * latest of equal stretches). 0 days when today is not after the anchor.
+ */
+function longestStretch(
+  anchor: BreakMark,
+  runs: readonly BreakMark[],
+  today: string,
+): { daysOff: number; from: BreakMark } {
+  const marks = [anchor, ...runs];
+  let longest = { daysOff: 0, from: anchor };
+  marks.forEach((mark, index) => {
+    const days = daysBetween(mark.date, marks[index + 1]?.date ?? today);
+    if (days >= longest.daysOff) longest = { daysOff: days, from: mark };
+  });
+  return longest;
+}
+
+/**
+ * The break "I'm back" ends: the longest stretch without a run from the last run before the pause's start
+ * (the start itself without one) through today, counting the runs from the start on, so a run synced
+ * during the pause neither hides the days before it nor stretches the days after it.
+ */
+async function breakBefore(
+  tx: DbTransaction,
+  userId: string,
+  pause: TrainingPauseRow,
+  today: string,
+): Promise<{ daysOff: number; from: BreakMark }> {
+  const runColumns = { startedAt: activity.startUtc, date: runDate };
+  const [before] = await tx
+    .select(runColumns)
+    .from(activity)
+    .where(and(eq(activity.userId, userId), runDateUpTo(addDays(pause.startedOn, -1))))
+    .orderBy(desc(activity.startLocal), desc(activity.id))
+    .limit(1);
+  const during = await tx
+    .select(runColumns)
+    .from(activity)
+    .where(and(eq(activity.userId, userId), runDateWithin(pause.startedOn, today)))
+    .orderBy(asc(activity.startLocal), asc(activity.id));
+  return longestStretch(
+    before ?? { date: pause.startedOn, startedAt: pause.createdAt },
+    during,
+    today,
+  );
+}
+
 /**
  * POST /api/pause/end ("I'm back"), in one transaction. Closes the open pause today (none open: reEntry
  * null, so a second tap changes nothing); matches runs first, so a run during the pause marks its
- * session done; skips the sessions left in the pause; then eases the return from today by the days since
- * the last run on or before today (from the pause's start without any run), walk-run after illness or
- * injury. A plan built after that run whose baseline already carries the re-entry gets walk-run only
- * (daysOff 0 to the engine), so the return is never cut twice. Without an active plan the pause still
- * ends, with nothing to ease. Queues a workout push after the commit.
+ * session done; skips the sessions left in the pause; then eases the return from today by the longest
+ * stretch without a run (breakBefore), walk-run after illness or injury. A plan built during that
+ * stretch whose first week the return falls in already carries its baseline's re-entry, so the engine
+ * eases only by what it does not carry yet (carriedFactor), and the return is never cut twice. Without
+ * an active plan the pause still ends, with nothing to ease. Queues a workout push after the commit.
  */
 export async function endPause(userId: string, now = new Date()): Promise<EndPauseResponse> {
   const today = await runnerToday(db, userId, now);
@@ -151,13 +206,7 @@ export async function endPause(userId: string, now = new Date()): Promise<EndPau
     await matchSessionsUpTo(tx, userId, today, pause.startedOn);
     const skipped = await skipPausedSessions(tx, userId, active?.id ?? null, pause, today);
 
-    const [lastRun] = await tx
-      .select({ startUtc: activity.startUtc, date: runDate })
-      .from(activity)
-      .where(and(eq(activity.userId, userId), runDateUpTo(today)))
-      .orderBy(desc(activity.startLocal), desc(activity.id))
-      .limit(1);
-    const daysOff = Math.max(0, daysBetween(lastRun?.date ?? pause.startedOn, today));
+    const { daysOff, from } = await breakBefore(tx, userId, pause, today);
     const walkRun = pause.reason !== "break";
     let reEntry: ReEntry = {
       daysOff,
@@ -167,13 +216,12 @@ export async function endPause(userId: string, now = new Date()): Promise<EndPau
       sessionsChanged: 0,
     };
     if (active) {
-      const carried = planCarriesReEntry(active, lastRun?.startUtc ?? null, daysOff);
       const written = await writeReEntry(tx, {
         userId,
         active,
         fromDate: today,
         daysOff,
-        engineDaysOff: carried ? 0 : daysOff,
+        carriedFactor: carriedFactor(active, from.startedAt, today),
         walkRun,
         source: { kind: "pause", pauseId: pause.id },
       });

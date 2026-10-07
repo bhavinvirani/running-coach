@@ -1,5 +1,5 @@
 import type { GarminActivitySummary } from "@running-coach/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, planSession } from "../../src/db/schema";
@@ -136,6 +136,32 @@ async function pushJobs(userId: string) {
   return getBoss().findJobs(pushQueue.name, { key: userId });
 }
 
+/**
+ * Runs `work` while Postgres refuses the statements `when` picks on `table` (a trigger raising an error),
+ * then drops the trigger: a real failure of one write, not a mock.
+ */
+async function whileFailing<T>(
+  table: "plan_adjustment" | "plan_session",
+  when: "insert" | "status change",
+  work: () => Promise<T>,
+): Promise<T> {
+  await db.execute(sql`
+    create or replace function fail_for_test() returns trigger language plpgsql as $$
+    begin raise exception 'injected failure'; end $$`);
+  await db.execute(
+    when === "insert"
+      ? sql`create trigger fail_for_test before insert on ${sql.identifier(table)}
+          for each row execute function fail_for_test()`
+      : sql`create trigger fail_for_test before update on ${sql.identifier(table)}
+          for each row when (old.status is distinct from new.status) execute function fail_for_test()`,
+  );
+  try {
+    return await work();
+  } finally {
+    await db.execute(sql`drop trigger fail_for_test on ${sql.identifier(table)}`);
+  }
+}
+
 describe("gap re-entry after a sync", () => {
   it.each([
     [7, 0.7],
@@ -195,18 +221,19 @@ describe("gap re-entry after a sync", () => {
     const logged = await storedAdjustments(userId);
 
     await syncGarmin({ userId, now: NOW });
-    expect(await gapReEntry(userId, [await runOn(R_DATE)], NOW)).toBeNull();
+    expect(await gapReEntry(userId, NOW)).toBeNull();
 
     expect(await distancesOf(userId)).toEqual(eased);
     expect(await storedAdjustments(userId)).toEqual(logged);
   });
 
-  it("does not ease a plan built after the gap from a baseline that already carries the re-entry", async () => {
+  it("does not ease a plan built during the gap whose first week, this week, already carries the re-entry (no double re-entry)", async () => {
     const { userId } = await runner({
       gap: 14,
       plan: {
         // Built the morning R was run, 14 days after P: week 1 already starts at half the volume.
         createdAt: new Date("2026-10-13T05:00:00Z"),
+        startDate: "2026-10-12",
         inputs: {
           ...PLAN_INPUTS,
           baseline: {
@@ -228,8 +255,128 @@ describe("gap re-entry after a sync", () => {
     expect(await storedAdjustments(userId)).toEqual([]);
   });
 
+  it("eases a plan built during the gap by what its first week does not carry: 15 days off over a 0.7 baseline run at 0.5 / 0.7, not 0.35 (regenerating a plan)", async () => {
+    const { userId, thursday } = await runner({
+      gap: 15,
+      plan: {
+        // The goal saved 8 days after P: week 1, this week, starts at 0.7 of the volume.
+        createdAt: new Date("2026-10-06T12:00:00Z"),
+        startDate: "2026-10-12",
+        inputs: { ...PLAN_INPUTS, baseline: { ...PLAN_INPUTS.baseline, daysSinceLastRun: 8 } },
+      },
+    });
+    garminLists([garminRun(R_DATE)]);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBeCloseTo(
+      (PLANNED_M * 0.5) / 0.7,
+      -2,
+    );
+    const rows = await storedAdjustments(userId);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.requested).toEqual({ factor: 0.5, walkRun: false, daysOff: 15 });
+    expect((rows[0]?.applied as { factor: number }).factor).toBeCloseTo(0.5 / 0.7, 10);
+  });
+
+  it("eases once, keyed on the first run back, when one sync inserts three runs after 10 days off", async () => {
+    const { userId, thursday, saturday } = await runner({ gap: 12 });
+    garminLists([garminRun("2026-10-11"), garminRun("2026-10-12"), garminRun(R_DATE)]);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.7);
+    expect((await storedSession(saturday.id)).target.distanceM).toBe(PLANNED_M * 0.7);
+    const rows = await storedAdjustments(userId);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        source: "gap",
+        activityId: await runOn("2026-10-11"),
+        requested: { factor: 0.7, walkRun: false, daysOff: 10 },
+      });
+    }
+    expect(await pushJobs(userId)).toHaveLength(1);
+  });
+
+  it("eases once, keyed on the first of two runs on the comeback day", async () => {
+    const { userId, thursday } = await runner({ gap: 10 });
+    garminLists([
+      garminRun(R_DATE),
+      garminRun(R_DATE, {
+        startUtc: "2026-10-13T16:00:00.000Z",
+        startLocal: "2026-10-13T18:00:00",
+      }),
+    ]);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.7);
+    const rows = await storedAdjustments(userId);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.activityId).toBe(await runOn(R_DATE));
+  });
+
+  it("applies a gap re-entry that failed on the next sync, which checks the last 7 days again (partial sync)", async () => {
+    const { userId, thursday } = await runner({ gap: 14 });
+    garminLists([garminRun(R_DATE)]);
+
+    await whileFailing("plan_adjustment", "insert", () => syncGarmin({ userId, now: NOW }));
+    expect(await storedAdjustments(userId)).toEqual([]);
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+    expect(await storedAdjustments(userId)).toHaveLength(2);
+    expect(await pushJobs(userId)).toHaveLength(1);
+  });
+
+  it("still eases the gap when run matching fails in the same sync (partial sync)", async () => {
+    const { userId, planId, thursday } = await runner({ gap: 14 });
+    const tuesday = await createSession(userId, planId, { date: R_DATE });
+    garminLists([garminRun(R_DATE)]);
+
+    await whileFailing("plan_session", "status change", () => syncGarmin({ userId, now: NOW }));
+
+    expect((await storedSession(tuesday.id)).status).toBe("planned");
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+    expect(await storedAdjustments(userId)).toHaveLength(2);
+  });
+
+  it("eases a 10-day gap after a pause that ended on the day of the run before it (illness or injury pause)", async () => {
+    const { userId, thursday } = await runner({ gap: 10 });
+    await createPause(userId, { startedOn: "2026-09-28", endedOn: "2026-10-03" });
+    garminLists([garminRun(R_DATE)]);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.7);
+    expect((await storedAdjustments(userId))[0]).toMatchObject({
+      requested: { factor: 0.7, walkRun: false, daysOff: 10 },
+    });
+  });
+
+  it("eases from the day I'm back was tapped when 10 more days pass without a run after it (early I'm back)", async () => {
+    const { userId, thursday } = await runner({ gap: 14 });
+    await createPause(userId, { startedOn: "2026-09-30", endedOn: "2026-10-03" });
+    garminLists([garminRun(R_DATE)]);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.7);
+    expect((await storedAdjustments(userId))[0]).toMatchObject({
+      activityId: await runOn(R_DATE),
+      requested: { factor: 0.7, walkRun: false, daysOff: 10 },
+    });
+  });
+
   it.each([
     ["ended", { startedOn: "2026-10-01", endedOn: "2026-10-10" }],
+    [
+      "ended on the day of the run, whose I'm back counted it",
+      { startedOn: "2026-10-05", endedOn: R_DATE },
+    ],
     ["still open", { startedOn: "2026-10-12", endedOn: null }],
   ])(
     "applies nothing more when a pause covers the gap, %s: I'm back eases that return (illness or injury pause)",
@@ -245,16 +392,27 @@ describe("gap re-entry after a sync", () => {
     },
   );
 
-  it("ends no break with a late upload of an old run: a newer run is on record", async () => {
+  it("eases nothing more when an older run of the comeback is uploaded late: the break was eased (late upload, edited activities)", async () => {
     const { userId, thursday } = await runner({ gap: 14 });
-    // Synced earlier this morning; the runner then added Tuesday's run on Garmin.
-    await createRunAt(userId, "2026-10-14 07:00:00", "2026-10-14T05:00:00Z");
-    garminLists([garminRun(R_DATE)]);
+    const wednesday = garminRun("2026-10-14", {
+      startUtc: "2026-10-14T05:00:00.000Z",
+      startLocal: "2026-10-14T07:00:00",
+    });
+    garminLists([wednesday]);
+    await syncGarmin({ userId, now: NOW });
+    const eased = await distancesOf(userId);
+    const logged = await storedAdjustments(userId);
+    expect(logged).toHaveLength(2);
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.5);
 
+    // The runner then added Tuesday's run on Garmin.
+    vi.restoreAllMocks();
+    garminLists([garminRun(R_DATE), wednesday]);
     await syncGarmin({ userId, now: NOW });
 
-    expect(await storedAdjustments(userId)).toEqual([]);
-    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M);
+    expect(await runOn(R_DATE)).toBeDefined();
+    expect(await distancesOf(userId)).toEqual(eased);
+    expect(await storedAdjustments(userId)).toEqual(logged);
   });
 
   it("eases nothing for runs the history import stores: only syncs end a gap", async () => {

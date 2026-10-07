@@ -167,6 +167,7 @@ function customColumns(input: CustomSessionInput, paces: PlanPaces) {
 /**
  * POST /api/sessions: a custom workout on a date from today on, at the active plan's paces (409
  * plan_missing without one). It belongs to the runner, not to the plan, so a new plan version keeps it.
+ * 409 session_locked for a date the open pause holds (its start on): "I'm back" would skip it.
  */
 export async function createCustomSession(
   userId: string,
@@ -179,6 +180,10 @@ export async function createCustomSession(
     throw new DomainError(ErrorCode.validation, 400, "Pick today or a later day.", {
       issues: [{ path: "date", message: "The date is before today." }],
     });
+  }
+  const pause = await openPause(db, userId);
+  if (pause && input.date >= pause.startedOn) {
+    throw locked("Training is paused. Tap I'm back on Today before adding a workout.");
   }
   const active = await activePlanOf(userId);
   if (!active) throw planMissing();

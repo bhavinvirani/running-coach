@@ -355,8 +355,9 @@ describe("POST /api/pause/end", () => {
     const userId = await createUser();
     await createRunOn(userId, "2026-09-28");
     const active = await createPlan(userId, {
-      // Built 14 days after that run: week 1 already starts at half the recent volume.
+      // Built 14 days after that run: week 1, this week, already starts at half the recent volume.
       createdAt: new Date("2026-10-12T09:00:00Z"),
+      startDate: "2026-10-12",
       inputs: {
         ...PLAN_INPUTS,
         baseline: {
@@ -380,9 +381,91 @@ describe("POST /api/pause/end", () => {
         pauseId: pause.id,
         kind: "re_entry",
         requested: { factor: 0.5, walkRun: true, daysOff: 16 },
-        applied: { factor: 1, walkRun: true, daysOff: 0 },
+        applied: { factor: 1, walkRun: true, daysOff: 16 },
       }),
     ]);
+  });
+
+  it("eases a plan built during the break by what its first week does not carry yet: 15 days off over a 0.7 baseline runs at 0.5 / 0.7, not 0.35 (regenerating a plan, race date change)", async () => {
+    const userId = await createUser();
+    await createRunOn(userId, "2026-09-01");
+    await createPause(userId, { startedOn: "2026-09-02", reason: "break" });
+    // The goal saved on Wednesday 9 September, 8 days after the run: week 1 starts at 0.7 of the volume.
+    const active = await createPlan(userId, {
+      createdAt: new Date("2026-09-09T12:00:00Z"),
+      startDate: "2026-09-14",
+      inputs: { ...PLAN_INPUTS, baseline: { ...PLAN_INPUTS.baseline, daysSinceLastRun: 8 } },
+    });
+    const thursday = await createSession(userId, active.id, { date: "2026-09-17" });
+
+    const { reEntry } = await endPause(userId, new Date("2026-09-16T10:00:00Z"));
+
+    expect(reEntry).toMatchObject({ daysOff: 15, walkRun: false, sessionsChanged: 1 });
+    expect(reEntry!.factor).toBeCloseTo(0.5 / 0.7, 10);
+    expect((await storedSession(thursday.id)).target.distanceM).toBeCloseTo(
+      (PLANNED_M * 0.5) / 0.7,
+      -2,
+    );
+    const [row] = await storedAdjustments(userId);
+    expect(row?.requested).toEqual({ factor: 0.5, walkRun: false, daysOff: 15 });
+    expect((row?.applied as { factor: number }).factor).toBeCloseTo(0.5 / 0.7, 10);
+  });
+
+  it("eases a plan built from a 0.5 baseline once its first week is past: a return 7 weeks later runs at 0.5, never skipped (no double re-entry)", async () => {
+    const userId = await createUser();
+    await createRunOn(userId, "2026-08-07");
+    await createPause(userId, { startedOn: "2026-08-23", reason: "break" });
+    const active = await createPlan(userId, {
+      createdAt: new Date("2026-08-22T12:00:00Z"),
+      startDate: "2026-08-24",
+      inputs: {
+        ...PLAN_INPUTS,
+        baseline: {
+          weeklyVolumesM: [30_000, 30_000, 0, 0],
+          longestRunM: 15_000,
+          daysSinceLastRun: 15,
+        },
+      },
+    });
+    const today = await createSession(userId, active.id, { date: TODAY });
+
+    const { reEntry } = await endPause(userId, NOW);
+
+    expect(reEntry).toMatchObject({ daysOff: 68, factor: 0.5, sessionsChanged: 1 });
+    expect((await storedSession(today.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+  });
+
+  it("counts the longest stretch without a run: a run synced during the pause on the day I'm back ends 16 days off, not 0 (run during a pause)", async () => {
+    const { userId, today, friday } = await pausedRunner({
+      lastRun: "2026-09-27",
+      startedOn: "2026-09-28",
+    });
+    await createRunOn(userId, "2026-10-13");
+
+    const { reEntry } = await endPause(userId, new Date("2026-10-13T10:00:00Z"));
+
+    expect(reEntry).toEqual({
+      daysOff: 16,
+      factor: 0.5,
+      walkRun: false,
+      fromDate: "2026-10-13",
+      sessionsChanged: 2,
+    });
+    expect((await storedSession(today.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+    expect((await storedSession(friday.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+  });
+
+  it("counts the longest stretch without a run: a run on day 3 of the pause and 12 more days off ease to 0.7 (run during a pause)", async () => {
+    const { userId, today } = await pausedRunner({
+      lastRun: "2026-09-27",
+      startedOn: "2026-09-28",
+    });
+    await createRunOn(userId, "2026-09-30");
+
+    const { reEntry } = await endPause(userId, new Date("2026-10-12T10:00:00Z"));
+
+    expect(reEntry).toMatchObject({ daysOff: 12, factor: 0.7, fromDate: "2026-10-12" });
+    expect((await storedSession(today.id)).target.distanceM).toBe(PLANNED_M * 0.7);
   });
 
   it("counts the days off from the pause's start for a runner without any run", async () => {

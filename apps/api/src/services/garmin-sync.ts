@@ -267,17 +267,22 @@ async function saveChunk(
 
 /**
  * The plan after a sync (slice 9): sessions matched with the runs on their dates, then the re-entry when
- * the newest run inserted ends 7 or more days without one, and a workout push for what that changed.
- * Never throws, so a stored run never fails the sync over it: matching is recomputed by the next sync, and
- * the error is logged.
+ * a run of the last 7 days ends 7 or more days without one (gapReEntry), and a workout push for what that
+ * changed. Each step has its own try, so a failed match still checks the gap; neither throws, so a stored
+ * run never fails the sync over them. Both look at the stored runs, not at what this sync inserted, so the
+ * next sync redoes what failed; the error is logged.
  */
-async function adaptPlan(userId: string, insertedIds: string[], now: Date): Promise<void> {
+async function adaptPlan(userId: string, now: Date): Promise<void> {
   try {
     await matchPlanSessions(userId, now);
-    const eased = await gapReEntry(userId, insertedIds, now);
+  } catch (err) {
+    log.error({ err, userId }, "sessions not matched after the sync; the next sync matches again");
+  }
+  try {
+    const eased = await gapReEntry(userId, now);
     if (eased !== null && eased.sessionsChanged > 0) await queueWorkoutPush(userId);
   } catch (err) {
-    log.error({ err, userId }, "plan not adapted after the sync; the next sync matches again");
+    log.error({ err, userId }, "gap not checked after the sync; the next sync checks it again");
   }
 }
 
@@ -374,7 +379,7 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
   }).finally(async () => {
     // Also after a failed chunk: the runs the chunks before it stored would not be new to the next sync.
     // The plan first, so the coach reads fresh statuses and the next session as eased.
-    await adaptPlan(userId, insertedIds, clock);
+    await adaptPlan(userId, clock);
     // The coach for the runs this sync inserted, never one it updated; the history import queues none.
     await queueRunInsights(userId, insertedIds, clock);
   });
