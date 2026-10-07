@@ -13,6 +13,7 @@ import { garminClient } from "../../src/garmin/client";
 import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
 import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { decrypt } from "../../src/lib/crypto";
+import { DomainError } from "../../src/lib/errors";
 import { connectGarminLimiter } from "../../src/routes/garmin";
 import { syncLimiter } from "../../src/routes/sync";
 import { syncGarmin } from "../../src/services/garmin-sync";
@@ -123,6 +124,29 @@ describe("POST /api/garmin/login", () => {
       .send({ email: FIXTURE_LOGIN.email, password: "not-the-password" });
 
     expectProblem(response, 422, ErrorCode.garminCredentialsRejected);
+    expect(await storedConnection(userId)).toEqual(before);
+    expect(await pushJobs(userId)).toEqual([]);
+  });
+
+  it("returns 502 garmin_unavailable and leaves an expired login as it was when Garmin is down (Garmin outage)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await connectGarmin(userId, garminBundle("expired"), {
+      status: "expired",
+      lastError: ErrorCode.garminAuthExpired,
+    });
+    const before = await storedConnection(userId);
+    vi.spyOn(garminClient, "login").mockRejectedValueOnce(
+      new DomainError(
+        ErrorCode.garminUnavailable,
+        502,
+        "Garmin is not answering. Try again later.",
+      ),
+    );
+
+    const response = await startLogin(agent);
+
+    expectProblem(response, 502, ErrorCode.garminUnavailable);
     expect(await storedConnection(userId)).toEqual(before);
     expect(await pushJobs(userId)).toEqual([]);
   });
@@ -281,6 +305,26 @@ describe("POST /api/garmin/login/code", () => {
     expect(response.status).toBe(200);
     await expectConnected(userId);
     expect(logins()).toHaveLength(1);
+  });
+
+  it("returns 502 garmin_unavailable and stores nothing when Garmin is down, and the same login then takes the code (Garmin outage)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    await startLogin(agent);
+    vi.spyOn(garminClient, "loginCode").mockRejectedValueOnce(
+      new DomainError(
+        ErrorCode.garminUnavailable,
+        502,
+        "Garmin is not answering. Try again later.",
+      ),
+    );
+
+    expectProblem(await sendCode(agent), 502, ErrorCode.garminUnavailable);
+    expect(await connections()).toEqual([]);
+    const response = await sendCode(agent);
+
+    expect(response.status).toBe(200);
+    await expectConnected(userId);
   });
 
   it("answers 409 garmin_login_lost on the third wrong code, and to the right code after it (lost login)", async () => {
