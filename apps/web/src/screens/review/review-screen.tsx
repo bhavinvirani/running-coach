@@ -37,7 +37,9 @@ function ReviewView({ id }: { id: string }) {
       return (
         <ReviewLayout>
           <div className="flex flex-col items-start gap-4">
-            <p className="text-body text-ink-2">{reviewCopy.notFound}</p>
+            <p role="alert" className="text-body text-ink">
+              {reviewCopy.notFound}
+            </p>
             <Button asChild>
               <Link to="/plan/reviews">{reviewCopy.openList}</Link>
             </Button>

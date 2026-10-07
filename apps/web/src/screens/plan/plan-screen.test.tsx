@@ -111,7 +111,11 @@ describe("PlanScreen", () => {
     );
     const setGoal = screen.getByRole("link", { name: "Set goal" });
     expect(setGoal).toHaveAttribute("href", "/plan/goal");
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    // Set goal is the one action; Weekly reviews below it is the secondary way to the list.
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Set goal",
+      "Weekly reviews",
+    ]);
     expect(screen.queryByRole("region", { name: "Weeks" })).not.toBeInTheDocument();
 
     await userEvent.click(setGoal);
@@ -318,6 +322,29 @@ describe("PlanScreen", () => {
     expect(await screen.findByText("Route not under test")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/plan/reviews");
   });
+
+  it.each([
+    { case: "no goal", plan: { goal: null, plan: null } },
+    { case: "goal without a plan", plan: { goal: goalFixture(), plan: null } },
+  ])(
+    "opens the coach's weekly reviews from Plan's empty state, under Set goal ($case)",
+    async ({ plan }) => {
+      fakePlanApi({ plan });
+      const { router } = renderPlan();
+
+      const reviews = await screen.findByRole("link", { name: "Weekly reviews" });
+      expect(reviews).toHaveAttribute("href", "/plan/reviews");
+      expect(
+        screen.getByRole("link", { name: "Set goal" }).compareDocumentPosition(reviews) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      await userEvent.click(reviews);
+
+      expect(await screen.findByText("Route not under test")).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/plan/reviews");
+    },
+  );
 
   it("opens a week from its card", async () => {
     fakePlanApi();

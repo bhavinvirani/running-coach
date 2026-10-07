@@ -24,7 +24,10 @@ type WeeklyReviewProps = WeeklyReviewState & {
   today: string;
   /** The runner's time zone, for when the coach writes the review after the plan's usage limit resets. */
   timeZone: string;
-  /** Today's empty state, before the first run: a written review only, nothing about one to come. */
+  /**
+   * Today's empty state, before the first run: a written review only, nothing about one to come. A failed
+   * read still shows its alert and Retry when the coach has a credential, since a review may be waiting.
+   */
   readyOnly?: boolean;
 };
 
@@ -50,7 +53,7 @@ export function WeeklyReview({
   }
 
   if (state.status === "error") {
-    if (readyOnly) return null;
+    if (readyOnly && !hasCredential) return null;
     return (
       <Region>
         <RetryAlert error={state.error} onRetry={() => void state.refetch()} />
@@ -59,10 +62,12 @@ export function WeeklyReview({
   }
 
   const response = state.data;
-  if (readyOnly && response.state !== "ready") return null;
   const refetchFailed = state.refetchError ? (
     <RetryAlert error={state.refetchError} onRetry={() => void state.refetch()} />
   ) : null;
+  if (readyOnly && response.state !== "ready") {
+    return hasCredential && refetchFailed !== null ? <Region>{refetchFailed}</Region> : null;
+  }
 
   switch (response.state) {
     case "ready":

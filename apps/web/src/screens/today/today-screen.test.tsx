@@ -2115,13 +2115,25 @@ describe("TodayScreen weekly review", () => {
   });
 
   it.each([
-    { case: "pending", review: (): Response => json({ state: "pending" }) },
-    { case: "retrying", review: (): Response => json({ state: "retrying" }) },
-    { case: "failed query", review: (): Response => problem(500, ErrorCode.internal) },
+    {
+      case: "pending",
+      me: meWithKey,
+      review: (): Response => json({ state: "pending" }),
+    },
+    {
+      case: "retrying",
+      me: meWithKey,
+      review: (): Response => json({ state: "retrying" }),
+    },
+    {
+      case: "failed query, no coach credential",
+      me: meFixture(),
+      review: (): Response => problem(500, ErrorCode.internal),
+    },
   ])(
     "shows nothing of the review in Today's empty state while it is not ready ($case)",
-    async ({ review }) => {
-      const calls = fakeTodayApi({ me: meWithKey, latest: null, review });
+    async ({ me, review }) => {
+      const calls = fakeTodayApi({ me, latest: null, review });
       renderToday();
       await screen.findByText("Sync now to bring in your latest run from Garmin.");
       await waitFor(() =>
@@ -2132,6 +2144,52 @@ describe("TodayScreen weekly review", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );
+
+  it("explains a failed review read in Today's empty state with Retry when the coach has a credential, and loads it on Retry (empty state, failed query)", async () => {
+    let failing = true;
+    fakeTodayApi({
+      me: meWithKey,
+      latest: null,
+      review: () => (failing ? problem(500, ErrorCode.internal) : json(latestReviewReadyFixture())),
+    });
+    renderToday();
+
+    const review = await findReviewRegion();
+    expect(within(review).getByRole("alert")).toHaveTextContent(errorMessages.internal);
+    expect(
+      screen.getByText("Sync now to bring in your latest run from Garmin."),
+    ).toBeInTheDocument();
+
+    failing = false;
+    await userEvent.click(within(review).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText(weeklyReviewCardFixture().content.headline)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("explains a failed reload of a review still to come in Today's empty state with Retry when the coach has a credential (empty state, failed reload)", async () => {
+    let failing = false;
+    fakeTodayApi({
+      me: meWithKey,
+      latest: null,
+      review: () => (failing ? problem(503, ErrorCode.internal) : json({ state: "pending" })),
+    });
+    const { queryClient } = renderToday();
+    await screen.findByText("Sync now to bring in your latest run from Garmin.");
+    await waitFor(() => expect(reviewRegion()).not.toBeInTheDocument());
+
+    failing = true;
+    await act(() => queryClient.refetchQueries({ queryKey: ["reviews"] }));
+
+    const review = await findReviewRegion();
+    expect(await within(review).findByRole("alert")).toHaveTextContent(errorMessages.internal);
+    // Still nothing about the review to come, only the failed read.
+    expect(within(review).queryByRole("status")).not.toBeInTheDocument();
+
+    failing = false;
+    await userEvent.click(within(review).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(reviewRegion()).not.toBeInTheDocument());
+  });
 
   it("reads the review again after Sync now, which queues the review of a week that has ended, and says the coach is writing it", async () => {
     let queued = false;

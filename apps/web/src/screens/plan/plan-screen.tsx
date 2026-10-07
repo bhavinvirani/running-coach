@@ -13,7 +13,8 @@ import { usePlanScreen } from "./use-plan";
 /**
  * Plan tab: the goal, the plan's paces, what the engine had to compromise on, the way to the coach's
  * weekly reviews, then the weeks, each opening its days. Empty until a goal is saved; the goal and its
- * plan are saved together, so a goal without a plan is empty too.
+ * plan are saved together, so a goal without a plan is empty too. The empty state keeps the way to the
+ * weekly reviews under Set goal.
  */
 export function PlanScreen() {
   const screen = usePlanScreen();
@@ -54,6 +55,10 @@ export function PlanScreen() {
           <p className="text-body text-ink-2">{planCopy.empty}</p>
           <Button asChild>
             <Link to="/plan/goal">{planCopy.setGoal}</Link>
+          </Button>
+          {/* The coach reviews every week, plan or not, so the reviews stay one tap away. */}
+          <Button asChild variant="secondary">
+            <Link to="/plan/reviews">{planCopy.weeklyReviews}</Link>
           </Button>
         </div>
       </PlanLayout>

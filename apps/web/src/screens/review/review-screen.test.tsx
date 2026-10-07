@@ -87,10 +87,9 @@ describe("ReviewScreen", () => {
     fakeReviewApi({ review: () => problem(404, ErrorCode.notFound) });
     const { router } = renderReview();
 
-    expect(await screen.findByText("That weekly review no longer exists.")).toHaveClass(
-      "text-body",
-      "text-ink-2",
-    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/^That weekly review no longer exists\.$/);
+    expect(alert).toHaveClass("text-body", "text-ink");
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: "Open weekly reviews" }));
     expect(router.state.location.pathname).toBe("/plan/reviews");
@@ -100,7 +99,10 @@ describe("ReviewScreen", () => {
     const calls = fakeReviewApi();
     renderReview("not-a-review");
 
-    expect(await screen.findByText("That weekly review no longer exists.")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /^That weekly review no longer exists\.$/,
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     expect(calls.filter((call) => call.path.startsWith("/api/reviews"))).toEqual([]);
   });
 
