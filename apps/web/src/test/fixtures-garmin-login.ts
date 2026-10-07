@@ -9,7 +9,7 @@ import {
   type SyncResponse,
 } from "@running-coach/shared";
 
-// Connecting Garmin from the web app (slice 12b), mirroring the fixture Garmin the e2e flows sign in to:
+// Connecting Garmin from the web app (#51), mirroring the fixture Garmin the e2e flows sign in to:
 // any email with FIXTURE_PASSWORD, then FIXTURE_CODE; one email that Garmin answers with a 429 and one it
 // lets in without a code. Fake values only (tests rule).
 

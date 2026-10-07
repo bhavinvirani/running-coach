@@ -1,12 +1,15 @@
-import { ErrorCode, type DisconnectGarminQuery, type GarminStatus } from "@running-coach/shared";
-import { isApiError } from "@/api/client";
-import { errorMessage } from "@/lib/errors";
+import type { DisconnectGarminQuery, GarminStatus } from "@running-coach/shared";
 import { formatCount } from "@/lib/format";
 
-/** Sentences on the Garmin screen, so the wording is read and changed in one place. */
+/**
+ * Sentences on the Garmin screen, so the wording is read and changed in one place. Its error sentences live
+ * in src/lib/errors.ts (garminSignInErrorMessage, garminRemovalErrorMessage).
+ */
 export const garminCopy = {
   title: "Garmin",
   loading: "Loading Garmin",
+  connection: "Connection",
+  signIn: "Sign in",
   status: "Status",
   lastSync: "Last sync",
   never: "Never",
@@ -31,8 +34,6 @@ export const garminCopy = {
   startAgain: "Start again",
   badEmail: "Type the email you sign in to Garmin with.",
   badCode: "Type the code Garmin sent: 4 to 10 digits.",
-  loginRateLimited:
-    "Garmin is limiting sign-ins. Wait about an hour, then try again, or connect from your laptop with pnpm garmin:connect.",
   disconnect: { idle: "Disconnect Garmin", pending: "Disconnecting Garmin…" },
   disconnectQuestion:
     "Disconnect Garmin? The app stops bringing in runs and sending workouts. Your runs and plan stay here.",
@@ -41,8 +42,6 @@ export const garminCopy = {
   removeWorkouts: "Also remove this app's upcoming workouts from Garmin",
   keepOnly: "Workouts this app sent stay on Garmin: removing them needs a working login.",
   removing: "Removing this app's upcoming workouts from Garmin. This can take a minute.",
-  removalNeedsLogin:
-    "Removing workouts needs a working Garmin login, and this one has expired. Disconnect without removing them, or reconnect first.",
   cancel: "Cancel",
 } as const;
 
@@ -52,14 +51,6 @@ export const garminStatusLabels: Record<GarminStatus, string> = {
   expired: "Login expired",
   not_connected: "Not connected",
 };
-
-/** Why a sign-in failed. Garmin's 429 on a sign-in holds for about an hour, and the laptop CLI is the way round. */
-export function loginErrorMessage(error: unknown): string {
-  if (isApiError(error) && !error.network && error.code === ErrorCode.garminRateLimited) {
-    return garminCopy.loginRateLimited;
-  }
-  return errorMessage(error);
-}
 
 /** The line a disconnect leaves: what happened to the workouts the app had sent. */
 export function disconnectedLine(

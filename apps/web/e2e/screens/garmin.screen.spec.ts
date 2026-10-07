@@ -9,21 +9,26 @@ import { skipSyncOnOpen } from "../fixtures/sync";
 // "Last sync" on the connected and expired screens is the seeded cursor, Sat 26 Sep 2026, 12:00 in the
 // default zone (UTC), not a time the clock decides, so nothing is masked.
 
-/** The laptop CLI line, the last row of both steps of the form. */
+/** The laptop CLI line, under the Sign in card on both steps of the form. */
 const laptopHelp =
   "If signing in here does not work, run pnpm garmin:connect with this app's address on your laptop.";
 
-function garminCard(page: Page): Locator {
-  return page.getByRole("region", { name: garminCopy.title, exact: true });
+/** The Connection card: Status and Last sync. */
+function connectionCard(page: Page): Locator {
+  return page.getByRole("region", { name: garminCopy.connection, exact: true });
+}
+
+/** The Sign in card with the form's fields; the form's buttons and the laptop line sit under it. */
+function signInCard(page: Page): Locator {
+  return page.getByRole("region", { name: garminCopy.signIn, exact: true });
 }
 
 test("garmin offers email and password to connect when no login is stored", async ({ page }) => {
   await page.goto("/settings/garmin");
-  const garmin = garminCard(page);
-  await expect(garmin).toContainText("Not connected");
-  await expect(garmin.getByLabel(garminCopy.email, { exact: true })).toBeVisible();
+  await expect(connectionCard(page)).toContainText("Not connected");
+  await expect(signInCard(page).getByLabel(garminCopy.email, { exact: true })).toBeVisible();
   // The last row on the screen.
-  await expect(garmin.getByText(laptopHelp, { exact: true })).toBeVisible();
+  await expect(page.getByText(laptopHelp, { exact: true })).toBeVisible();
 
   await fitViewportToPage(page);
   await expect(page).toHaveScreenshot("garmin-connect.png", { fullPage: true });
@@ -31,15 +36,15 @@ test("garmin offers email and password to connect when no login is stored", asyn
 
 test("garmin asks for the code Garmin sent once email and password are in", async ({ page }) => {
   await page.goto("/settings/garmin");
-  const garmin = garminCard(page);
-  await garmin.getByLabel(garminCopy.email, { exact: true }).fill(fixtureGarminLogin.email);
-  await garmin.getByLabel(garminCopy.password, { exact: true }).fill(fixtureGarminLogin.password);
-  await garmin.getByRole("button", { name: garminCopy.connect.idle, exact: true }).click();
+  const form = signInCard(page);
+  await form.getByLabel(garminCopy.email, { exact: true }).fill(fixtureGarminLogin.email);
+  await form.getByLabel(garminCopy.password, { exact: true }).fill(fixtureGarminLogin.password);
+  await page.getByRole("button", { name: garminCopy.connect.idle, exact: true }).click();
 
-  await expect(garmin.getByText(garminCopy.codeSent, { exact: true })).toBeVisible();
+  await expect(form.getByText(garminCopy.codeSent, { exact: true })).toBeVisible();
   // The code field takes the focus as the step opens, as a thumb finds it.
-  await expect(garmin.getByLabel(garminCopy.code, { exact: true })).toBeFocused();
-  await expect(garmin.getByText(laptopHelp, { exact: true })).toBeVisible();
+  await expect(form.getByLabel(garminCopy.code, { exact: true })).toBeFocused();
+  await expect(page.getByText(laptopHelp, { exact: true })).toBeVisible();
 
   await fitViewportToPage(page);
   await expect(page).toHaveScreenshot("garmin-code.png", { fullPage: true });
@@ -51,12 +56,12 @@ test("garmin shows a working login with its last sync and Disconnect Garmin", as
   await skipSyncOnOpen(page);
 
   await page.goto("/settings/garmin");
-  const garmin = garminCard(page);
-  await expect(garmin).toContainText("Connected");
-  await expect(garmin).toContainText("Sat 26 Sep 2026, 12:00");
+  const connection = connectionCard(page);
+  await expect(connection).toContainText("Connected");
+  await expect(connection).toContainText("Sat 26 Sep 2026, 12:00");
   // The last row on the screen.
   await expect(
-    garmin.getByRole("button", { name: garminCopy.disconnect.idle, exact: true }),
+    page.getByRole("button", { name: garminCopy.disconnect.idle, exact: true }),
   ).toBeVisible();
 
   await fitViewportToPage(page);
@@ -69,13 +74,15 @@ test("garmin shows an expired login with its last sync, the form to reconnect an
   await seedExpiredGarminLogin();
 
   await page.goto("/settings/garmin");
-  const garmin = garminCard(page);
-  await expect(garmin).toContainText("Login expired");
-  await expect(garmin).toContainText("Sat 26 Sep 2026, 12:00");
-  await expect(garmin.getByText(garminCopy.reconnectIntro, { exact: true })).toBeVisible();
+  const connection = connectionCard(page);
+  await expect(connection).toContainText("Login expired");
+  await expect(connection).toContainText("Sat 26 Sep 2026, 12:00");
+  await expect(
+    signInCard(page).getByText(garminCopy.reconnectIntro, { exact: true }),
+  ).toBeVisible();
   // The last row on the screen.
   await expect(
-    garmin.getByRole("button", { name: garminCopy.disconnect.idle, exact: true }),
+    page.getByRole("button", { name: garminCopy.disconnect.idle, exact: true }),
   ).toBeVisible();
 
   await fitViewportToPage(page);

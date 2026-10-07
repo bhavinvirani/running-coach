@@ -106,13 +106,17 @@ test("an expired Garmin login shows Reconnect Garmin instead of Sync now, which 
   await reconnect.click();
   await expect(page.getByRole("heading", { name: "Garmin", level: 1 })).toBeVisible();
   await expect(page).toHaveURL(/\/settings\/garmin$/);
-  const section = page.getByRole("region", { name: "Garmin" });
-  await expect(figure(section, "Status")).toHaveText("Login expired");
+  const connection = page.getByRole("region", { name: garminCopy.connection, exact: true });
+  await expect(figure(connection, "Status")).toHaveText("Login expired");
   // The seeded cursor in the runner's default zone, UTC.
-  await expect(figure(section, "Last sync")).toHaveText("Sat 26 Sep 2026, 12:00");
-  await expect(section.getByText(garminCopy.reconnectIntro, { exact: true })).toBeVisible();
+  await expect(figure(connection, "Last sync")).toHaveText("Sat 26 Sep 2026, 12:00");
   await expect(
-    section.getByRole("button", { name: garminCopy.reconnect.idle, exact: true }),
+    page
+      .getByRole("region", { name: garminCopy.signIn, exact: true })
+      .getByText(garminCopy.reconnectIntro, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: garminCopy.reconnect.idle, exact: true }),
   ).toBeVisible();
   expect(posts).toHaveLength(0);
 });

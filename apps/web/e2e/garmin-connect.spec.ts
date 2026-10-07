@@ -1,4 +1,5 @@
 import {
+  ErrorCode,
   PUSH_WINDOW_DAYS,
   calendarResponseSchema,
   disconnectGarminResponseSchema,
@@ -8,8 +9,9 @@ import {
   type MeResponse,
 } from "@running-coach/shared";
 import type { APIRequestContext, Locator, Page, Response } from "@playwright/test";
+import { ApiError } from "../src/api/client";
 import { addDays } from "../src/lib/dates";
-import { errorMessages } from "../src/lib/errors";
+import { errorMessages, garminSignInErrorMessage } from "../src/lib/errors";
 import { sessionTypeName } from "../src/lib/session-type";
 import { disconnectedLine, garminCopy } from "../src/screens/garmin/garmin-copy";
 import { expect, test } from "./fixtures/login";
@@ -28,11 +30,26 @@ import { isSyncPost, recordSyncPosts, skipSyncOnOpen } from "./fixtures/sync";
 // password login (fixtureGarminLogin). A connect sends Sync now's request; every test that lets one through
 // waits for its answer, so no sync writes into the next test's reset runner.
 
-function garminCard(page: Page): Locator {
-  return page.getByRole("region", { name: garminCopy.title, exact: true });
+// What the form says for Garmin's 429 on a sign-in, from src/lib/errors.ts so the copy lives in one place.
+const signInLimited = garminSignInErrorMessage(
+  new ApiError({ status: 429, code: ErrorCode.garminRateLimited }),
+);
+
+/** The Connection card: Status, Last sync and the line the last connect or disconnect left. */
+function connectionCard(page: Page): Locator {
+  return page.getByRole("region", { name: garminCopy.connection, exact: true });
 }
 
-/** The figure beside a row's label in the Garmin card ("Status", "Last sync"). */
+/** The Sign in card with the form's fields; the form's alert and buttons sit under it on the screen. */
+function signInCard(page: Page): Locator {
+  return page.getByRole("region", { name: garminCopy.signIn, exact: true });
+}
+
+function button(page: Page, name: string): Locator {
+  return page.getByRole("button", { name, exact: true });
+}
+
+/** The figure beside a row's label in a card ("Status", "Last sync", "Distance"). */
 function figure(scope: Locator, label: string): Locator {
   return scope.getByText(label, { exact: true }).locator("xpath=following-sibling::*[1]");
 }
@@ -71,29 +88,27 @@ async function garminState(request: APIRequestContext): Promise<MeResponse["garm
 }
 
 /** Types the email and password into step 1 and taps the form's button; returns the start's answer. */
-async function signIn(page: Page, email: string, button: string): Promise<Response> {
-  const card = garminCard(page);
-  await card.getByLabel(garminCopy.email, { exact: true }).fill(email);
-  await card.getByLabel(garminCopy.password, { exact: true }).fill(fixtureGarminLogin.password);
+async function signIn(page: Page, email: string, verb: string): Promise<Response> {
+  const form = signInCard(page);
+  await form.getByLabel(garminCopy.email, { exact: true }).fill(email);
+  await form.getByLabel(garminCopy.password, { exact: true }).fill(fixtureGarminLogin.password);
   const answered = page.waitForResponse(isLoginStart);
-  await card.getByRole("button", { name: button, exact: true }).click();
+  await button(page, verb).click();
   return answered;
 }
 
 /** Types a code into the code step and taps Connect Garmin; returns the code's answer. */
 async function sendCode(page: Page, code: string): Promise<Response> {
-  const card = garminCard(page);
-  await card.getByLabel(garminCopy.code, { exact: true }).fill(code);
+  await signInCard(page).getByLabel(garminCopy.code, { exact: true }).fill(code);
   const answered = page.waitForResponse(isLoginCode);
-  await card.getByRole("button", { name: garminCopy.connect.idle, exact: true }).click();
+  await button(page, garminCopy.connect.idle).click();
   return answered;
 }
 
 /** Disconnect Garmin, then the confirm step's own Disconnect Garmin; returns the disconnect's answer. */
 async function disconnect(page: Page, { removeWorkouts }: { removeWorkouts: boolean | null }) {
-  const card = garminCard(page);
-  await card.getByRole("button", { name: garminCopy.disconnect.idle, exact: true }).click();
-  const step = card.getByRole("group", { name: garminCopy.disconnectQuestion });
+  await button(page, garminCopy.disconnect.idle).click();
+  const step = page.getByRole("group", { name: garminCopy.disconnectQuestion });
   await expect(step).toBeVisible();
   const checkbox = step.getByRole("checkbox", { name: garminCopy.removeWorkouts });
   if (removeWorkouts === null) {
@@ -130,34 +145,33 @@ test("connects with email, password and Garmin's code after a wrong one, syncs, 
   });
 
   await openGarmin(page, "Not connected");
-  const card = garminCard(page);
-  await expect(figure(card, garminCopy.status)).toHaveText("Not connected");
-  await expect(card.getByText(garminCopy.connectIntro, { exact: true })).toBeVisible();
+  const connection = connectionCard(page);
+  const form = signInCard(page);
+  await expect(figure(connection, garminCopy.status)).toHaveText("Not connected");
+  await expect(form.getByText(garminCopy.connectIntro, { exact: true })).toBeVisible();
 
   expect((await signIn(page, fixtureGarminLogin.email, garminCopy.connect.idle)).ok()).toBe(true);
 
   // Garmin sent a code: the email and password make way for the code field, which takes the focus.
-  await expect(card.getByText(garminCopy.codeSent, { exact: true })).toBeVisible();
-  await expect(card.getByLabel(garminCopy.code, { exact: true })).toBeFocused();
-  await expect(card.getByLabel(garminCopy.password, { exact: true })).toHaveCount(0);
+  await expect(form.getByText(garminCopy.codeSent, { exact: true })).toBeVisible();
+  await expect(form.getByLabel(garminCopy.code, { exact: true })).toBeFocused();
+  await expect(form.getByLabel(garminCopy.password, { exact: true })).toHaveCount(0);
 
   // A wrong code is refused, and the same login waits for another on the code step.
   expect((await sendCode(page, fixtureGarminLogin.wrongCode)).status()).toBe(422);
-  await expect(card.getByRole("alert")).toHaveText(errorMessages.garmin_mfa_rejected);
-  await expect(card.getByLabel(garminCopy.code, { exact: true })).toBeVisible();
-  await expect(figure(card, garminCopy.status)).toHaveText("Not connected");
+  await expect(page.getByRole("alert")).toHaveText(errorMessages.garmin_mfa_rejected);
+  await expect(form.getByLabel(garminCopy.code, { exact: true })).toBeVisible();
+  await expect(figure(connection, garminCopy.status)).toHaveText("Not connected");
   expect((await garminState(page.request)).status).toBe("not_connected");
 
   const syncSent = page.waitForRequest(isSyncPost);
   const synced = page.waitForResponse((response) => isSyncPost(response.request()));
   expect((await sendCode(page, fixtureGarminLogin.code)).ok()).toBe(true);
-  await expect(card.getByText(garminCopy.connect.done, { exact: true })).toBeFocused();
-  await expect(figure(card, garminCopy.status)).toHaveText("Connected");
-  await expect(card.getByRole("alert")).toHaveCount(0);
-  await expect(card.getByLabel(garminCopy.code, { exact: true })).toHaveCount(0);
-  await expect(
-    card.getByRole("button", { name: garminCopy.disconnect.idle, exact: true }),
-  ).toBeVisible();
+  await expect(connection.getByText(garminCopy.connect.done, { exact: true })).toBeFocused();
+  await expect(figure(connection, garminCopy.status)).toHaveText("Connected");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(form).toHaveCount(0);
+  await expect(button(page, garminCopy.disconnect.idle)).toBeVisible();
 
   // Connected, the screen sent Sync now's request by itself.
   await syncSent;
@@ -180,12 +194,10 @@ test("connects with email, password and Garmin's code after a wrong one, syncs, 
   expect(workoutsChoice(disconnected)).toBe("remove");
   expect(disconnectGarminResponseSchema.parse(await disconnected.json()).removedWorkouts).toBe(0);
 
-  await expect(card.getByText(disconnectedLine("remove", 0), { exact: true })).toBeFocused();
-  await expect(figure(card, garminCopy.status)).toHaveText("Not connected");
-  await expect(card.getByText(garminCopy.lastSync, { exact: true })).toHaveCount(0);
-  await expect(
-    card.getByRole("button", { name: garminCopy.connect.idle, exact: true }),
-  ).toBeVisible();
+  await expect(connection.getByText(disconnectedLine("remove", 0), { exact: true })).toBeFocused();
+  await expect(figure(connection, garminCopy.status)).toHaveText("Not connected");
+  await expect(connection.getByText(garminCopy.lastSync, { exact: true })).toHaveCount(0);
+  await expect(button(page, garminCopy.connect.idle)).toBeVisible();
   expect((await garminState(page.request)).status).toBe("not_connected");
 });
 
@@ -200,9 +212,11 @@ test("an expired login reconnects from Today's Reconnect Garmin without a code, 
   await page.getByRole("link", { name: garminCopy.reconnect.idle }).click();
   await expect(page.getByRole("heading", { name: garminCopy.title, level: 1 })).toBeVisible();
   await expect(page).toHaveURL(/\/settings\/garmin$/);
-  const card = garminCard(page);
-  await expect(figure(card, garminCopy.status)).toHaveText("Login expired");
-  await expect(card.getByText(garminCopy.reconnectIntro, { exact: true })).toBeVisible();
+  const connection = connectionCard(page);
+  await expect(figure(connection, garminCopy.status)).toHaveText("Login expired");
+  await expect(
+    signInCard(page).getByText(garminCopy.reconnectIntro, { exact: true }),
+  ).toBeVisible();
 
   // This account's Garmin asks for no code: the sign-in connects at once and the sync follows. The
   // reconnect keeps the seeded cursor, so the sync stores the 18 km run.
@@ -210,10 +224,10 @@ test("an expired login reconnects from Today's Reconnect Garmin without a code, 
   expect((await signIn(page, fixtureGarminLogin.noCodeEmail, garminCopy.reconnect.idle)).ok()).toBe(
     true,
   );
-  await expect(card.getByText(garminCopy.reconnect.done, { exact: true })).toBeFocused();
-  await expect(figure(card, garminCopy.status)).toHaveText("Connected");
-  await expect(card.getByLabel(garminCopy.code, { exact: true })).toHaveCount(0);
-  await expect(card.getByLabel(garminCopy.email, { exact: true })).toHaveCount(0);
+  await expect(connection.getByText(garminCopy.reconnect.done, { exact: true })).toBeFocused();
+  await expect(figure(connection, garminCopy.status)).toHaveText("Connected");
+  await expect(page.getByLabel(garminCopy.code, { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel(garminCopy.email, { exact: true })).toHaveCount(0);
   expect((await synced).ok()).toBe(true);
   expect((await garminState(page.request)).status).toBe("ok");
 
@@ -238,21 +252,19 @@ test("a Garmin 429 on sign-in says to wait or use the laptop, is not retried, an
   });
 
   await openGarmin(page, "Not connected");
-  const card = garminCard(page);
+  const form = signInCard(page);
   expect(
     (await signIn(page, fixtureGarminLogin.rateLimitedEmail, garminCopy.connect.idle)).status(),
   ).toBe(429);
 
-  await expect(card.getByRole("alert")).toHaveText(garminCopy.loginRateLimited);
+  await expect(page.getByRole("alert")).toHaveText(signInLimited);
   // Still step 1, with what was typed kept for later; the button is ready again, so nothing is in flight.
-  await expect(card.getByLabel(garminCopy.email, { exact: true })).toHaveValue(
+  await expect(form.getByLabel(garminCopy.email, { exact: true })).toHaveValue(
     fixtureGarminLogin.rateLimitedEmail,
   );
-  await expect(card.getByLabel(garminCopy.code, { exact: true })).toHaveCount(0);
-  await expect(
-    card.getByRole("button", { name: garminCopy.connect.idle, exact: true }),
-  ).toBeEnabled();
-  await expect(figure(card, garminCopy.status)).toHaveText("Not connected");
+  await expect(form.getByLabel(garminCopy.code, { exact: true })).toHaveCount(0);
+  await expect(button(page, garminCopy.connect.idle)).toBeEnabled();
+  await expect(figure(connectionCard(page), garminCopy.status)).toHaveText("Not connected");
   expect((await garminState(page.request)).status).toBe("not_connected");
   expect(starts).toHaveLength(1);
   expect(posts).toHaveLength(0);
@@ -264,22 +276,18 @@ test("disconnecting an expired login only forgets it and leaves the runner not c
   await seedExpiredGarminLogin();
 
   await openGarmin(page, "Login expired");
-  const card = garminCard(page);
+  const connection = connectionCard(page);
   const disconnected = await disconnect(page, { removeWorkouts: null });
   expect(disconnected.ok()).toBe(true);
   expect(workoutsChoice(disconnected)).toBe("keep");
 
-  await expect(card.getByText(disconnectedLine("keep", 0), { exact: true })).toBeFocused();
-  await expect(figure(card, garminCopy.status)).toHaveText("Not connected");
-  await expect(card.getByText(garminCopy.lastSync, { exact: true })).toHaveCount(0);
+  await expect(connection.getByText(disconnectedLine("keep", 0), { exact: true })).toBeFocused();
+  await expect(figure(connection, garminCopy.status)).toHaveText("Not connected");
+  await expect(connection.getByText(garminCopy.lastSync, { exact: true })).toHaveCount(0);
   // The form that was there to reconnect now connects.
-  await expect(card.getByText(garminCopy.connectIntro, { exact: true })).toBeVisible();
-  await expect(
-    card.getByRole("button", { name: garminCopy.connect.idle, exact: true }),
-  ).toBeVisible();
-  await expect(
-    card.getByRole("button", { name: garminCopy.disconnect.idle, exact: true }),
-  ).toHaveCount(0);
+  await expect(signInCard(page).getByText(garminCopy.connectIntro, { exact: true })).toBeVisible();
+  await expect(button(page, garminCopy.connect.idle)).toBeVisible();
+  await expect(button(page, garminCopy.disconnect.idle)).toHaveCount(0);
   expect((await garminState(page.request)).status).toBe("not_connected");
 });
 
@@ -321,7 +329,7 @@ test("disconnecting a working login takes the app's upcoming workouts off Garmin
 
   await tab(page, "Settings").click();
   await page.getByRole("link", { name: "Garmin, Connected", exact: true }).click();
-  const card = garminCard(page);
+  const connection = connectionCard(page);
   const disconnected = await disconnect(page, { removeWorkouts: true });
   expect(disconnected.ok()).toBe(true);
   expect(workoutsChoice(disconnected)).toBe("remove");
@@ -330,9 +338,9 @@ test("disconnecting a working login takes the app's upcoming workouts off Garmin
   );
 
   await expect(
-    card.getByText(disconnectedLine("remove", sessions.length), { exact: true }),
+    connection.getByText(disconnectedLine("remove", sessions.length), { exact: true }),
   ).toBeFocused();
-  await expect(figure(card, garminCopy.status)).toHaveText("Not connected");
+  await expect(figure(connection, garminCopy.status)).toHaveText("Not connected");
   expect((await garminState(page.request)).status).toBe("not_connected");
   const stored = (await readCalendar(page.request, today)).days.flatMap((day) => day.sessions);
   expect(sessions.map((session) => stored.find((row) => row.id === session.id)?.onGarmin)).toEqual([

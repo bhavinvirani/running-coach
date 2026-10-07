@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { isApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { errorMessage } from "@/lib/errors";
+import { errorMessage, garminRemovalErrorMessage } from "@/lib/errors";
 import { disconnectedLine, garminCopy } from "../garmin-copy";
 import type { DisconnectActions } from "../use-garmin";
 
@@ -19,13 +19,13 @@ type DisconnectGarminProps = {
 
 /**
  * Disconnect Garmin, confirmed in place (never a browser dialog), as SessionActions confirms a skip: the
- * question, the choice to remove the app's upcoming workouts from Garmin first (on by default), then
- * Disconnect Garmin and Cancel. A failure keeps the login and the step. Garmin turning the removal down
- * means the login expired: the choice turns to keep, and /api/me read again drops it once it says expired;
- * a reconnect after that brings the choice back on and drops the refusal. Opened again while a disconnect
- * still runs (the screen was left and came back), the step shows it running. Swapping the button for the
- * step takes away the focused control, so focus follows: to the question, back to Disconnect Garmin on
- * Cancel.
+ * button on the screen opens a surface-1 card with the question, the choice to remove the app's upcoming
+ * workouts from Garmin first (on by default), then Disconnect Garmin and Cancel. A failure keeps the login
+ * and the step. Garmin turning the removal down means the login expired: the choice turns to keep, and
+ * /api/me read again drops it once it says expired; a reconnect after that brings the choice back on and
+ * drops the refusal. Opened again while a disconnect still runs (the screen was left and came back), the
+ * step shows it running. Swapping the button for the step takes away the focused control, so focus
+ * follows: to the question, back to Disconnect Garmin on Cancel.
  */
 export function DisconnectGarmin({
   canRemove,
@@ -64,18 +64,17 @@ export function DisconnectGarmin({
 
   if (!confirming) {
     return (
-      <div className="py-4">
-        <Button
-          ref={disconnectButton}
-          variant="secondary"
-          onClick={() => {
-            focusAfterSwap.current = "question";
-            setConfirming(true);
-          }}
-        >
-          {garminCopy.disconnect.idle}
-        </Button>
-      </div>
+      <Button
+        ref={disconnectButton}
+        variant="secondary"
+        className="self-start"
+        onClick={() => {
+          focusAfterSwap.current = "question";
+          setConfirming(true);
+        }}
+      >
+        {garminCopy.disconnect.idle}
+      </Button>
     );
   }
 
@@ -91,16 +90,15 @@ export function DisconnectGarmin({
         onSuccess: ({ removedWorkouts }) =>
           onDisconnected(disconnectedLine(workouts, removedWorkouts)),
         onError: (error) => {
-          if (
-            workouts === "remove" &&
-            isApiError(error) &&
-            error.code === ErrorCode.garminAuthExpired
-          ) {
-            setRemoveWorkouts(false);
-            setProblem(garminCopy.removalNeedsLogin);
+          if (workouts === "keep") {
+            setProblem(errorMessage(error));
             return;
           }
-          setProblem(errorMessage(error));
+          // Garmin turned the removal down: the login expired, so keep is the way left.
+          if (isApiError(error) && error.code === ErrorCode.garminAuthExpired) {
+            setRemoveWorkouts(false);
+          }
+          setProblem(garminRemovalErrorMessage(error));
         },
       },
     );
@@ -115,7 +113,11 @@ export function DisconnectGarmin({
   };
 
   return (
-    <div role="group" aria-labelledby={questionId} className="flex flex-col items-start gap-3 py-4">
+    <div
+      role="group"
+      aria-labelledby={questionId}
+      className="flex flex-col items-start gap-3 rounded-md bg-surface-1 p-4"
+    >
       <p id={questionId} ref={question} tabIndex={-1} className="text-body text-ink">
         {garminCopy.disconnectQuestion}
       </p>

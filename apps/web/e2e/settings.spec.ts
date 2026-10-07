@@ -77,7 +77,7 @@ test("each row opens its own screen inside the Settings tab, and Back returns to
       // Not connected is the form that connects.
       shows: () =>
         expect(
-          card(page, "Garmin").getByRole("button", { name: garminCopy.connect.idle, exact: true }),
+          page.getByRole("button", { name: garminCopy.connect.idle, exact: true }),
         ).toBeVisible(),
     },
     {
@@ -199,10 +199,11 @@ test("an expired Garmin login shows on its row, and its screen offers to reconne
 
   await page.getByRole("link", { name: "Garmin, Login expired" }).click();
   await expect(heading(page, "Garmin")).toBeVisible();
-  const garmin = card(page, "Garmin");
-  await expect(garmin.getByText(garminCopy.reconnectIntro, { exact: true })).toBeVisible();
   await expect(
-    garmin.getByRole("button", { name: garminCopy.reconnect.idle, exact: true }),
+    card(page, garminCopy.signIn).getByText(garminCopy.reconnectIntro, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: garminCopy.reconnect.idle, exact: true }),
   ).toBeVisible();
 });
 

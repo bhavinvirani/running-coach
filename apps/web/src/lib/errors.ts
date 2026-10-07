@@ -82,3 +82,25 @@ export function logInErrorMessage(error: unknown): string {
   }
   return errorMessage(error);
 }
+
+/**
+ * Why a Garmin sign-in on the Garmin screen failed. Garmin's 429 on a sign-in holds for about an hour, and
+ * the laptop CLI is the way round it.
+ */
+export function garminSignInErrorMessage(error: unknown): string {
+  if (isApiError(error) && !error.network && error.code === "garmin_rate_limited") {
+    return "Garmin is limiting sign-ins. Wait about an hour, then try again, or connect from your laptop with pnpm garmin:connect.";
+  }
+  return errorMessage(error);
+}
+
+/**
+ * Why a disconnect that also removes the app's workouts from Garmin failed. Garmin turning the removal down
+ * means the login expired, which leaves disconnecting without the removal, or reconnecting first.
+ */
+export function garminRemovalErrorMessage(error: unknown): string {
+  if (isApiError(error) && !error.network && error.code === "garmin_auth_expired") {
+    return "Removing workouts needs a working Garmin login, and this one has expired. Disconnect without removing them, or reconnect first.";
+  }
+  return errorMessage(error);
+}
