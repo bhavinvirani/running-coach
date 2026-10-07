@@ -21,8 +21,8 @@ export interface CoachEvalCase<I> {
 }
 
 /**
- * What a prompt's eval/definition.ts exports as evalDefinition. Its functions are methods, so a definition
- * typed for its own input and schema also fits the loader's unknown ones.
+ * What a prompt's eval/definition.ts exports as evalDefinition. Its functions are properties, not methods,
+ * so `satisfies` rejects one that does not fit the definition's own input or schema.
  */
 export interface CoachEvalDefinition<I, S extends z.ZodType> {
   /** The folder under src/coach/prompts, also the script's --prompt name. */
@@ -32,9 +32,9 @@ export interface CoachEvalDefinition<I, S extends z.ZodType> {
   schema: S;
   maxTokens: number;
   /** The user message for a case's input, as the job builds it. */
-  buildInput(input: I): string;
+  buildInput: (input: I) => string;
   /** What breaks the voice or the prompt's own rules in a parsed output, one line per problem. */
-  outputProblems(output: z.output<S>): string[];
+  outputProblems: (output: z.output<S>) => string[];
 }
 
 /** A definition as the script loads it, before anything is known about its input or schema. */

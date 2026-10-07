@@ -26,7 +26,8 @@ describe("callCredential", () => {
       callCredential(USER_ID, {
         email: PLAN_OWNER_EMAIL,
         coachCredential: "plan",
-        claudeKeyEnc: encrypt(KEY, USER_ID),
+        // Any decrypt of this throws, so the plan comes back only when the key is never read.
+        claudeKeyEnc: "v1:not-a-ciphertext",
       }),
     ).toEqual({ kind: "plan" });
   });
@@ -61,6 +62,11 @@ describe("callCredential", () => {
         claudeKeyEnc: null,
       }),
     ).toBeNull();
+    // The owner is set, so only the missing coach service keeps the plan off.
+    restore = configureCoachService(COACH_SERVICE, {
+      COACH_SERVICE_URL: undefined,
+      COACH_SERVICE_SECRET: undefined,
+    });
     expect(
       callCredential(USER_ID, {
         email: PLAN_OWNER_EMAIL,

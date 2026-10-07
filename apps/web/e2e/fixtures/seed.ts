@@ -432,8 +432,10 @@ export async function fakeClaudeCalls(
 
 /**
  * The plan token playwright.config.ts gives the coach service, which hands it to the fake Claude Code CLI
- * it runs (apps/coach/test/fake-claude-code.mjs): "test-<scenario>.<nonce>", where "success" answers every
- * run with a valid card of fake data, and the nonce names the log the fake appends to (fakeClaudeCodeRuns).
+ * it runs (apps/coach/test/fake-claude-code.mjs): "test-<scenario>.<nonce>", where "success" answers each
+ * run with the output fixture in apps/coach/test/fixtures whose top-level keys match the request's JSON
+ * Schema (a prompt without one fails like a crash), and the nonce names the log the fake appends to
+ * (fakeClaudeCodeRuns).
  */
 // The nonce names the log in the shared temp directory, so each slot reads its own.
 const fakeClaudeCodeNonce = e2eSlot.fakeClaudeCodeNonce;
