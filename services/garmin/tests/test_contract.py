@@ -17,6 +17,11 @@ from garmin_service.fake_client import (
     FAKE_GONE_WORKOUT_ID,
     FAKE_UNAVAILABLE_ACTIVITY_ID,
     FAKE_UNAVAILABLE_ACTIVITY_IDS,
+    FIXTURE_BUNDLE,
+    FIXTURE_MFA_CODE,
+    FIXTURE_NO_CODE_EMAIL,
+    FIXTURE_PASSWORD,
+    FIXTURE_RATE_LIMITED_EMAIL,
 )
 from garmin_service.models.problem import ErrorCode
 from tests.conftest import AppFactory
@@ -33,6 +38,7 @@ from tests.helpers import (
 )
 from tests.helpers import workout_sync_body as sync_body
 
+LOGIN_ID = "00000000-0000-4000-8000-000000000001"
 # A last chunk, which asks for the newest runs as the API does (RECENT_RUNS_CHECKED).
 FULL_RANGE = {"startDate": "2026-08-31", "endDate": "2026-09-27", "recentLimit": 100}
 # Both of the fake's unavailable runs, in a row: the series route stops after them.
@@ -413,6 +419,50 @@ def test_sync_requests_the_tests_send_match_garmin_sync_request() -> None:
     assert_valid("garmin-profile-request", {"tokenBundle": bundle()})
 
 
+def login_request(email: str = "runner@example.com", password: str = FIXTURE_PASSWORD) -> Any:
+    return {"loginId": LOGIN_ID, "email": email, "password": password}
+
+
+def code_request(code: str = FIXTURE_MFA_CODE) -> dict[str, str]:
+    return {"loginId": LOGIN_ID, "mfaCode": code}
+
+
+@pytest.mark.parametrize(
+    ("email", "status"),
+    [("runner@example.com", "code_needed"), (FIXTURE_NO_CODE_EMAIL, "connected")],
+)
+def test_login_responses_match_garmin_login_response(
+    client: TestClient, email: str, status: str
+) -> None:
+    request = login_request(email)
+    assert_valid("garmin-login-request", request)
+
+    response = client.post("/connect", json=request)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == status
+    assert_valid("garmin-login-response", response.json())
+
+
+def test_login_code_responses_match_garmin_login_code_response(client: TestClient) -> None:
+    client.post("/connect", json=login_request())
+    request = code_request()
+    assert_valid("garmin-login-code-request", request)
+
+    response = client.post("/connect/mfa", json=request)
+
+    assert response.status_code == 200
+    assert_valid("garmin-login-code-response", response.json())
+
+
+def test_the_fixture_login_answers_the_bundle_the_api_seeds() -> None:
+    # The API's fixtureBundle() is JSON.stringify of the base bundle: compact, in this key order.
+    assert FIXTURE_BUNDLE == (
+        '{"di_token":"fixture-token","di_refresh_token":"fixture-refresh",'
+        '"di_client_id":"fixture-client"}'
+    )
+
+
 def error_responses(make_client: AppFactory) -> dict[str, Any]:
     client = make_client()
     crashing = ScriptedGarmin(login_error=RuntimeError("boom")).connect()
@@ -470,7 +520,23 @@ def error_responses(make_client: AppFactory) -> dict[str, Any]:
         ),
         "not_found": client.get("/nope"),
         "internal": make_client(connect=crashing).post("/profile", json={"tokenBundle": bundle()}),
+        **login_error_responses(make_client),
     }
+
+
+def login_error_responses(make_client: AppFactory) -> dict[str, Any]:
+    client = make_client()
+    responses = {
+        "login_rejected": client.post("/connect", json=login_request(password="wrong")),
+        "login_rate_limited": client.post(
+            "/connect", json=login_request(FIXTURE_RATE_LIMITED_EMAIL)
+        ),
+        "login_lost": client.post("/connect/mfa", json=code_request()),
+        "login_validation": client.post("/connect", json={"loginId": LOGIN_ID}),
+    }
+    client.post("/connect", json=login_request())
+    responses["code_rejected"] = client.post("/connect/mfa", json=code_request("000000"))
+    return responses
 
 
 def test_every_error_response_matches_garmin_problem(make_client: AppFactory) -> None:
@@ -494,6 +560,11 @@ def test_every_error_response_matches_garmin_problem(make_client: AppFactory) ->
         "workouts_validation": 400,
         "not_found": 404,
         "internal": 500,
+        "login_rejected": 422,
+        "login_rate_limited": 429,
+        "login_lost": 409,
+        "login_validation": 400,
+        "code_rejected": 422,
     }
     for response in responses.values():
         assert response.headers["content-type"] == "application/problem+json"

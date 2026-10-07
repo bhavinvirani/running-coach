@@ -5,6 +5,9 @@ Garmin().login(tokenstore=<bundle JSON>) loads the tokens, refreshes them when t
 within 15 minutes of expiry (the refresh token then rotates) and loads the social profile, so login
 alone proves the bundle works. Routes return client.dumps() as the new bundle; error responses carry
 it too when it rotated (errors.py).
+
+The service's one state is not here: a password login waiting for its 2FA code, kept in memory for
+5 min (pending_logins.py, routes/login.py), because its MFA session cannot be serialized.
 """
 
 from __future__ import annotations

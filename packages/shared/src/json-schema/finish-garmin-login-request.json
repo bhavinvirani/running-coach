@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "mfaCode": {
+      "type": "string",
+      "pattern": "^\\d{4,10}$"
+    }
+  },
+  "required": [
+    "mfaCode"
+  ],
+  "additionalProperties": false
+}

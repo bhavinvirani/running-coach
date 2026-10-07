@@ -375,6 +375,77 @@ export async function unscheduleOthers(
   return { garmin: await readPushStatus(userId, now) };
 }
 
+/**
+ * Rounds of removal for a disconnect. The push keeps one week of sessions on Garmin, one batch of
+ * GARMIN_WORKOUT_BATCH_MAX; a second round takes what the first skipped when Garmin was slow, or a few
+ * more. Bounds the request at two batches (2 × WORKOUT_SYNC_TIMEOUT_MS when Garmin hangs on every call);
+ * a batch usually answers in seconds.
+ */
+export const MAX_REMOVE_ROUNDS = 2;
+
+/**
+ * Takes the workouts the app made off Garmin from the runner's local date at `now` on, for a disconnect
+ * that asked for it. The caller holds withUserLock(userId) and has refused an expired login.
+ *
+ * What goes is the push's own plan with no active plan, under which nothing is wanted: every session
+ * holding a workout, planned, moved or skipped, that Garmin shows today or later (garmin_date, or the
+ * date while unscheduled), of any plan, custom ones too. The plan's window bounds only that start:
+ * readPushState reads every such session past the window's end, and removes have no end. Done and missed
+ * sessions are history and keep theirs, as the push leaves them. Nothing to remove calls no Garmin, so a
+ * 429's hour does not hold the disconnect up. Otherwise the removals go in batches through
+ * openGarminAccount (its gates and bookkeeping), each result stored on its session at once as the push
+ * stores it, so a retry sends only what is left. A stop, a failed login, or removals still left after
+ * MAX_REMOVE_ROUNDS are recorded as the push error and thrown. Returns the workouts taken off.
+ */
+export async function removeOwnWorkouts(userId: string, now: Date): Promise<number> {
+  const [settings] = await db
+    .select({ timezone: userSettings.timezone })
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId));
+  if (!settings) throw new Error("The user has no settings row");
+  const window = pushWindow(localDateOf(now, settings.timezone));
+  const removals = async () =>
+    planWorkoutPush({
+      window,
+      ...(await readPushState(userId, window)),
+      activePlan: null,
+      pausedFrom: null,
+    });
+
+  let left = await removals();
+  if (left.length === 0) return 0;
+  let removed = 0;
+  try {
+    const account = await openGarminAccount(userId);
+    for (let round = 0; round < MAX_REMOVE_ROUNDS && left.length > 0; round += 1) {
+      const batch = left.slice(0, GARMIN_WORKOUT_BATCH_MAX);
+      await sendBatch(
+        account,
+        userId,
+        { window, readCalendar: false },
+        batch.map((planned) => planned.action),
+        async (answer) => {
+          await recordResults(userId, batch, answer);
+          removed += answer.results.filter((result) => result.outcome === "done").length;
+        },
+      );
+      left = await removals();
+    }
+    if (left.length > 0) {
+      throw new DomainError(
+        ErrorCode.garminUnavailable,
+        502,
+        "Garmin did not take every workout off in time. Try again.",
+      );
+    }
+  } catch (error) {
+    await recordPushError(userId, error);
+    throw error;
+  }
+  log.info({ userId, removed }, "garmin workouts removed");
+  return removed;
+}
+
 async function storeOthers(
   userId: string,
   change: (others: OtherGarminWorkout[]) => OtherGarminWorkout[],

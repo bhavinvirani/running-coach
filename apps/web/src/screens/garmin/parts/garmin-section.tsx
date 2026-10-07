@@ -1,54 +1,81 @@
 import type { MeResponse } from "@running-coach/shared";
+import { useEffect, useRef, useState } from "react";
+import { CardSection } from "@/components/card-section";
+import { SettingsRow } from "@/components/settings-card";
 import { formatDateTime } from "@/lib/format";
-import { SettingsCard, SettingsRow } from "@/components/settings-card";
+import { garminCopy, garminStatusLabels } from "../garmin-copy";
+import type { DisconnectActions, LoginActions } from "../use-garmin";
+import { ConnectForm } from "./connect-form";
+import { DisconnectGarmin } from "./disconnect-garmin";
 
 type GarminSectionProps = {
   garmin: MeResponse["garmin"];
   timeZone: string;
+  login: LoginActions;
+  disconnect: DisconnectActions;
 };
 
-/** Connection status and last sync. Connecting happens from the laptop CLI until the web flow lands. */
-export function GarminSection({ garmin, timeZone }: GarminSectionProps) {
-  if (garmin.status === "not_connected") {
-    return (
-      <SettingsCard title="Garmin">
-        <div className="flex flex-col gap-1 py-3">
-          <p className="text-body text-ink-2">Not connected.</p>
-          <LaptopConnectHelp verb="connect" />
-        </div>
-      </SettingsCard>
-    );
-  }
-
-  return (
-    <SettingsCard title="Garmin">
-      <SettingsRow label="Status">
-        {garmin.status === "ok" ? (
-          <span className="text-good">Connected</span>
-        ) : (
-          <span className="text-bad">Login expired</span>
-        )}
-      </SettingsRow>
-      <SettingsRow label="Last sync">
-        {garmin.lastSyncAt ? formatDateTime(garmin.lastSyncAt, timeZone) : "Never"}
-      </SettingsRow>
-      {garmin.status === "expired" ? (
-        <div className="py-3">
-          <LaptopConnectHelp verb="reconnect" />
-        </div>
-      ) : null}
-    </SettingsCard>
-  );
-}
+const STATUS_COLORS = { ok: "text-good", expired: "text-bad", not_connected: "text-ink" } as const;
 
 /**
- * Today's Garmin errors send the runner here, so this says how to act. Static copy: printing the page's
- * own address would make the screenshot depend on the host.
+ * The connection by its status, as the screen's sections: the Connection card first (Status, Last sync once
+ * there was a login, and the line the last connect or disconnect left), then by status. Not connected: the
+ * Sign in card to connect. Expired: the same card to reconnect, then Disconnect Garmin that only forgets
+ * the login. Connected: Disconnect Garmin. Each section holds its place whatever the status, so a confirm
+ * step open when the login turns out expired stays open. A connect or a disconnect takes away the control
+ * that was focused, so the line saying what it did takes focus.
  */
-function LaptopConnectHelp({ verb }: { verb: "connect" | "reconnect" }) {
+export function GarminSection({ garmin, timeZone, login, disconnect }: GarminSectionProps) {
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const outcomeLine = useRef<HTMLParagraphElement>(null);
+  // Set with the outcome, so only a connect or disconnect moves focus, never a refetch.
+  const focusOutcome = useRef(false);
+
+  useEffect(() => {
+    if (!focusOutcome.current || outcomeLine.current === null) return;
+    focusOutcome.current = false;
+    outcomeLine.current.focus();
+  });
+
+  const show = (line: string) => {
+    focusOutcome.current = true;
+    setOutcome(line);
+  };
+  const clear = () => setOutcome(null);
+
   return (
-    <p className="text-caption text-ink-2">
-      To {verb}, run <code>pnpm garmin:connect</code> with this app&apos;s address on your laptop.
-    </p>
+    <>
+      <CardSection title={garminCopy.connection}>
+        <SettingsRow label={garminCopy.status}>
+          <span className={STATUS_COLORS[garmin.status]}>{garminStatusLabels[garmin.status]}</span>
+        </SettingsRow>
+        {garmin.status === "not_connected" ? null : (
+          <SettingsRow label={garminCopy.lastSync}>
+            {garmin.lastSyncAt ? formatDateTime(garmin.lastSyncAt, timeZone) : garminCopy.never}
+          </SettingsRow>
+        )}
+        {outcome === null ? null : (
+          <p ref={outcomeLine} role="status" tabIndex={-1} className="py-3 text-body text-ink">
+            {outcome}
+          </p>
+        )}
+      </CardSection>
+      {garmin.status === "ok" ? null : (
+        <ConnectForm
+          mode={garmin.status === "expired" ? "reconnect" : "connect"}
+          login={login}
+          onStart={clear}
+          onConnected={show}
+        />
+      )}
+      {garmin.status === "not_connected" ? null : (
+        <DisconnectGarmin
+          canRemove={garmin.status === "ok"}
+          disconnect={disconnect}
+          onStart={clear}
+          onDisconnected={show}
+        />
+      )}
+    </>
   );
 }

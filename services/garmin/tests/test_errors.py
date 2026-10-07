@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from types import SimpleNamespace
 
 import pytest
@@ -15,11 +16,22 @@ from garminconnect import (
 
 from garmin_service.errors import (
     DEFAULT_RETRY_AFTER_S,
+    from_code_exception,
     from_garmin_exception,
     from_login_exception,
     from_write_exception,
 )
 from garmin_service.models.problem import ErrorCode
+from tests.helpers import (
+    VerifyAnswer,
+    VerifyOutcome,
+    code_refused_answer,
+    json_status_answer,
+    no_answer,
+    non_json_answer,
+    timed_out,
+    verify_failure,
+)
 
 
 def chained(outer: BaseException, cause: BaseException) -> BaseException:
@@ -114,34 +126,248 @@ def test_survives_a_cyclic_exception_chain() -> None:
     assert error.code is ErrorCode.GARMIN_AUTH_EXPIRED
 
 
+def strategies_exhausted(last: str) -> BaseException:
+    """What Garmin.login() raises when every login strategy failed without a 429 or 401."""
+    return chained(
+        GarminConnectConnectionError(f"Login failed: All login strategies exhausted: {last}"),
+        GarminConnectConnectionError(f"All login strategies exhausted: {last}"),
+    )
+
+
 @pytest.mark.parametrize(
-    ("exc", "code"),
+    ("exc", "status", "code"),
     [
         pytest.param(
-            GarminConnectTooManyRequestsError("MFA verification rate limited on all endpoints"),
-            "garmin_rate_limited",
-            id="garmin 429",
+            GarminConnectAuthenticationError("401 Unauthorized (Invalid Username or Password)"),
+            422,
+            "garmin_credentials_rejected",
+            id="wrong email or password",
         ),
         pytest.param(
-            GarminConnectAuthenticationError("MFA verification failed: [...]"),
-            "garmin_auth_expired",
-            id="garmin refused the code",
+            GarminConnectAuthenticationError("Widget authentication failed: 'Account locked'"),
+            422,
+            "garmin_credentials_rejected",
+            id="locked account in the widget flow",
+        ),
+        pytest.param(
+            GarminConnectTooManyRequestsError("All login strategies rate limited (429)."),
+            429,
+            "garmin_rate_limited",
+            id="every strategy answered 429",
+        ),
+        pytest.param(
+            strategies_exhausted("Portal login: CAPTCHA required (bot challenge)"),
+            502,
+            "garmin_unavailable",
+            id="bot challenge on every strategy",
+        ),
+        pytest.param(
+            strategies_exhausted("API Error 404"), 502, "garmin_unavailable", id="a 404 in the text"
         ),
         pytest.param(
             profile_load_failure(requests.exceptions.ConnectionError("reset by peer")),
+            502,
             "garmin_unavailable",
             id="network error under a garmin error",
         ),
     ],
 )
-def test_login_mapping_follows_the_route_mapping_when_the_chain_holds_a_garmin_exception(
-    exc: BaseException, code: str
+def test_login_mapping_reads_an_auth_error_as_rejected_credentials(
+    exc: BaseException, status: int, code: str
 ) -> None:
+    # A password login has no saved token that could have expired.
     error = from_login_exception(exc)
 
     assert error is not None
+    assert (error.status, error.code.value) == (status, code)
+
+
+@pytest.mark.parametrize(
+    ("exc", "status", "code"),
+    [
+        pytest.param(
+            GarminConnectAuthenticationError("MFA verification failed: ['verifyCode: INVALID']"),
+            422,
+            "garmin_mfa_rejected",
+            id="garmin refused the code",
+        ),
+        pytest.param(
+            GarminConnectAuthenticationError("Widget MFA failed: Enter MFA Code"),
+            422,
+            "garmin_mfa_rejected",
+            id="widget flow refused the code",
+        ),
+        pytest.param(
+            GarminConnectTooManyRequestsError("MFA verification rate limited on all endpoints"),
+            429,
+            "garmin_rate_limited",
+            id="garmin 429 on both verify endpoints",
+        ),
+        pytest.param(
+            requests.exceptions.ConnectionError("reset by peer"),
+            502,
+            "garmin_unavailable",
+            id="bare network error out of resume_login",
+        ),
+        pytest.param(
+            GarminConnectConnectionError("token rejected by API tier after MFA"),
+            502,
+            "garmin_unavailable",
+            id="token rejected after the code",
+        ),
+    ],
+)
+def test_code_mapping_reads_an_auth_error_as_a_rejected_code(
+    exc: BaseException, status: int, code: str
+) -> None:
+    error = from_code_exception(exc)
+
+    assert error is not None
+    assert (error.status, error.code.value) == (status, code)
+
+
+# One verify endpoint's outcome, made fresh per test: an exception is raised by the library.
+Outcome = Callable[[], VerifyOutcome]
+
+
+def answer_429() -> VerifyAnswer:
+    return VerifyAnswer(429)
+
+
+def json_429() -> VerifyAnswer:
+    return json_status_answer("429")
+
+
+def cloudflare_403() -> VerifyAnswer:
+    return non_json_answer(403)
+
+
+def error_page_503() -> VerifyAnswer:
+    return non_json_answer(503)
+
+
+def json_503() -> VerifyAnswer:
+    return json_status_answer("503")
+
+
+def json_without_status() -> VerifyAnswer:
+    return VerifyAnswer(200, {})
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "status", "code"),
+    [
+        pytest.param(
+            (no_answer, no_answer), 502, "garmin_unavailable", id="connection error on both"
+        ),
+        pytest.param((timed_out, timed_out), 502, "garmin_unavailable", id="timeout on both"),
+        pytest.param(
+            (cloudflare_403, cloudflare_403), 502, "garmin_unavailable", id="403 non-JSON on both"
+        ),
+        pytest.param(
+            (error_page_503, error_page_503), 502, "garmin_unavailable", id="503 non-JSON on both"
+        ),
+        pytest.param(
+            (no_answer, cloudflare_403),
+            502,
+            "garmin_unavailable",
+            id="connection error and 403 non-JSON",
+        ),
+        pytest.param(
+            (json_503, json_503), 502, "garmin_unavailable", id="503 in Garmin's JSON on both"
+        ),
+        pytest.param(
+            (answer_429, no_answer), 429, "garmin_rate_limited", id="a 429 and a connection error"
+        ),
+        pytest.param(
+            (code_refused_answer, answer_429),
+            429,
+            "garmin_rate_limited",
+            id="a refusal and a 429",
+        ),
+        pytest.param(
+            (cloudflare_403, json_429),
+            429,
+            "garmin_rate_limited",
+            id="403 non-JSON and a 429 in the JSON body",
+        ),
+        pytest.param((answer_429, answer_429), 429, "garmin_rate_limited", id="a 429 on both"),
+        pytest.param(
+            (code_refused_answer, code_refused_answer),
+            422,
+            "garmin_mfa_rejected",
+            id="a refusal on both",
+        ),
+        pytest.param(
+            (code_refused_answer, no_answer),
+            422,
+            "garmin_mfa_rejected",
+            id="a refusal and a connection error",
+        ),
+        pytest.param(
+            (cloudflare_403, code_refused_answer),
+            422,
+            "garmin_mfa_rejected",
+            id="403 non-JSON and a refusal",
+        ),
+        pytest.param(
+            (json_without_status, no_answer),
+            422,
+            "garmin_mfa_rejected",
+            id="JSON without a status and a connection error",
+        ),
+    ],
+)
+def test_code_mapping_reads_each_verify_endpoints_outcome_from_the_librarys_message(
+    outcomes: Sequence[Outcome], status: int, code: str
+) -> None:
+    # A refusal on either endpoint is Garmin checking the code: errors._from_verify_failures.
+    exc = verify_failure(*(outcome() for outcome in outcomes))
+
+    error = from_code_exception(exc)
+
+    assert error is not None
+    assert (error.status, error.code.value) == (status, code)
+    if error.code is ErrorCode.GARMIN_RATE_LIMITED:
+        assert error.retry_after_seconds == DEFAULT_RETRY_AFTER_S
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "MFA verification failed: [...]",
+        "MFA verification failed: ['unterminated",
+        "MFA verification failed: [429, 503]",
+        "MFA verification failed: {'a': 'connection error x'}",
+    ],
+)
+def test_code_mapping_reads_a_verify_message_of_another_shape_as_a_refused_code(
+    message: str,
+) -> None:
+    error = from_code_exception(GarminConnectAuthenticationError(message))
+
+    assert error is not None
+    assert error.code is ErrorCode.GARMIN_MFA_REJECTED
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "code"),
+    [
+        pytest.param((no_answer, cloudflare_403), "garmin_unavailable", id="no answer"),
+        pytest.param((answer_429, no_answer), "garmin_rate_limited", id="a 429"),
+        pytest.param(
+            (code_refused_answer, no_answer), "garmin_credentials_rejected", id="a refusal"
+        ),
+    ],
+)
+def test_login_mapping_reads_the_verify_outcomes_too_for_the_clis_code_step(
+    outcomes: Sequence[Outcome], code: str
+) -> None:
+    # connect_cli reports a failed code through from_login_exception.
+    error = from_login_exception(verify_failure(*(outcome() for outcome in outcomes)))
+
+    assert error is not None
     assert error.code.value == code
-    assert error.code is getattr(from_garmin_exception(exc), "code", None)
 
 
 @pytest.mark.parametrize(
@@ -173,6 +399,7 @@ def test_route_mapping_still_ignores_a_bare_network_error() -> None:
 def test_login_mapping_returns_none_for_an_error_that_is_neither_garmin_nor_network() -> None:
     assert from_login_exception(ValueError("bug")) is None
     assert from_login_exception(chained(KeyError("di_token"), ValueError("bug"))) is None
+    assert from_code_exception(ValueError("bug")) is None
 
 
 @pytest.mark.parametrize(

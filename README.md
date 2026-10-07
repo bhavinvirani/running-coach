@@ -24,7 +24,7 @@ pnpm dev          # Postgres (docker compose, port 5434), API + worker + Garmin 
 pnpm seed:owner   # once, after setting OWNER_EMAIL, OWNER_PASSWORD and OWNER_NAME in .env; needs the database up
 ```
 
-Garmin: `pnpm garmin:connect http://localhost:5173` (or the Render URL) signs in to the app as you, asks for your Garmin email, password and 2FA code, and uploads the token bundle, which the API checks with one Garmin call and stores encrypted; nothing is written to disk. Then tap Sync now on Today.
+Garmin: in the app open Settings, Garmin, and sign in with your Garmin email, password and the 2FA code Garmin sends; the API checks the login with one Garmin call, stores it encrypted and starts a sync. If Garmin blocks the server's sign-in, `pnpm garmin:connect http://localhost:5173` (or the Render URL) does the same from your laptop: it signs in to the app as you, asks for the Garmin email, password and code in the terminal, and uploads the token bundle; nothing is written to disk. Then tap Sync now on Today.
 
 Coach on your Claude plan (owner only, optional): set `COACH_SERVICE_URL=http://127.0.0.1:8777` and a `COACH_SERVICE_SECRET` (`openssl rand -hex 32`) in `.env`, run `pnpm coach:dev` beside `pnpm dev`, and choose Claude plan in Settings. Locally the coach service uses this machine's Claude Code login; `pnpm --filter @running-coach/api coach:eval --plan` runs the prompt eval through it.
 
