@@ -63,7 +63,7 @@ export function SettingsScreen() {
           label="Coach detail"
           value={coachDetailNames[settings.coachDetail]}
         />
-        <ListRow to="/settings/hr-zones" icon={HeartPulse} label="Heart-rate zones" />
+        <ListRow to="/settings/hr-zones" icon={HeartPulse} label="Heart rate zones" />
       </CardSection>
       <AccountSection
         email={data.user.email}

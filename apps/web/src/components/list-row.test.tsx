@@ -45,9 +45,9 @@ describe("ListRow", () => {
   });
 
   it("is named by its label alone when it shows no value", () => {
-    renderScreen(<ListRow to="/settings/hr-zones" icon={HeartPulse} label="Heart-rate zones" />);
+    renderScreen(<ListRow to="/settings/hr-zones" icon={HeartPulse} label="Heart rate zones" />);
 
-    expect(screen.getByRole("link", { name: "Heart-rate zones" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Heart rate zones" })).toBeInTheDocument();
     expect(screen.getByRole("link").querySelectorAll("span")).toHaveLength(1);
   });
 });

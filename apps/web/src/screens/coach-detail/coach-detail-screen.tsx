@@ -8,7 +8,7 @@ import { coachDetailNames } from "@/lib/settings-names";
 import { useCoachDetailScreen } from "./use-coach-detail";
 
 const TITLE = "Coach detail";
-const DESCRIPTION = "How much the coach writes after each run.";
+const DESCRIPTION = "How much the coach writes on each run and weekly review.";
 
 /** What the coach prompts do with each level. */
 const options: readonly ChoiceOption<CoachDetail>[] = [

@@ -2,7 +2,7 @@ import type { HrZones } from "@running-coach/shared";
 import { useHrZones, useResetHrZones, useSaveHrZones } from "@/api/hr-zones";
 import { screenState } from "@/api/screen-state";
 
-/** Everything the Heart-rate zones screen reads and does: the zones in use, saving and resetting them. */
+/** Everything the Heart rate zones screen reads and does: the zones in use, saving and resetting them. */
 export function useHrZonesScreen() {
   const zones = useHrZones();
   const save = useSaveHrZones();

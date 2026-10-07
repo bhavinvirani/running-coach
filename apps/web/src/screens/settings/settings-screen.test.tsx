@@ -106,7 +106,7 @@ describe("SettingsScreen", () => {
     expect(rowNames("My preferences")).toEqual([
       "Units, Kilometers",
       "Coach detail, Standard",
-      "Heart-rate zones",
+      "Heart rate zones",
     ]);
     const account = group("Account");
     expect(within(account).getByText("runner@example.com")).toBeInTheDocument();

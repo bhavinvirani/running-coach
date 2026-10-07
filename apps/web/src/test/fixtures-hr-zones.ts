@@ -6,7 +6,7 @@ import {
   type HrZonesSource,
 } from "@running-coach/shared";
 
-// Heart-rate zones (slice 12a): Garmin's default zones for a fictional runner whose zone 5 starts at
+// Heart rate zones (slice 12a): Garmin's default zones for a fictional runner whose zone 5 starts at
 // 176 bpm, so a max HR of 196 (176 / 0.9) and floors at 50, 60, 70, 80 and 90 % of it.
 
 /** The zones as GET /api/hr-zones holds them, parsed with the shared contract like meFixture. */

@@ -25,6 +25,16 @@ describe("draftFromZones", () => {
   });
 });
 
+describe("draftFromZones with no zones", () => {
+  it("leaves max HR and the bpm empty and starts at Garmin's default shares", () => {
+    const draft = draftFromZones(null);
+    expect(draft.maxHr).toBe("");
+    expect(percents(draft)).toEqual(["50", "60", "70", "80", "90"]);
+    expect(bpms(draft)).toEqual(["", "", "", "", ""]);
+    expect(bpms(withMaxHr(draft, "190"))).toEqual(["95", "114", "133", "152", "171"]);
+  });
+});
+
 describe("withPercent", () => {
   it("moves the zone's bpm to that share of max HR and leaves the other zones", () => {
     const draft = withPercent(garmin(), 1, "65");

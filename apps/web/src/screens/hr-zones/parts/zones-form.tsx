@@ -21,8 +21,9 @@ import {
 const ZONE_DOTS = ["bg-zone-1", "bg-zone-2", "bg-zone-3", "bg-zone-4", "bg-zone-5"] as const;
 
 type ZonesFormProps = {
-  source: Exclude<HrZonesSource, "none">;
-  zones: HrZones;
+  source: HrZonesSource;
+  /** Null before any run has a heart rate: max HR starts empty. */
+  zones: HrZones | null;
   saving: boolean;
   saveError: unknown;
   save: (zones: HrZones, onSaved: () => void) => void;
@@ -47,8 +48,8 @@ export function ZonesForm({
   resetError,
   resetToGarmin,
 }: ZonesFormProps) {
-  // The zones the draft was last taken from; null asks for the zones in use again (after a reset).
-  const [shown, setShown] = useState<HrZones | null>(zones);
+  // The zones the draft was last taken from; undefined asks for the zones in use again (after a reset).
+  const [shown, setShown] = useState<HrZones | null | undefined>(zones);
   const [draft, setDraft] = useState(() => draftFromZones(zones));
   const [invalid, setInvalid] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -127,7 +128,7 @@ export function ZonesForm({
               setSaved(false);
               resetToGarmin(() => {
                 // Garmin's zones replace what is typed, also when they equal the runner's.
-                setShown(null);
+                setShown(undefined);
                 caption.current?.focus();
               });
             }}

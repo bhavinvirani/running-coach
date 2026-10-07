@@ -43,7 +43,9 @@ describe("CoachDetailScreen", () => {
     renderCoachDetail();
 
     const group = await screen.findByRole("radiogroup", { name: "Coach detail" });
-    expect(group).toHaveAccessibleDescription("How much the coach writes after each run.");
+    expect(group).toHaveAccessibleDescription(
+      "How much the coach writes on each run and weekly review.",
+    );
     const radios = screen.getAllByRole("radio");
     expect(radios.map((radio) => radio.getAttribute("aria-checked"))).toEqual([
       "false",

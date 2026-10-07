@@ -5,7 +5,7 @@ type ListRowProps = {
   to: string;
   /** The one leading icon, decorative: the label names the row. */
   icon: LucideIcon;
-  /** Sentence case: "Heart-rate zones". */
+  /** Sentence case: "Heart rate zones". */
   label: string;
   /** What the row's screen holds now, already in words: "Kilometers", "Login expired". */
   value?: string;

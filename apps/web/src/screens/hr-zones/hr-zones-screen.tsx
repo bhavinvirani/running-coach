@@ -1,16 +1,14 @@
-import { Link } from "react-router";
 import { DetailLayout } from "@/components/detail-header";
 import { LoadError } from "@/components/load-error";
 import { RetryAlert } from "@/components/retry-alert";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { hrZonesCopy } from "./hr-zones-copy";
 import { ZonesForm } from "./parts/zones-form";
 import { useHrZonesScreen } from "./use-hr-zones";
 
 /**
- * The heart-rate zones in use at /settings/hr-zones, editable, from Settings and the run's zones card.
- * Empty until a run with heart rate is stored: zones are shares of a max HR, and there is none yet.
+ * The heart rate zones in use at /settings/hr-zones, editable, from Settings and the run's zones card.
+ * No empty state: before any run with heart rate the form starts from a max HR the runner types.
  */
 export function HrZonesScreen() {
   const screen = useHrZonesScreen();
@@ -35,20 +33,6 @@ export function HrZonesScreen() {
   const refetchFailed = screen.refetchError ? (
     <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
   ) : null;
-
-  if (data.source === "none" || data.zones === null) {
-    return (
-      <DetailLayout title={hrZonesCopy.title} backTo="/settings">
-        {refetchFailed}
-        <div className="flex flex-col items-start gap-4">
-          <p className="text-body text-ink-2">{hrZonesCopy.empty}</p>
-          <Button asChild>
-            <Link to="/">{hrZonesCopy.openToday}</Link>
-          </Button>
-        </div>
-      </DetailLayout>
-    );
-  }
 
   return (
     <DetailLayout title={hrZonesCopy.title} backTo="/settings">

@@ -1,12 +1,12 @@
 import {
-  MAX_MAX_HR,
-  MIN_MAX_HR,
+  DEFAULT_HR_ZONE_FLOOR_PERCENTS,
   bpmAtPercentOfMaxHr,
   hrZonesSchema,
   percentOfMaxHr,
   type HrZones,
 } from "@running-coach/shared";
 import { formatBpmRange } from "@/lib/format";
+import { zonesProblems } from "./hr-zones-copy";
 
 /**
  * One zone's lower bound as typed, both ways: a whole percent of max HR and whole bpm. share is its exact
@@ -42,7 +42,21 @@ function atShare(share: number, max: number): ZoneDraft {
   };
 }
 
-export function draftFromZones(zones: HrZones): ZonesDraft {
+/**
+ * The form for zones from the API; with none (no run with heart rate yet) an empty max HR and Garmin's
+ * default shares, whose bpm fill in once a max HR is typed.
+ */
+export function draftFromZones(zones: HrZones | null): ZonesDraft {
+  if (zones === null) {
+    return {
+      maxHr: "",
+      zones: DEFAULT_HR_ZONE_FLOOR_PERCENTS.map((percent) => ({
+        share: percent / 100,
+        percent: String(percent),
+        bpm: "",
+      })),
+    };
+  }
   return {
     maxHr: String(zones.maxHr),
     zones: zones.lowBpm.map((bpm) => ({
@@ -124,8 +138,7 @@ export type DraftCheck = { success: true; zones: HrZones } | { success: false; m
 
 /**
  * The zones to save, checked against the shared contract before anything is sent; otherwise the first
- * problem as one sentence. The contract's own rules (rising, below max HR) say it in their words; a field
- * that is not a whole number in range gets a sentence naming the field.
+ * problem as one sentence from hr-zones-copy.ts, named by the field or rule the contract points at.
  */
 export function checkDraft(draft: ZonesDraft): DraftCheck {
   const parsed = hrZonesSchema.safeParse({
@@ -134,7 +147,7 @@ export function checkDraft(draft: ZonesDraft): DraftCheck {
   });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
-    return { success: false, message: issue ? issueMessage(issue) : invalidMaxHr };
+    return { success: false, message: issue ? issueMessage(issue) : zonesProblems.maxHr };
   }
   // The bpm are saved, but a percent that is not whole would leave the screen showing what was not saved.
   const halfTyped = draft.zones.findIndex((zone) => Number.isNaN(parseWhole(zone.percent)));
@@ -147,14 +160,14 @@ export function checkDraft(draft: ZonesDraft): DraftCheck {
   return { success: true, zones: parsed.data };
 }
 
-const invalidMaxHr = `Max HR is a whole number from ${MIN_MAX_HR} to ${MAX_MAX_HR} bpm.`;
-
-function issueMessage(issue: { code: string; path: PropertyKey[]; message: string }): string {
-  if (issue.code === "custom")
-    return /[.!?]$/.test(issue.message) ? issue.message : `${issue.message}.`;
+/** The contract's rules by where they point, in the screen's words (hr-zones-copy.ts). */
+function issueMessage(issue: { code: string; path: PropertyKey[] }): string {
   const [field, index] = issue.path;
-  if (field === "lowBpm" && typeof index === "number") {
-    return `Zone ${index + 1} starts at a whole number of bpm.`;
+  if (field !== "lowBpm") return zonesProblems.maxHr;
+  if (issue.code === "custom") {
+    if (index === 0) return zonesProblems.zone1Floor;
+    if (index === 4) return zonesProblems.zone5BelowMax;
+    return zonesProblems.rising;
   }
-  return invalidMaxHr;
+  return typeof index === "number" ? zonesProblems.wholeBpm(index + 1) : zonesProblems.rising;
 }

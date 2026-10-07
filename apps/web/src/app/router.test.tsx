@@ -268,7 +268,7 @@ describe("app routes", () => {
     { row: "Claude, No key", title: "Claude", path: "/settings/claude" },
     { row: "Units, Kilometers", title: "Units", path: "/settings/units" },
     { row: "Coach detail, Standard", title: "Coach detail", path: "/settings/coach-detail" },
-    { row: "Heart-rate zones", title: "Heart-rate zones", path: "/settings/hr-zones" },
+    { row: "Heart rate zones", title: "Heart rate zones", path: "/settings/hr-zones" },
   ];
 
   it.each(settingsScreens)(

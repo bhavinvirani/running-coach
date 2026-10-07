@@ -80,9 +80,9 @@ describe("HrZonesScreen", () => {
     stubFetch(never);
     renderZones();
 
-    expect(screen.getByRole("heading", { level: 1, name: "Heart-rate zones" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Heart rate zones" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute("href", "/settings");
-    expect(screen.getByRole("status", { name: "Loading heart-rate zones" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading heart rate zones" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
@@ -116,20 +116,35 @@ describe("HrZonesScreen", () => {
     expect(screen.getByLabelText("Max HR")).toHaveValue("196");
   });
 
-  it("says there are no zones without a run with heart rate and offers Today, with no form (missing HR)", async () => {
-    fakeZonesApi(hrZonesResponseFixture("none"));
-    const { router } = renderZones();
+  it("starts from an empty max HR and Garmin's default shares before any run has heart rate (missing HR)", async () => {
+    const calls = fakeZonesApi(hrZonesResponseFixture("none"));
+    renderZones();
 
     expect(
       await screen.findByText(
-        "No run with heart rate yet: sync one recorded with heart rate to see your zones.",
+        "No run with heart rate yet. Type your max HR and the zones start at Garmin's default shares of it.",
       ),
-    ).toHaveClass("text-body", "text-ink-2");
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save zones" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("link", { name: "Open Today" }));
+    ).toHaveClass("text-caption", "text-ink-2");
+    expect(screen.getByLabelText("Max HR")).toHaveValue("");
+    expect(allValues(percentField)).toEqual(["50", "60", "70", "80", "90"]);
+    expect(allValues(bpmField)).toEqual(["", "", "", "", ""]);
+    expect(screen.queryByRole("button", { name: "Reset to Garmin's" })).not.toBeInTheDocument();
 
-    expect(router.state.location.pathname).toBe("/");
+    await userEvent.click(screen.getByRole("button", { name: "Save zones" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Max HR is a whole number from 100 to 240 bpm.",
+    );
+    expect(writes(calls)).toEqual([]);
+
+    await userEvent.type(screen.getByLabelText("Max HR"), "190");
+    expect(allValues(bpmField)).toEqual(["95", "114", "133", "152", "171"]);
+    await userEvent.click(screen.getByRole("button", { name: "Save zones" }));
+
+    expect(await screen.findByText(/^Your own zones\./)).toBeInTheDocument();
+    expect(calls.find((call) => call.method === "PUT")?.body).toEqual({
+      maxHr: 190,
+      lowBpm: [95, 114, 133, 152, 171],
+    });
   });
 
   it("shows Garmin's zones: max HR, then five named zones, each floor in percent and bpm and its range", async () => {
