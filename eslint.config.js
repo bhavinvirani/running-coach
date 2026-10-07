@@ -40,7 +40,9 @@ export default tseslint.config(
       "**/test-results/",
       "services/",
       "spikes/",
-      "reference/",
+      // a folder in the main checkout, a symlink to it in a worktree
+      "reference",
+      ".claude/worktrees/",
       "packages/shared/src/json-schema/",
     ],
   },

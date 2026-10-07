@@ -7,10 +7,10 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "dev": "docker compose up -d --wait postgres && (cd services/garmin && uv sync --frozen --quiet) && pnpm --parallel --filter @running-coach/api --filter @running-coach/web dev",
+    "dev": "docker compose up -d --wait --no-recreate postgres && (cd services/garmin && uv sync --frozen --quiet) && pnpm --parallel --filter @running-coach/api --filter @running-coach/web dev",
     "coach:dev": "pnpm --filter @running-coach/coach dev",
     "check": "pnpm typecheck && pnpm lint && pnpm contract:check && pnpm test && pnpm --filter @running-coach/engine test",
-    "typecheck": "pnpm -r --parallel typecheck",
+    "typecheck": "pnpm -r --parallel typecheck && tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "test": "vitest run",
@@ -23,7 +23,8 @@
     "db:migrate": "pnpm --filter @running-coach/api db:migrate",
     "seed:owner": "pnpm --filter @running-coach/api seed:owner",
     "py:check": "cd services/garmin && uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run pytest",
-    "garmin:connect": "cd services/garmin && uv run --frozen python -m garmin_service.connect_cli"
+    "garmin:connect": "cd services/garmin && uv run --frozen python -m garmin_service.connect_cli",
+    "worktree:add": "node scripts/worktree-add.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
