@@ -32,11 +32,11 @@ type WeeklyReviewProps = WeeklyReviewState & {
 };
 
 /**
- * The coach's review of the week that ended, between the latest run and the next 7 days, from its Monday
- * to its Sunday, with Open weekly reviews. While the coach writes it, or Claude failed and the job will retry,
- * it is one line; with no review to show, nothing. A failed read never hides Today: the alert and Retry
- * take the card's place, and a failed reload keeps the card with them above it. The coming week is Today's
- * Next 7 days, so the card leaves out its own preview.
+ * The coach's review of the week that ended, between the latest run and the next 7 days, from its
+ * Monday to its Sunday, with Open weekly reviews. While the coach writes it, or Claude failed and the job
+ * will retry, it is one line; with no review to show, nothing. A failed read never hides Today: the alert
+ * and Retry take the card's place, and a failed reload keeps the card with them above it. The coming week
+ * is Today's Next 7 days, so the card leaves out its own preview.
  */
 export function WeeklyReview({
   state,
