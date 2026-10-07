@@ -1,6 +1,7 @@
 import { meResponseSchema, type MeResponse } from "@running-coach/shared";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
+import { garminCopy } from "../src/screens/garmin/garmin-copy";
 import { connectGarmin, seedExpiredGarminLogin, seedLongRun } from "./fixtures/seed";
 import { garminRateLimited, garminUnavailable, isSyncPost, recordSyncPosts } from "./fixtures/sync";
 import { expect, test } from "./fixtures/login";
@@ -109,9 +110,10 @@ test("an expired Garmin login shows Reconnect Garmin instead of Sync now, which 
   await expect(figure(section, "Status")).toHaveText("Login expired");
   // The seeded cursor in the runner's default zone, UTC.
   await expect(figure(section, "Last sync")).toHaveText("Sat 26 Sep 2026, 12:00");
-  await expect(section).toContainText(
-    "To reconnect, run pnpm garmin:connect with this app's address on your laptop.",
-  );
+  await expect(section.getByText(garminCopy.reconnectIntro, { exact: true })).toBeVisible();
+  await expect(
+    section.getByRole("button", { name: garminCopy.reconnect.idle, exact: true }),
+  ).toBeVisible();
   expect(posts).toHaveLength(0);
 });
 

@@ -1,6 +1,7 @@
 import { ErrorCode, meResponseSchema, type Problem } from "@running-coach/shared";
 import type { Locator, Page, Response } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
+import { garminCopy } from "../src/screens/garmin/garmin-copy";
 import { seedExpiredGarminLogin } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
@@ -73,7 +74,11 @@ test("each row opens its own screen inside the Settings tab, and Back returns to
       row: "Garmin, Not connected",
       title: "Garmin",
       path: "/settings/garmin",
-      shows: () => expect(card(page, "Garmin")).toContainText("Not connected."),
+      // Not connected is the form that connects.
+      shows: () =>
+        expect(
+          card(page, "Garmin").getByRole("button", { name: garminCopy.connect.idle, exact: true }),
+        ).toBeVisible(),
     },
     {
       row: "Claude, No key",
@@ -186,7 +191,7 @@ test("a unit that does not save says so and goes back to Kilometers", async ({ p
   expect((await getSettings(page)).units).toBe("km");
 });
 
-test("an expired Garmin login shows on its row, and its screen says how to reconnect", async ({
+test("an expired Garmin login shows on its row, and its screen offers to reconnect", async ({
   page,
 }) => {
   await seedExpiredGarminLogin();
@@ -194,9 +199,11 @@ test("an expired Garmin login shows on its row, and its screen says how to recon
 
   await page.getByRole("link", { name: "Garmin, Login expired" }).click();
   await expect(heading(page, "Garmin")).toBeVisible();
-  await expect(card(page, "Garmin")).toContainText(
-    "To reconnect, run pnpm garmin:connect with this app's address on your laptop.",
-  );
+  const garmin = card(page, "Garmin");
+  await expect(garmin.getByText(garminCopy.reconnectIntro, { exact: true })).toBeVisible();
+  await expect(
+    garmin.getByRole("button", { name: garminCopy.reconnect.idle, exact: true }),
+  ).toBeVisible();
 });
 
 test("says what failed and recovers with Retry when settings do not load", async ({
