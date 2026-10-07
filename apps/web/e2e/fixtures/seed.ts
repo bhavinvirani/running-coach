@@ -226,6 +226,9 @@ export async function resetRunner(request: APIRequestContext): Promise<MeRespons
     await db.query(`update user_settings set claude_key_enc = null where user_id = ${runnerId}`, [
       runner.email,
     ]);
+    await db.query(`update user_settings set hr_zones = null where user_id = ${runnerId}`, [
+      runner.email,
+    ]);
     await clearBestEffortsBatches(db);
   });
   const response = await request.patch("/api/me/settings", { data: defaultSettings });

@@ -86,7 +86,7 @@ test("opening the app syncs without a tap, a tap meanwhile starts no second sync
   expect(posts).toHaveLength(1);
 });
 
-test("an expired Garmin login shows Reconnect Garmin instead of Sync now, which opens Settings, and opening the app does not sync", async ({
+test("an expired Garmin login shows Reconnect Garmin instead of Sync now, which opens the Garmin screen, and opening the app does not sync", async ({
   page,
 }) => {
   await seedExpiredGarminLogin();
@@ -103,8 +103,8 @@ test("an expired Garmin login shows Reconnect Garmin instead of Sync now, which 
   expect(posts).toHaveLength(0);
 
   await reconnect.click();
-  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole("heading", { name: "Garmin", level: 1 })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/garmin$/);
   const section = page.getByRole("region", { name: "Garmin" });
   await expect(figure(section, "Status")).toHaveText("Login expired");
   // The seeded cursor in the runner's default zone, UTC.
