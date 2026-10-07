@@ -18,9 +18,10 @@ import { e2eSlot, firstBusyPort } from "./e2e/fixtures/slot";
 // the database, so worktrees run e2e side by side.
 
 // A second run in this folder, or servers a killed run left behind, would hold the slot's ports: stop here,
-// before Playwright clears test-results/ under a running suite. Only the runner checks; each worker loads
-// this file too, while its own run holds the ports. Nothing is ever killed.
-if (process.env.TEST_WORKER_INDEX === undefined) {
+// before Playwright clears test-results/ under a running suite. Only the runner checks, once: the workers
+// and loader processes it starts (UI mode, watch mode, the VS Code extension) load this file again while
+// its own servers hold the ports, and inherit the marker. Nothing is ever killed.
+if (process.env.E2E_PORTS_CHECKED === undefined) {
   const busy = await firstBusyPort(e2eSlot);
   if (busy !== undefined) {
     throw new Error(
@@ -28,6 +29,7 @@ if (process.env.TEST_WORKER_INDEX === undefined) {
         `killed run left behind (lsof -nP -iTCP:${busy} -sTCP:LISTEN names them). Wait for it, or stop them.`,
     );
   }
+  process.env.E2E_PORTS_CHECKED = String(process.pid);
 }
 
 const PORT = e2eSlot.webPort;
