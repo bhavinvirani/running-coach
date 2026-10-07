@@ -6,8 +6,13 @@ CLAUDE.local.md
 
 # Personal data (never commit)
 KICKOFF.md
-reference/
+# no trailing slash: in a worktree it is a symlink to the main folder's, which `reference/` would not match
+reference
 .garminconnect/
+
+# Claude Code's own worktrees, and the e2e slot (ports and database) pnpm worktree:add gives a folder
+.claude/worktrees/
+.e2e-slot
 
 # Throwaway code
 spikes/
