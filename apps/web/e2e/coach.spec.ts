@@ -25,9 +25,10 @@ import { expect, test } from "./fixtures/login";
 
 // The coach against the fakes playwright.config.ts starts: on a key, the fake Claude, where a key
 // "test-<fixture>.<nonce>" picks the fixture it answers with (apps/api/test/fixtures/claude); on the owner's
-// Claude plan, the coach service over the fake Claude Code CLI, which answers every run with one card. The
-// runner is the owner and the coach service is set up, so Settings always offers the plan, and every test
-// starts on a key. No test connects Garmin, so no app-open sync runs.
+// Claude plan, the coach service over the fake Claude Code CLI, where the prompt's schema picks the output
+// fixture it answers with (apps/coach/test/fixtures). The runner is the owner and the coach service is set
+// up, so Settings always offers the plan, and every test starts on a key. No test connects Garmin, so no
+// app-open sync runs.
 
 /**
  * The card the fake Claude's "valid" fixture writes (apps/api/test/fixtures/claude/valid.json), as the
@@ -43,8 +44,8 @@ const validCard = {
 } as const;
 
 /**
- * The card the fake Claude Code CLI writes on the plan (CARD in apps/coach/test/fake-claude-code.mjs), as
- * the run screen shows it. Its caution is none, so no caution line.
+ * The card the fake Claude Code CLI writes on the plan (apps/coach/test/fixtures/run-insight.json), as the
+ * run screen shows it. Its caution is none, so no caution line.
  */
 const planCard = {
   headline: "Easy 8.0 km at 5:30 per km, heart rate 146 bpm",
