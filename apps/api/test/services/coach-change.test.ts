@@ -11,16 +11,14 @@ import {
 } from "../../src/services/coach-change";
 import { endPause } from "../../src/services/pause";
 import {
-  createAdjustment,
-  createPause,
   createPlan,
   createRunOn,
   createSession,
   createUser,
-  storedAdjustments,
   storedSession,
   TEMPO_STEPS,
 } from "../seed";
+import { createAdjustment, createPause, storedAdjustments } from "../seed-adaptation";
 
 // The coach's change to the plan after a run (slice 9), on the real Postgres: the target asked for before
 // the Claude call, the change applied in the caller's transaction, and the cards' mapping. Today is

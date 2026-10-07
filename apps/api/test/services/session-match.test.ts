@@ -10,9 +10,7 @@ import { syncGarmin } from "../../src/services/garmin-sync";
 import { matchPlanSessions } from "../../src/services/session-match";
 import {
   connectGarmin,
-  createPause,
   createPlan,
-  createRunAt,
   createRunOn,
   createSession,
   createUser,
@@ -21,6 +19,7 @@ import {
   setSettings,
   storedSession,
 } from "../seed";
+import { createPause, createRunAt } from "../seed-adaptation";
 
 // Run matching on the real Postgres (SPEC: Plan engine, slice 9): the service directly with a pinned
 // instant, and through a sync against the Garmin service in fixture mode, whose seven runs lie between

@@ -13,8 +13,8 @@ import {
   insightCardFixture,
   insightReadyFixture,
   meFixture,
-  planChangeFixture,
 } from "@/test/fixtures";
+import { planChangeFixture } from "@/test/fixtures-adaptation";
 import { holdPolls } from "@/test/held-polls";
 import { renderScreen } from "@/test/render";
 import { RunScreen } from "../run-screen";

@@ -13,20 +13,22 @@ import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import {
   activityFixture,
-  coachEasySessionFixture,
-  coachRestSessionFixture,
   customSessionFixture,
-  doneSessionFixture,
-  easedSessionFixture,
   garminPushStatusFixture,
   meFixture,
+  planSessionFixture,
+  sessionDetailFixture,
+} from "@/test/fixtures";
+import {
+  coachEasySessionFixture,
+  coachRestSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
   missedSessionFixture,
   pauseSkippedSessionFixture,
   pausedSessionFixture,
-  planSessionFixture,
-  sessionDetailFixture,
   walkRunSessionFixture,
-} from "@/test/fixtures";
+} from "@/test/fixtures-adaptation";
 import { renderScreen } from "@/test/render";
 import { SessionScreen } from "./session-screen";
 

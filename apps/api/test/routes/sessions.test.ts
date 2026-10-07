@@ -22,7 +22,6 @@ import { desiredWorkout } from "../../src/services/workout-push-plan";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import {
   connectGarmin,
-  createPause,
   createPlan,
   createSession,
   createUser,
@@ -33,6 +32,7 @@ import {
   storedSession,
   TEMPO_STEPS,
 } from "../seed";
+import { createPause } from "../seed-adaptation";
 
 // /api/sessions on the real Postgres. pg-boss runs without workers, so a push a change queues stays
 // queued. Sessions are dated in January 2030, today or later whatever day the tests run, and in 2020 for

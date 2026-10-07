@@ -14,9 +14,7 @@ import { endPause } from "../../src/services/pause";
 import { gapReEntry } from "../../src/services/re-entry";
 import {
   connectGarmin,
-  createPause,
   createPlan,
-  createRunAt,
   createRunOn,
   createSession,
   createUser,
@@ -25,9 +23,9 @@ import {
   PLAN_INPUTS,
   seedImport,
   setSettings,
-  storedAdjustments,
   storedSession,
 } from "../seed";
+import { createPause, createRunAt, storedAdjustments } from "../seed-adaptation";
 
 // The re-entry after a gap without runs (SPEC: Plan engine, slice 9), through a sync on the real Postgres.
 // The Garmin service runs in fixture mode, and its answers are replaced with the runs a test names. Today

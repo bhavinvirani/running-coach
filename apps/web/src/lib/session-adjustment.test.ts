@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { planSessionFixture } from "@/test/fixtures";
 import {
   coachEasySessionFixture,
   coachRestSessionFixture,
   easedSessionFixture,
   pauseSkippedSessionFixture,
   planChangeFixture,
-  planSessionFixture,
   walkRunSessionFixture,
-} from "@/test/fixtures";
+} from "@/test/fixtures-adaptation";
 import { adjustmentLine, isRestChange, planChangeLine, snapshotAmount } from "./session-adjustment";
 
 describe("adjustmentLine", () => {

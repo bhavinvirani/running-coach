@@ -26,12 +26,7 @@ import {
   activityFixture,
   activityResponseFixture,
   calendarFixture,
-  coachEasySessionFixture,
-  coachRestSessionFixture,
   customSessionFixture,
-  doneSessionFixture,
-  easedSessionFixture,
-  endPauseResponseFixture,
   fallbackCardFixture,
   garminPushStatusFixture,
   goalFixture,
@@ -39,12 +34,8 @@ import {
   insightCardFixture,
   insightReadyFixture,
   meFixture,
-  missedSessionFixture,
-  pauseResponseFixture,
-  pausedSessionFixture,
   personalBestFixture,
   personalBestsFixture,
-  planChangeFixture,
   planFixture,
   planResponseFixture,
   runBestEffortFixture,
@@ -52,6 +43,17 @@ import {
   signInFixture,
   weekFixture,
 } from "@/test/fixtures";
+import {
+  coachEasySessionFixture,
+  coachRestSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
+  endPauseResponseFixture,
+  missedSessionFixture,
+  pauseResponseFixture,
+  pausedSessionFixture,
+  planChangeFixture,
+} from "@/test/fixtures-adaptation";
 import { parseResponse } from "./parse-response";
 
 type Json = Record<PropertyKey, unknown>;

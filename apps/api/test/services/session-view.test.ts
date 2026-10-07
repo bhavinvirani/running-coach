@@ -9,15 +9,8 @@ import { pool } from "../../src/db/client";
 import { startBoss, stopBoss } from "../../src/jobs/boss";
 import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { createTestApp, ownerId, signedInAgent } from "../helpers";
-import {
-  adjustedSession,
-  createAdjustment,
-  createPause,
-  createPlan,
-  createRunOn,
-  createSession,
-  TEMPO_STEPS,
-} from "../seed";
+import { createPlan, createRunOn, createSession, TEMPO_STEPS } from "../seed";
+import { adjustedSession, createAdjustment, createPause } from "../seed-adaptation";
 
 // What every session response carries from slice 9's adaptation, through the three readers (GET /api/plan,
 // /api/calendar, /api/sessions/:id) on the real Postgres: its latest change from plan_adjustment, and

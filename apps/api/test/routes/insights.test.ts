@@ -12,15 +12,14 @@ import { getInsight } from "../../src/services/insights";
 import { configureCoachService, FAKE_COACH_SECRET, VALID_CARD } from "../fake-coach-service";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import {
-  adjustedSession,
   claudeKey,
-  createAdjustment,
   createLongRun,
   createPlan,
   createSession,
   createUser,
   setSettings,
 } from "../seed";
+import { adjustedSession, createAdjustment } from "../seed-adaptation";
 
 // The run screen's coach card. pg-boss runs without workers, so a queued analyze-run job stays queued;
 // the job itself is tested in test/jobs/analyze-run.test.ts.

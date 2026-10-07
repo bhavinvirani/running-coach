@@ -7,21 +7,23 @@ import { planKey } from "@/api/plan";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import {
-  coachEasySessionFixture,
-  coachRestSessionFixture,
   customSessionFixture,
-  doneSessionFixture,
-  easedSessionFixture,
   meFixture,
-  missedSessionFixture,
-  pauseSkippedSessionFixture,
-  pausedSessionFixture,
   planFixture,
   planResponseFixture,
   planSessionId,
+} from "@/test/fixtures";
+import {
+  coachEasySessionFixture,
+  coachRestSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
+  missedSessionFixture,
+  pauseSkippedSessionFixture,
+  pausedSessionFixture,
   trainingPauseFixture,
   walkRunSessionFixture,
-} from "@/test/fixtures";
+} from "@/test/fixtures-adaptation";
 import { renderScreen } from "@/test/render";
 import { PlanWeekScreen } from "./plan-week-screen";
 

@@ -24,9 +24,9 @@ import {
   connectGarmin,
   runnerToday,
   seedPlanSessions,
-  seedRunOn,
   seedSessionsOnGarmin,
 } from "./fixtures/seed";
+import { seedRunOn } from "./fixtures/seed-adaptation";
 import { skipSyncOnOpen } from "./fixtures/sync";
 
 // Every flow here runs on the real clock: the API pauses from the server's own today, so the sessions are

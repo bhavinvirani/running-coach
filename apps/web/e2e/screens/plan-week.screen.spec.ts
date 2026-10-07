@@ -1,7 +1,8 @@
 import { planWeekCopy } from "../../src/screens/plan-week/plan-week-copy";
 import { expect, test } from "../fixtures/login";
 import { fitViewportToPage } from "../fixtures/screens";
-import { planWeekThreeAt, planWeekTwoAt, seedAdjustedPlan, seedPlan } from "../fixtures/seed";
+import { planWeekTwoAt, seedPlan } from "../fixtures/seed";
+import { planWeekThreeAt, seedAdjustedPlan } from "../fixtures/seed-adaptation";
 
 test("plan week shows week 2 of the seeded plan, Monday to Sunday", async ({ page }) => {
   await seedPlan();

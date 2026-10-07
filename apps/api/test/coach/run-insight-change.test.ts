@@ -13,16 +13,15 @@ import {
   claudeKey,
   claudeRequests,
   connectGarmin,
-  createPause,
   createPlan,
   createRunOn,
   createSession,
   createUser,
   setSettings,
-  storedAdjustments,
   storedSession,
   TEMPO_STEPS,
 } from "../seed";
+import { createPause, storedAdjustments } from "../seed-adaptation";
 
 // run-insight v2 on the key path against the fake Claude: the change the coach proposes for the next
 // session goes to the engine in the card's own transaction, and the card shows it as applied. Today is

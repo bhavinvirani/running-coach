@@ -23,9 +23,9 @@ import {
   createSession,
   createUser,
   setSettings,
-  storedAdjustments,
   storedSession,
 } from "../seed";
+import { storedAdjustments } from "../seed-adaptation";
 
 // analyzeRun, the analyze-run job's work, on the owner's Claude plan through a fake coach service. The
 // key path is in run-insight.test.ts; the job's deferral and retries in test/jobs/analyze-run.test.ts.

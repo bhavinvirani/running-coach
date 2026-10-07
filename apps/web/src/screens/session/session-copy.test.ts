@@ -1,6 +1,6 @@
 import type { SessionStatus } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
-import { coachRestSessionFixture, pauseSkippedSessionFixture } from "@/test/fixtures";
+import { coachRestSessionFixture, pauseSkippedSessionFixture } from "@/test/fixtures-adaptation";
 import { moveWarningSentence, repeatLabel, statusWord } from "./session-copy";
 
 describe("moveWarningSentence", () => {

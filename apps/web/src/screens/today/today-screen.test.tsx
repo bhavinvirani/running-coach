@@ -22,21 +22,23 @@ import { json, never, notFound, problem, stubFetch, type FakeRequest } from "@/t
 import {
   activityFixture,
   calendarFixture,
-  coachEasySessionFixture,
-  coachRestSessionFixture,
   customSessionFixture,
-  doneSessionFixture,
-  easedSessionFixture,
-  endPauseResponseFixture,
   garminPushStatusFixture,
   meFixture,
-  pauseSkippedSessionFixture,
-  pausedSessionFixture,
   personalBestFixture,
   personalBestsFixture,
   planSessionId,
-  trainingPauseFixture,
 } from "@/test/fixtures";
+import {
+  coachEasySessionFixture,
+  coachRestSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
+  endPauseResponseFixture,
+  pauseSkippedSessionFixture,
+  pausedSessionFixture,
+  trainingPauseFixture,
+} from "@/test/fixtures-adaptation";
 import { renderScreen } from "@/test/render";
 import { TodayScreen } from "./today-screen";
 

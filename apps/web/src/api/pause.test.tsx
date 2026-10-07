@@ -4,14 +4,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { json, notFound, problem, stubFetch } from "@/test/fake-api";
+import { calendarFixture, planResponseFixture, sessionDetailFixture } from "@/test/fixtures";
 import {
-  calendarFixture,
   endPauseResponseFixture,
   pauseResponseFixture,
-  planResponseFixture,
-  sessionDetailFixture,
   trainingPauseFixture,
-} from "@/test/fixtures";
+} from "@/test/fixtures-adaptation";
 import { testQueryClient } from "@/test/render";
 import { calendarKey } from "./calendar";
 import { pauseKey, useEndPause, usePause, useStartPause } from "./pause";

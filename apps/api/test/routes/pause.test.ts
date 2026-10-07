@@ -16,17 +16,16 @@ import { gapReEntry } from "../../src/services/re-entry";
 import { browserAgent, createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import {
   connectGarmin,
-  createPause,
   createPlan,
   createRunOn,
   createSession,
   createUser,
   PLAN_INPUTS,
   setSettings,
-  storedAdjustments,
   storedSession,
   TEMPO_STEPS,
 } from "../seed";
+import { createPause, storedAdjustments } from "../seed-adaptation";
 
 // /api/pause on the real Postgres ("Not feeling 100%", slice 9). Routes run on a pinned clock (Date only,
 // timers run) where "today" matters; "I'm back" and its re-entry are tested through the service with a
