@@ -28,10 +28,10 @@
     }
   },
   "output": {
-    "headline": "10.2 km in 55:00 at 5:24 /km, with heart rate averaging 178 bpm and peaking at 204 bpm.",
-    "whatHappened": "A Sunday morning run of 10.2 km at 5:24 /km with 40 m of climbing and a cadence of 176. Average heart rate was 178 bpm and the maximum was 204 bpm.",
-    "whatItMeans": "An average of 178 bpm is high for a steady 5:24 /km on mostly flat ground. A peak of 204 bpm is far above the rest of the run. That could be a sensor error or a sign of strain, and the numbers alone cannot tell which.",
-    "nextStep": "Rest for a day or two, then run easy and short only if you feel well. If heart rate stays high at easy paces, or you notice dizziness, chest discomfort or unusual tiredness, see a doctor. This is not medical advice.",
+    "headline": "10.2 km at 5:24 /km, heart rate averaging 178 bpm and peaking at 204 bpm.",
+    "whatHappened": "An outdoor 10.2 km in 55:00 at 5:24 /km, 3 days after your last run. Average heart rate was 178 bpm, max 204 bpm, with 40 m of climbing.",
+    "whatItMeans": "178 bpm is a hard average for this run, and a 204 bpm peak sits well above the rest of it. That can be a watch reading error, but it is worth checking.",
+    "nextStep": "Rest for the next day or two, then go for a short, easy run only if you feel well. If high readings come back or you feel dizzy, short of breath or unwell, see a doctor.",
     "caution": "rest_and_check",
     "adjustment": {
       "kind": "none",

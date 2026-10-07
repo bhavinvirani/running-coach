@@ -45,10 +45,10 @@
     }
   },
   "output": {
-    "headline": "Long run of 8.7 mi in 1:17:00 at 8:51 /mi, 0.3 mi short of the planned 9.0 mi.",
-    "whatHappened": "A Sunday morning long run of 8.7 mi in 1:17:00 against a planned 9.0 mi in 1:21:00. Average pace was 8:51 /mi, a little quicker than the 9:00 /mi the plan implies. Heart rate averaged 146 bpm with a max of 160 bpm, over 289 ft of climbing at a cadence of 167.",
-    "whatItMeans": "A 146 bpm average with a peak only 14 bpm higher points to an even, controlled effort for a long run. Running 9 s/mi faster than planned while climbing 289 ft added a bit of load, even though the distance came in slightly short. The numbers fit a steady aerobic long run.",
-    "nextStep": "Keep Monday easy or rest. Run Tuesday 22 September's hill repeats as written: 6.0 mi in 55:00. Don't add back the missing 0.3 mi.",
+    "headline": "Long run of 8.7 mi at 8:51 /mi, heart rate averaging 146 bpm.",
+    "whatHappened": "You ran the planned long run on Sunday 20 September: 8.7 mi in 1:17:00 against a planned 9.0 mi in 1:21:00. Average pace was 8:51 /mi, two days after your last run. Heart rate averaged 146 bpm with a max of 160 bpm, over 289 ft of climbing at 167 steps per minute.",
+    "whatItMeans": "Distance and time came in just under the plan, 0.3 mi and about 4 minutes short. A 146 bpm average and a 160 bpm max point to a steady, controlled effort for this pace and climb. Nothing in the numbers suggests strain.",
+    "nextStep": "Keep Monday easy or take it off so you recover from the long run. Then run Tuesday's hill repeats as written: 6.0 mi in 55:00.",
     "caution": "easy_next",
     "adjustment": {
       "kind": "none",

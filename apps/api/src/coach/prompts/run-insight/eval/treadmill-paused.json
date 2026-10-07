@@ -40,10 +40,10 @@
     }
   },
   "output": {
-    "headline": "8.0 km on the treadmill in 45:00, the day after your training break began.",
-    "whatHappened": "You ran 8.0 km on the treadmill in 45:00 at about 5:38 /km with a cadence of 172, while training is paused for a break.",
-    "whatItMeans": "With no heart rate recorded and distance from the watch's estimate, the effort is unknown.",
-    "nextStep": "Keep any run easy and short until you tap I'm back on Today; the plan holds Saturday's tempo until then.",
+    "headline": "8.0 km on the treadmill in 45:00 during your training break.",
+    "whatHappened": "An 8.0 km treadmill run in 45:00 at an estimated 5:38 /km, 3 days after your last run, on a day with nothing planned.",
+    "whatItMeans": "No heart rate was recorded and the treadmill distance is an estimate, so this run says little about effort.",
+    "nextStep": "Your plan is on hold during the break, so rest or run easy only when you feel well, then tap I'm back on Today.",
     "caution": "none",
     "adjustment": {
       "kind": "none",
