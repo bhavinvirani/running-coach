@@ -12,6 +12,7 @@ import { trainingPause } from "../../src/db/schema";
 import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
 import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { endPause, startPause } from "../../src/services/pause";
+import { gapReEntry } from "../../src/services/re-entry";
 import { browserAgent, createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import {
   connectGarmin,
@@ -409,6 +410,78 @@ describe("POST /api/pause/end", () => {
     const [row] = await storedAdjustments(userId);
     expect(row?.requested).toEqual({ factor: 0.5, walkRun: false, daysOff: 15 });
     expect((row?.applied as { factor: number }).factor).toBeCloseTo(0.5 / 0.7, 10);
+  });
+
+  it("ends the pause and eases by the full re-entry when a runner without any run saved a goal during it: a baseline without runs carries nothing (regenerating a plan)", async () => {
+    clockAt(NOW);
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const pause = await createPause(userId, {
+      startedOn: "2026-09-30",
+      reason: "break",
+      createdAt: new Date("2026-09-30T08:00:00Z"),
+    });
+    // The goal saved on day 12 of the pause with no run stored: week 1, this week, starts at its floor.
+    const active = await createPlan(userId, {
+      createdAt: new Date("2026-10-12T09:00:00Z"),
+      startDate: "2026-10-12",
+      inputs: {
+        ...PLAN_INPUTS,
+        baseline: { weeklyVolumesM: [0, 0, 0, 0], longestRunM: 0, daysSinceLastRun: null },
+      },
+    });
+    const today = await createSession(userId, active.id, { date: TODAY });
+
+    const response = await agent.post("/api/pause/end");
+
+    expect(response.status).toBe(200);
+    expect(endPauseResponseSchema.parse(response.body)).toEqual({
+      pause: null,
+      reEntry: { daysOff: 14, factor: 0.5, walkRun: false, fromDate: TODAY, sessionsChanged: 1 },
+    });
+    expect((await storedSession(today.id)).target.distanceM).toBe(PLANNED_M * 0.5);
+    expect(await storedPauses(userId)).toEqual([
+      expect.objectContaining({ id: pause.id, endedOn: TODAY }),
+    ]);
+  });
+
+  it("counts only the days since a run the gap re-entry eased that morning: paused the same day, I'm back 3 days later answers factor 1, walk-run only after sick (illness or injury pause, no double re-entry)", async () => {
+    const userId = await createUser();
+    await createRunOn(userId, "2026-10-01");
+    const active = await createPlan(userId, { createdAt: new Date("2026-09-01T00:00:00Z") });
+    const today = await createSession(userId, active.id, { date: TODAY });
+    const friday = await createSession(userId, active.id, { date: FRIDAY });
+    // Saturday 10 October: the run at 08:00 ends 9 days off, and the app-open sync eases the plan to 0.7.
+    await createRunOn(userId, "2026-10-10");
+    expect(await gapReEntry(userId, new Date("2026-10-10T09:00:00Z"))).toMatchObject({
+      factor: 0.7,
+      daysOff: 9,
+    });
+    // That afternoon the runner feels ill and pauses.
+    const pause = await createPause(userId, { startedOn: "2026-10-10", reason: "sick" });
+
+    const { reEntry } = await endPause(userId, new Date("2026-10-13T10:00:00Z"));
+
+    expect(reEntry).toEqual({
+      daysOff: 3,
+      factor: 1,
+      walkRun: true,
+      fromDate: "2026-10-13",
+      sessionsChanged: 2,
+    });
+    for (const session of [today, friday]) {
+      expect((await storedSession(session.id)).title).toBe(WALK_RUN_TITLE);
+    }
+    const rows = (await storedAdjustments(userId)).filter((row) => row.source === "pause");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        pauseId: pause.id,
+        kind: "re_entry",
+        requested: { factor: 1, walkRun: true, daysOff: 3 },
+        applied: { factor: 1, walkRun: true, daysOff: 3 },
+      });
+    }
   });
 
   it("eases a plan built from a 0.5 baseline once its first week is past: a return 7 weeks later runs at 0.5, never skipped (no double re-entry)", async () => {

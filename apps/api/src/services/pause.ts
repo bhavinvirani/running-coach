@@ -156,7 +156,9 @@ function longestStretch(
 /**
  * The break "I'm back" ends: the longest stretch without a run from the last run before the pause's start
  * (the start itself without one) through today, counting the runs from the start on, so a run synced
- * during the pause neither hides the days before it nor stretches the days after it.
+ * during the pause neither hides the days before it nor stretches the days after it. A run from the start
+ * on that the gap re-entry eased (a sync the morning of the pause) ended the break before it, which is not
+ * eased twice: the stretch then starts at the latest such run and counts only the runs after it.
  */
 async function breakBefore(
   tx: DbTransaction,
@@ -164,7 +166,7 @@ async function breakBefore(
   pause: TrainingPauseRow,
   today: string,
 ): Promise<{ daysOff: number; from: BreakMark }> {
-  const runColumns = { startedAt: activity.startUtc, date: runDate };
+  const runColumns = { id: activity.id, startedAt: activity.startUtc, date: runDate };
   const [before] = await tx
     .select(runColumns)
     .from(activity)
@@ -176,6 +178,28 @@ async function breakBefore(
     .from(activity)
     .where(and(eq(activity.userId, userId), runDateWithin(pause.startedOn, today)))
     .orderBy(asc(activity.startLocal), asc(activity.id));
+  // The run before the start already starts the stretch, so only the runs from the start on matter.
+  const gapEased =
+    during.length === 0
+      ? []
+      : await tx
+          .selectDistinct({ activityId: planAdjustment.activityId })
+          .from(planAdjustment)
+          .where(
+            and(
+              eq(planAdjustment.userId, userId),
+              eq(planAdjustment.source, "gap"),
+              inArray(
+                planAdjustment.activityId,
+                during.map((run) => run.id),
+              ),
+            ),
+          );
+  const eased = new Set(gapEased.map((row) => row.activityId));
+  const lastEased = during.findLastIndex((run) => eased.has(run.id));
+  if (lastEased >= 0) {
+    return longestStretch(during[lastEased]!, during.slice(lastEased + 1), today);
+  }
   return longestStretch(
     before ?? { date: pause.startedOn, startedAt: pause.createdAt },
     during,

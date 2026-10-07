@@ -38,7 +38,8 @@ export const GAP_RE_ENTRY_WINDOW_DAYS = 7;
  * The share of volume the active plan already eases this return by, for reEntryPlan's carriedFactor: the
  * re-entry factor of its baseline when it was built during the break (after `breakStart`, the run or the
  * pause that began it) and the return falls in or before its first week, which carries that easing; else
- * 1. A plan built before the break, or a return after its first week, carries nothing.
+ * 1. A plan built before the break, or a return after its first week, carries nothing, and neither does a
+ * baseline without runs (factor 0): its plan starts at the distance's floor, not at an eased share.
  */
 export function carriedFactor(
   active: Pick<PlanRow, "createdAt" | "inputs" | "startDate">,
@@ -47,7 +48,9 @@ export function carriedFactor(
 ): number {
   const builtDuringBreak = active.createdAt > breakStart;
   const inFirstWeek = daysBetween(active.startDate, returnDate) < PLAN_FIRST_WEEK_DAYS;
-  return builtDuringBreak && inFirstWeek ? baselineReEntryFactor(active.inputs.baseline) : 1;
+  if (!builtDuringBreak || !inFirstWeek) return 1;
+  const carried = baselineReEntryFactor(active.inputs.baseline);
+  return carried > 0 ? carried : 1;
 }
 
 export interface WriteReEntryInput {
@@ -158,7 +161,7 @@ export async function writeReEntry(
   return { factor: result.factor, sessionsChanged };
 }
 
-type RunMark = { id: string; startUtc: Date; date: string };
+type RunMark = { id: string; startUtc: Date; date: string; storedAt: Date };
 
 /**
  * The newest run R of the last GAP_RE_ENTRY_WINDOW_DAYS local dates, today included, that ends 7 or more
@@ -170,7 +173,12 @@ async function newestGapEnd(
   userId: string,
   today: string,
 ): Promise<{ run: RunMark; previous: RunMark } | null> {
-  const runColumns = { id: activity.id, startUtc: activity.startUtc, date: runDate };
+  const runColumns = {
+    id: activity.id,
+    startUtc: activity.startUtc,
+    date: runDate,
+    storedAt: activity.createdAt,
+  };
   const newestFirst = [desc(activity.startUtc), desc(activity.id)];
   const candidates = await tx
     .select(runColumns)
@@ -203,11 +211,12 @@ async function newestGapEnd(
  * Nothing when the plan was already eased for this break (a gap row created since P started, also when
  * an older run of the comeback is uploaded late, but not one for a run before P), during an open pause
  * ("I'm back" will measure the break), when a pause that held R's date ended on or after it ("I'm back"
- * counted R), or without an active plan. A pause that ended after P's date and before R's starts the
- * break at its ended_on instead, which must still leave 7 days. A plan built during the break eases by
- * what its first week does not carry yet (carriedFactor). The return starts the day after R, or today
- * when that is later; the rows are keyed on R. Only syncs call it: the history import ends no break
- * today. Returns what it applied, null when it eased nothing.
+ * counted R), when a pause that started after P's date ended on or after R's before R was stored ("I'm
+ * back" measured across R's date, which was uploaded late), or without an active plan. A pause that ended
+ * after P's date and before R's starts the break at its ended_on instead, which must still leave 7 days.
+ * A plan built during the break eases by what its first week does not carry yet (carriedFactor). The
+ * return starts the day after R, or today when that is later; the rows are keyed on R. Only syncs call
+ * it: the history import ends no break today. Returns what it applied, null when it eased nothing.
  */
 export async function gapReEntry(
   userId: string,
@@ -239,14 +248,22 @@ export async function gapReEntry(
       .limit(1);
     if (eased) return null;
 
+    // "I'm back" counted R's date when its pause held it, or when the pause started after P's date and
+    // was ended before R was stored (a late upload): it measured from P across R's date without R.
     const [countedRun] = await tx
       .select({ id: trainingPause.id })
       .from(trainingPause)
       .where(
         and(
           eq(trainingPause.userId, userId),
-          lte(trainingPause.startedOn, run.date),
           gte(trainingPause.endedOn, run.date),
+          or(
+            lte(trainingPause.startedOn, run.date),
+            and(
+              gt(trainingPause.startedOn, previous.date),
+              lt(trainingPause.updatedAt, run.storedAt),
+            ),
+          ),
         ),
       )
       .limit(1);

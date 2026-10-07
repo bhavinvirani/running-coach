@@ -10,6 +10,7 @@ import * as pushQueue from "../../src/jobs/push-workouts-queue";
 import { addDays } from "../../src/lib/local-date";
 import { syncGarmin } from "../../src/services/garmin-sync";
 import { importHistoryPage } from "../../src/services/history-import";
+import { endPause } from "../../src/services/pause";
 import { gapReEntry } from "../../src/services/re-entry";
 import {
   connectGarmin,
@@ -90,19 +91,22 @@ function garminLists(runs: GarminActivitySummary[]) {
 }
 
 /**
- * A Berlin runner with a working Garmin login last synced on Monday, P stored `gap` days before R, and a
- * plan made before P (unless `plan` says otherwise) with an easy 8 km on Thursday and Saturday.
+ * A Berlin runner with a working Garmin login last synced on Monday (unless `lastSyncAt` says otherwise), P
+ * stored `gap` days before R, and a plan made before P (unless `plan` says otherwise) with an easy 8 km on
+ * Thursday and Saturday.
  */
 async function runner({
   gap,
   plan = {},
+  lastSyncAt = new Date("2026-10-12T18:00:00Z"),
 }: {
   gap: number;
   plan?: Parameters<typeof createPlan>[1];
+  lastSyncAt?: Date;
 }) {
   const userId = await createUser();
   await setSettings(userId, { timezone: "Europe/Berlin" });
-  await connectGarmin(userId, garminBundle(), { lastSyncAt: new Date("2026-10-12T18:00:00Z") });
+  await connectGarmin(userId, garminBundle(), { lastSyncAt });
   const previous = await createRunAt(
     userId,
     `${addDays(R_DATE, -gap)} 08:00:00`,
@@ -279,6 +283,36 @@ describe("gap re-entry after a sync", () => {
     expect((rows[0]?.applied as { factor: number }).factor).toBeCloseTo(0.5 / 0.7, 10);
   });
 
+  it("eases a plan saved before the first sync by the full re-entry when that sync stores two runs 9 days apart: a baseline without runs carries nothing (regenerating a plan, partial sync)", async () => {
+    const userId = await createUser();
+    await setSettings(userId, { timezone: "Europe/Berlin" });
+    await connectGarmin(userId, garminBundle());
+    // The goal saved before any run was stored: week 1, this week, starts at the distance's floor.
+    const active = await createPlan(userId, {
+      createdAt: new Date("2026-10-11T12:00:00Z"),
+      startDate: "2026-10-12",
+      inputs: {
+        ...PLAN_INPUTS,
+        baseline: { weeklyVolumesM: [0, 0, 0, 0], longestRunM: 0, daysSinceLastRun: null },
+      },
+    });
+    const thursday = await createSession(userId, active.id, { date: "2026-10-15" });
+    garminLists([garminRun("2026-10-04"), garminRun(R_DATE)]);
+
+    await syncGarmin({ userId, now: NOW });
+
+    expect((await storedSession(thursday.id)).target.distanceM).toBe(PLANNED_M * 0.7);
+    expect(await storedAdjustments(userId)).toEqual([
+      expect.objectContaining({
+        source: "gap",
+        activityId: await runOn(R_DATE),
+        requested: { factor: 0.7, walkRun: false, daysOff: 9 },
+        applied: { factor: 0.7, walkRun: false, daysOff: 9 },
+      }),
+    ]);
+    expect(await gapReEntry(userId, NOW)).toBeNull();
+  });
+
   it("eases once, keyed on the first run back, when one sync inserts three runs after 10 days off", async () => {
     const { userId, thursday, saturday } = await runner({ gap: 12 });
     garminLists([garminRun("2026-10-11"), garminRun("2026-10-12"), garminRun(R_DATE)]);
@@ -411,6 +445,32 @@ describe("gap re-entry after a sync", () => {
     await syncGarmin({ userId, now: NOW });
 
     expect(await runOn(R_DATE)).toBeDefined();
+    expect(await distancesOf(userId)).toEqual(eased);
+    expect(await storedAdjustments(userId)).toEqual(logged);
+  });
+
+  it("eases nothing more when a run from before a pause is uploaded after its I'm back, which measured across the run's date (late upload, illness or injury pause)", async () => {
+    // P on Thursday 1 October; the runner last synced on Thursday 8 October.
+    const { userId } = await runner({
+      gap: 12,
+      lastSyncAt: new Date("2026-10-08T18:00:00Z"),
+    });
+    // Friday's run is not on Garmin yet when they pause on Saturday and tap I'm back on Tuesday: 12 days.
+    await createPause(userId, { startedOn: "2026-10-10", reason: "break" });
+    const { reEntry } = await endPause(userId, new Date("2026-10-13T08:00:00Z"));
+    expect(reEntry).toMatchObject({ daysOff: 12, factor: 0.7, sessionsChanged: 2 });
+    const eased = await distancesOf(userId);
+    expect(eased).toEqual([
+      ["2026-10-15", PLANNED_M * 0.7],
+      ["2026-10-17", PLANNED_M * 0.7],
+    ]);
+    const logged = await storedAdjustments(userId);
+
+    // Friday's run reaches Garmin the day after: P to it is 8 days, which I'm back already counted.
+    garminLists([garminRun("2026-10-09")]);
+    await syncGarmin({ userId, now: NOW });
+
+    expect(await runOn("2026-10-09")).toBeDefined();
     expect(await distancesOf(userId)).toEqual(eased);
     expect(await storedAdjustments(userId)).toEqual(logged);
   });
