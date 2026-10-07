@@ -18,6 +18,11 @@ export const errorMessages: Record<ErrorCode, string> = {
   garmin_rate_limited: "Garmin is limiting requests. Wait an hour, then try again.",
   garmin_unavailable: "Garmin is not responding. Try again later.",
   garmin_mfa_required: "Garmin asked for a two-factor code. Reconnect in Settings.",
+  garmin_credentials_rejected:
+    "Garmin did not accept this email and password. Check them and try again.",
+  garmin_mfa_rejected: "Garmin did not accept this code. Type the newest code Garmin sent.",
+  garmin_login_lost:
+    "This Garmin sign-in is no longer open. Start again with your email and password.",
   claude_key_missing: "No Claude API key is set. Add one in Settings.",
   // Shown on Settings, where the key is saved; a run's card for a rejected key links to Settings itself.
   claude_key_invalid:

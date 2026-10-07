@@ -9,7 +9,8 @@ import { problemSchema } from "./problem";
 /**
  * Messages between the API and the Garmin service (services/garmin). The Python service validates its
  * fixtures against the JSON Schema exported from these. Every request carries the decrypted token bundle
- * and every response returns it, refreshed or unchanged; the API writes it back when it changed.
+ * and every response returns it, refreshed or unchanged; the API writes it back when it changed. The
+ * password login (POST /connect and /connect/mfa) is the exception: it makes the bundle.
  */
 
 /** The JSON string garminconnect's client.dumps() returns. Never logged. */
@@ -25,6 +26,57 @@ export const garminProblemSchema = problemSchema
   .extend({ tokenBundle: garminTokenBundleSchema.optional() })
   .strict();
 export type GarminProblem = z.infer<typeof garminProblemSchema>;
+
+/**
+ * A Garmin account's sign-in email and password, typed by the runner in the web app. Passed once to the
+ * Garmin service for a login; never stored or logged.
+ */
+export const garminEmailSchema = z.email().max(254);
+export const garminPasswordSchema = z.string().min(1).max(256);
+
+/** The code Garmin sends by email or text for two-factor sign-in, digits only (spaces taken out). */
+export const garminMfaCodeSchema = z.string().regex(/^\d{4,10}$/);
+
+/**
+ * Names one pending login in the Garmin service: the API sends the user id, so each runner has at most one
+ * and a new start replaces the old one.
+ */
+export const garminLoginIdSchema = z.string().min(1).max(128);
+
+/**
+ * POST /connect: a password login, the one call without a token bundle. When Garmin asks for a code, the
+ * service keeps the live login in memory for 5 min under `loginId` (its state cannot be serialized) and
+ * answers code_needed; otherwise it answers the new bundle.
+ */
+export const garminLoginRequestSchema = z
+  .object({
+    loginId: garminLoginIdSchema,
+    email: garminEmailSchema,
+    password: garminPasswordSchema,
+  })
+  .strict();
+export type GarminLoginRequest = z.infer<typeof garminLoginRequestSchema>;
+
+export const garminLoginResponseSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("code_needed") }).strict(),
+  z.object({ status: z.literal("connected"), tokenBundle: garminTokenBundleSchema }).strict(),
+]);
+export type GarminLoginResponse = z.infer<typeof garminLoginResponseSchema>;
+
+/**
+ * POST /connect/mfa: the code for the pending login under `loginId`, tried on that same login, so a wrong
+ * code can be followed by the right one. Answers the new bundle, garmin_mfa_rejected, or garmin_login_lost
+ * when no login is pending (5 min passed, a restart, too many codes).
+ */
+export const garminLoginCodeRequestSchema = z
+  .object({ loginId: garminLoginIdSchema, mfaCode: garminMfaCodeSchema })
+  .strict();
+export type GarminLoginCodeRequest = z.infer<typeof garminLoginCodeRequestSchema>;
+
+export const garminLoginCodeResponseSchema = z
+  .object({ tokenBundle: garminTokenBundleSchema })
+  .strict();
+export type GarminLoginCodeResponse = z.infer<typeof garminLoginCodeResponseSchema>;
 
 /** POST /profile: the cheapest call that proves the bundle still works. */
 export const garminProfileRequestSchema = z
