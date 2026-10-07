@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 
 /**
  * Sync now's stand-in while the Garmin login is expired: syncing would only fail again, and the Garmin
- * screen in Settings says how to reconnect.
+ * screen in Settings signs in again.
  */
 export function ReconnectGarminLink() {
   return (
