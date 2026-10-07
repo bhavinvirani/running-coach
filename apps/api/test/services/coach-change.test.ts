@@ -19,6 +19,7 @@ import {
   TEMPO_STEPS,
 } from "../seed";
 import { createAdjustment, createPause, storedAdjustments } from "../seed-adaptation";
+import { createReview } from "../seed-weekly-review";
 
 // The coach's change to the plan after a run (slice 9), on the real Postgres: the target asked for before
 // the Claude call, the change applied in the caller's transaction, and the cards' mapping. Today is
@@ -194,6 +195,18 @@ describe("coachChangeTarget", () => {
     await createAdjustment(userId, session, { activityId: earlier.id });
 
     expect((await coachChangeTarget(userId, run.id, NOW)).reason).toBe("adjusted");
+  });
+
+  it("refuses with adjusted for a session a weekly review changed: one coach-or-review change per session", async () => {
+    const { userId, session, run } = await runner();
+    const review = await createReview(userId, { weekStart: "2026-10-05" });
+    await createAdjustment(userId, session, { source: "review", coachMessageId: review.id });
+
+    expect(await coachChangeTarget(userId, run.id, NOW)).toEqual({
+      allowed: false,
+      reason: "adjusted",
+      sessionId: session!.id,
+    });
   });
 });
 
@@ -519,6 +532,55 @@ describe("applyCoachChange after a break", () => {
     // The week before planned 8 km that count: this week may reach 8.8 km, Monday's 0.4 km included.
     expect(result.outcome).toBe("clamped");
     expect((await storedSession(session!.id)).target.distanceM).toBeCloseTo(8400, -2);
+  });
+});
+
+describe("applyCoachChange in the week after a pause", () => {
+  /**
+   * Thursday's easy 8 km with 8 km planned and done in the week before (2026-10-05 to 2026-10-11), so
+   * the weekly cap alone would let it rise 10%.
+   */
+  async function afterAWeek(pause: { startedOn: string; endedOn: string }) {
+    const { userId, planId, run, session } = await runner();
+    await createSession(userId, planId, { date: "2026-10-06", status: "done" });
+    await createPause(userId, pause);
+    return { userId, run, session: session! };
+  }
+
+  it("lets no session rise after a week a pause held a day of (illness or injury pause)", async () => {
+    const { userId, run, session } = await afterAWeek({
+      startedOn: "2026-10-08",
+      endedOn: "2026-10-10",
+    });
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "rejected", reason: "no_change", changed: false });
+    expect(await storedSession(session.id)).toEqual(session);
+  });
+
+  it("still applies a cut after a paused week (illness or injury pause)", async () => {
+    const { userId, run, session } = await afterAWeek({
+      startedOn: "2026-10-08",
+      endedOn: "2026-10-12",
+    });
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 0.8 });
+
+    expect(result).toMatchObject({ outcome: "applied", changed: true });
+    expect((await storedSession(session.id)).target.distanceM).toBe(6400);
+  });
+
+  it("lets a session rise once the pause's last day was before the week before (it ended on that week's Monday)", async () => {
+    const { userId, run, session } = await afterAWeek({
+      startedOn: "2026-10-01",
+      endedOn: "2026-10-05",
+    });
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "applied", changed: true });
+    expect((await storedSession(session.id)).target.distanceM).toBe(8800);
   });
 });
 

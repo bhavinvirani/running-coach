@@ -5,6 +5,7 @@ import { startBoss, stopBoss } from "./boss";
 import * as importHistory from "./import-history";
 import * as pushWorkouts from "./push-workouts";
 import * as syncGarmin from "./sync-garmin";
+import * as weeklyReview from "./weekly-review";
 
 // Registers every queue and worker. Services enqueue through the functions re-exported below.
 
@@ -62,6 +63,12 @@ export async function startJobs(options: StartJobsOptions = {}): Promise<void> {
   await boss.work(analyzeRun.name, { ...work, includeMetadata: true }, async ([job]) =>
     job ? analyzeRun.handle(boss, job) : undefined,
   );
+
+  await boss.createQueue(weeklyReview.name, weeklyReview.queue);
+  // With metadata, so the job knows its last attempt (retryCount against retryLimit).
+  await boss.work(weeklyReview.name, { ...work, includeMetadata: true }, async ([job]) =>
+    job ? weeklyReview.handle(boss, job, options.clock) : undefined,
+  );
 }
 
 export async function stopJobs(): Promise<void> {
@@ -85,3 +92,6 @@ export { enqueuePushWorkouts } from "./push-workouts-queue";
 
 /** Queues the coach's card for one run unless a job for it waits (analyze-run-queue.ts). */
 export { enqueueAnalyzeRun } from "./analyze-run-queue";
+
+/** Queues the coach's review of a runner's ended week, once per runner and week (weekly-review-queue.ts). */
+export { enqueueWeeklyReview } from "./weekly-review-queue";

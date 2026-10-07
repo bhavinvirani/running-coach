@@ -205,6 +205,11 @@ export async function resetRunner(request: APIRequestContext): Promise<MeRespons
   await withDatabase(async (db) => {
     await clearPushes(db);
     await db.query(`delete ${runnerInsightJobs} and state in ('created', 'retry')`, [runner.email]);
+    await db.query(
+      `delete from pgboss.job where name = 'weekly-review' and state in ('created', 'retry')
+        and data->>'userId' = (select id::text from "user" where email = $1)`,
+      [runner.email],
+    );
     // Changes before their sessions, sessions before their plans, plans before their goal, cards before
     // their runs: each would go with its parent (on delete cascade), but each table is emptied by its own
     // user_id so none is left behind if that ever changes. A rejected coach proposal has no session to go

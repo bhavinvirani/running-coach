@@ -1,0 +1,51 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "text",
+            "json": {
+              "headline": "3 of 4 sessions done, 33.4 km against a planned 39.0 km.",
+              "whatHappened": "Tuesday's easy 8.1 km, Thursday's 9.1 km tempo and Sunday's 16.2 km long run were done; Friday's easy 6.0 km was missed.",
+              "whatItMeans": "86% of the planned distance, with 141 bpm on the easy run and 149 bpm on the long run: the load is right.",
+              "nextWeek": "4 sessions, 40.0 km: intervals of 9.0 km on Thursday and a 17.0 km long run on Sunday, with easy runs on Tuesday and Friday.",
+              "changes": [
+                {
+                  "session": "s1",
+                  "kind": "scale",
+                  "factor": 0.9,
+                  "note": "Run this session a little shorter, so your legs recover."
+                },
+                {
+                  "session": "s2",
+                  "kind": "scale",
+                  "factor": 0.9,
+                  "note": "Run this session a little shorter, so your legs recover."
+                },
+                {
+                  "session": "s3",
+                  "kind": "scale",
+                  "factor": 0.9,
+                  "note": "Run this session a little shorter, so your legs recover."
+                },
+                {
+                  "session": "s4",
+                  "kind": "scale",
+                  "factor": 0.9,
+                  "note": "Run this session a little shorter, so your legs recover."
+                }
+              ]
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1420,
+          "output_tokens": 240
+        }
+      }
+    }
+  ]
+}

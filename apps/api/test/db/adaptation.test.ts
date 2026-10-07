@@ -126,6 +126,7 @@ describe("0016 indexes", () => {
       "plan_adjustment_pause_id_session_idx",
       "plan_adjustment_pkey",
       "plan_adjustment_plan_session_id_idx",
+      "plan_adjustment_review_message_session_idx",
       "plan_adjustment_user_id_idx",
     ]);
   });

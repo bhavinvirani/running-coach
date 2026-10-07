@@ -9,6 +9,7 @@ import { testQueryClient } from "@/test/render";
 import { calendarKey } from "./calendar";
 import { meQueryOptions } from "./me";
 import { planKey } from "./plan";
+import { latestReviewKey, reviewListKey } from "./reviews";
 import { actionKey, detailKey, listKey } from "./query-keys";
 import { sessionKey } from "./sessions";
 import { useForgetSyncOutcomeOnReconnect, useLatestSync, useSyncNow } from "./sync";
@@ -84,7 +85,10 @@ describe("useSyncNow", () => {
 });
 
 describe("useSyncNow refreshes", () => {
-  /** What the screens hold before the sync: the plan, the calendar, one session and the latest run, all fresh. */
+  /**
+   * What the screens hold before the sync: the plan, the calendar, one session, the latest run, the bests
+   * and the weekly reviews, all fresh.
+   */
   function cachedViews() {
     const queryClient = testQueryClient();
     const views = {
@@ -93,6 +97,8 @@ describe("useSyncNow refreshes", () => {
       session: sessionKey("3c1d2e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"),
       latest: detailKey("activities", "latest"),
       bests: listKey("personal-bests"),
+      latestReview: latestReviewKey,
+      reviews: reviewListKey,
     };
     for (const key of Object.values(views)) queryClient.setQueryData(key, {});
     const invalidated = () =>
@@ -116,7 +122,15 @@ describe("useSyncNow refreshes", () => {
     return invalidated();
   }
 
-  const everything = { plan: true, calendar: true, session: true, latest: true, bests: true };
+  const everything = {
+    plan: true,
+    calendar: true,
+    session: true,
+    latest: true,
+    bests: true,
+    latestReview: true,
+    reviews: true,
+  };
 
   it("the plan, the calendar and each session as well as the runs and bests after a sync that removed runs deleted on Garmin (deleted activity)", async () => {
     expect(await syncWith(synced(0, 1))).toEqual(everything);
@@ -128,6 +142,10 @@ describe("useSyncNow refreshes", () => {
 
   it("the plan, the calendar and each session after a sync that failed partway, whose stored runs were matched too (partial sync)", async () => {
     expect(await syncWith(problem(502, ErrorCode.garminUnavailable))).toEqual(everything);
+  });
+
+  it("the weekly reviews after a sync, which queues the review of a week that has ended (weekly review queued)", async () => {
+    expect(await syncWith(synced(0))).toMatchObject({ latestReview: true, reviews: true });
   });
 });
 

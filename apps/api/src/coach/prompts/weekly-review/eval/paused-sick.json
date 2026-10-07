@@ -1,0 +1,144 @@
+{
+  "input": {
+    "week": {
+      "weekStart": "2026-09-28",
+      "sessions": [
+        {
+          "date": "2026-09-29",
+          "type": "easy",
+          "title": null,
+          "status": "skipped",
+          "distanceM": 8000,
+          "durationS": 2700,
+          "run": null
+        },
+        {
+          "date": "2026-10-01",
+          "type": "tempo",
+          "title": null,
+          "status": "skipped",
+          "distanceM": 9000,
+          "durationS": 2880,
+          "run": null
+        },
+        {
+          "date": "2026-10-03",
+          "type": "easy",
+          "title": "Walk-run",
+          "status": "done",
+          "distanceM": 4000,
+          "durationS": 1800,
+          "run": {
+            "distanceM": 4100,
+            "durationS": 1850,
+            "avgHr": 136,
+            "isIndoor": false
+          }
+        },
+        {
+          "date": "2026-10-04",
+          "type": "long",
+          "title": null,
+          "status": "done",
+          "distanceM": 11000,
+          "durationS": 3960,
+          "run": {
+            "distanceM": 10500,
+            "durationS": 3900,
+            "avgHr": 158,
+            "isIndoor": false
+          }
+        }
+      ],
+      "extraRuns": [],
+      "summary": {
+        "runs": 2,
+        "distanceM": 14600,
+        "durationS": 5750,
+        "sessionsPlanned": 2,
+        "sessionsDone": 2,
+        "plannedDistanceM": 15000,
+        "paused": true
+      },
+      "weekBefore": {
+        "runs": 2,
+        "distanceM": 14000
+      },
+      "pause": {
+        "reason": "sick",
+        "startDate": "2026-09-26",
+        "endDate": "2026-10-01"
+      },
+      "openPause": null
+    },
+    "plan": {
+      "goal": {
+        "kind": "race",
+        "distanceKey": "10k",
+        "raceDate": "2026-11-22",
+        "targetTimeS": 2900
+      },
+      "weekNumber": 8,
+      "phase": "build",
+      "weeksToRace": 6,
+      "sessions": [
+        {
+          "label": "s1",
+          "date": "2026-10-06",
+          "type": "easy",
+          "title": "Walk-run",
+          "status": "planned",
+          "distanceM": 5000,
+          "durationS": 2100,
+          "changeable": true
+        },
+        {
+          "label": "s2",
+          "date": "2026-10-08",
+          "type": "tempo",
+          "title": null,
+          "status": "planned",
+          "distanceM": 6000,
+          "durationS": 1800,
+          "changeable": true
+        },
+        {
+          "label": "s3",
+          "date": "2026-10-11",
+          "type": "long",
+          "title": null,
+          "status": "planned",
+          "distanceM": 11000,
+          "durationS": 3960,
+          "changeable": true
+        }
+      ],
+      "changeAllowed": true,
+      "reason": null
+    },
+    "settings": {
+      "units": "km",
+      "coachDetail": "standard"
+    }
+  },
+  "output": {
+    "headline": "A week back from illness: 14.6 km against a planned 15.0 km, with both remaining sessions done.",
+    "whatHappened": "You paused training for illness from Saturday 26 September to Thursday 1 October, so Tuesday's easy 8.0 km and Thursday's 9.0 km tempo were skipped. Saturday's walk-run covered 4.1 km at 7:31 /km at 136 bpm. Sunday's long run covered 10.5 km of the planned 11.0 km at 6:11 /km at 158 bpm.",
+    "whatItMeans": "This week was shaped by the illness, so it says little about your fitness. A heart rate of 158 bpm is high for a long run at 6:11 /km, which suggests your body is still recovering.",
+    "nextWeek": "3 sessions, 22.0 km: a 5.0 km walk-run on Tuesday, a 6.0 km tempo on Thursday and an 11.0 km long run on Sunday. Only run when you feel well. If symptoms come back or your heart rate stays high, rest and see a doctor.",
+    "changes": [
+      {
+        "session": "s2",
+        "kind": "easy",
+        "factor": null,
+        "note": "Run Thursday's tempo as an easy run. You are back from illness, and Sunday's heart rate was high for the pace."
+      },
+      {
+        "session": "s3",
+        "kind": "scale",
+        "factor": 0.8,
+        "note": "Shorten Sunday's long run and keep it easy, so your body can finish recovering from the illness."
+      }
+    ]
+  }
+}

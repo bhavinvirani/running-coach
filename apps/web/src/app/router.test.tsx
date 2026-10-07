@@ -20,6 +20,7 @@ import {
   sessionDetailFixture,
   weekFixture,
 } from "@/test/fixtures";
+import { REVIEW_ID, reviewListFixture, reviewResponseFixture } from "@/test/fixtures-weekly-review";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
 import { backgroundAndReturn, settle } from "@/test/lifecycle";
@@ -52,6 +53,9 @@ function signedIn({ path, query }: FakeRequest): Response {
   if (path === "/api/plan") return json(planResponseFixture());
   if (path === "/api/calendar") return json(calendarFixture(query.get("from") ?? "2026-10-05"));
   if (path === "/api/pause") return json({ pause: null });
+  if (path === "/api/reviews/latest") return json({ state: "none" });
+  if (path === "/api/reviews") return json(reviewListFixture());
+  if (path === `/api/reviews/${REVIEW_ID}`) return json(reviewResponseFixture());
   if (path === `/api/sessions/${planSessionId("2026-10-08")}`) return json(sessionDetailFixture());
   if (path === `/api/sessions/${customSessionFixture().id}`) {
     return json(sessionDetailFixture({ session: customSessionFixture() }));
@@ -155,6 +159,29 @@ describe("app routes", () => {
 
     expect(await screen.findByRole("heading", { name: "Plan" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/plan");
+  });
+
+  it("opens the weekly reviews from Plan and a review from the list inside the tab shell, with Plan still selected, and Back returns (past reviews visible)", async () => {
+    stubFetch(signedIn);
+    const router = renderApp("/plan");
+
+    await userEvent.click(await screen.findByRole("link", { name: "Open weekly reviews" }));
+
+    expect(await screen.findByRole("heading", { name: "Weekly reviews" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/plan/reviews");
+    expect(screen.getByRole("link", { name: "Plan" })).toHaveAttribute("aria-current", "page");
+
+    await userEvent.click(await screen.findByRole("link", { name: /^5–11 Oct/ }));
+
+    expect(await screen.findByRole("heading", { name: "Weekly review" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/plan/reviews/${REVIEW_ID}`);
+    expect(await screen.findByRole("region", { name: "Coming week" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Plan" })).toHaveAttribute("aria-current", "page");
+
+    await userEvent.click(screen.getByRole("link", { name: "Back" }));
+
+    expect(await screen.findByRole("heading", { name: "Weekly reviews" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/plan/reviews");
   });
 
   it("opens the goal form from Change goal, inside the tab shell", async () => {

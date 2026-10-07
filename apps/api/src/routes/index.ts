@@ -13,6 +13,7 @@ import { meRouter } from "./me";
 import { pauseRouter } from "./pause";
 import { personalBestsRouter } from "./personal-bests";
 import { planRouter } from "./plan";
+import { reviewsRouter } from "./reviews";
 import { sessionsRouter } from "./sessions";
 import { syncRouter } from "./sync";
 
@@ -39,6 +40,7 @@ export function registerRoutes(app: Express): void {
   api.use(sessionsRouter);
   api.use(calendarRouter);
   api.use(pauseRouter);
+  api.use(reviewsRouter);
   api.use(notFoundHandler);
   app.use("/api", api);
 }

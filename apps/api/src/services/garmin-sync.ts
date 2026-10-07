@@ -18,6 +18,7 @@ import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
 import { queueRunInsights } from "./insights";
 import { gapReEntry } from "./re-entry";
 import { matchPlanSessions } from "./session-match";
+import { queueWeeklyReview } from "./weekly-review";
 import { queueWorkoutPush } from "./workout-push";
 
 const log = logger.child({ module: "garmin-sync" });
@@ -268,9 +269,11 @@ async function saveChunk(
 /**
  * The plan after a sync (slice 9): sessions matched with the runs on their dates, then the re-entry when
  * a run of the last 7 days ends 7 or more days without one (gapReEntry), and a workout push for what that
- * changed. Each step has its own try, so a failed match still checks the gap; neither throws, so a stored
- * run never fails the sync over them. Both look at the stored runs, not at what this sync inserted, so the
- * next sync redoes what failed; the error is logged.
+ * changed, then the weekly review of the runner's last ended week (slice 10), which reads the matched
+ * statuses and the eased sessions. Each step has its own try (queueWeeklyReview never throws), so a failed
+ * match still checks the gap and queues the review; none throws, so a stored run never fails the sync over
+ * them. All look at the stored runs, not at what this sync inserted, so the next sync redoes what failed;
+ * the error is logged.
  */
 async function adaptPlan(userId: string, now: Date): Promise<void> {
   try {
@@ -284,6 +287,7 @@ async function adaptPlan(userId: string, now: Date): Promise<void> {
   } catch (err) {
     log.error({ err, userId }, "gap not checked after the sync; the next sync checks it again");
   }
+  await queueWeeklyReview(userId, now);
 }
 
 // The sync running in this process for each user; an entry leaves when its sync settles.

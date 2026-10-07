@@ -49,7 +49,13 @@ describe("coach_message", () => {
 
     const [row] = await db
       .insert(coachMessage)
-      .values({ userId, kind: "weekly_review", promptVersion: "weekly-review/v1", content })
+      .values({
+        userId,
+        kind: "weekly_review",
+        weekStart: "2026-09-28",
+        promptVersion: "weekly-review/v1",
+        content,
+      })
       .returning();
 
     expect(row).toMatchObject({ activityId: null, model: null, usage: null });
@@ -74,7 +80,9 @@ describe("coach_message", () => {
     const run = await createLongRun(userId);
     const values = { userId, kind: "insight" as const, promptVersion: "run-insight/v1", content };
     await db.insert(coachMessage).values({ ...values, activityId: run.id });
-    await db.insert(coachMessage).values({ ...values, kind: "weekly_review" });
+    await db
+      .insert(coachMessage)
+      .values({ ...values, kind: "weekly_review", weekStart: "2026-09-28" });
 
     await db.delete(activity).where(eq(activity.id, run.id));
     expect(await db.select().from(coachMessage)).toHaveLength(1);
@@ -166,7 +174,9 @@ describe("coach_message", () => {
     expect(
       await postgresErrorCode(db.insert(coachMessage).values({ ...values, kind: "insight" })),
     ).toBe("23505");
-    await db.insert(coachMessage).values({ ...values, kind: "weekly_review" });
+    await db
+      .insert(coachMessage)
+      .values({ ...values, kind: "weekly_review", weekStart: "2026-09-28" });
     expect(await db.select().from(coachMessage)).toHaveLength(2);
   });
 

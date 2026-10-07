@@ -7,6 +7,7 @@ import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
 import { meQueryOptions } from "./me";
+import { latestReviewKey } from "./reviews";
 import { useLatestSync, useSyncNow } from "./sync";
 import { SYNC_ON_OPEN_INTERVAL_MS, useSyncOnOpen } from "./sync-on-open";
 import { backgroundAndReturn, settle } from "@/test/lifecycle";
@@ -101,6 +102,19 @@ describe("useSyncOnOpen", () => {
     expect(api.calls).toEqual([
       expect.objectContaining({ method: "POST", path: "/api/sync", body: undefined }),
     ]);
+  });
+
+  it("reads Today's weekly review again after the sync on open, which queues the review of a week that has ended (weekly review queued)", async () => {
+    fakeServer({ me: meWith({ status: "ok", lastSyncAt: minutesAgo(10) }) });
+    const queryClient = testQueryClient();
+    queryClient.setQueryData(latestReviewKey, { state: "none" });
+    const { result } = openApp({
+      me: meWith({ status: "ok", lastSyncAt: minutesAgo(10) }),
+      queryClient,
+    });
+
+    await waitFor(() => expect(result.current.latest.result?.activitiesWritten).toBe(1));
+    expect(queryClient.getQueryState(latestReviewKey)?.isInvalidated).toBe(true);
   });
 
   it("syncs on open when Garmin works and has never synced", async () => {

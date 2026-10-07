@@ -101,6 +101,13 @@ export { paceAtShareSPerKm, pacesFromVdot, roundVdot, vdotFromPerformance } from
 export type { Performance, TrainingPaces } from "./rules/vdot";
 export { baseCurveM, downWeekM, isDownWeek, weekTargetM } from "./rules/volume-curve";
 export type { BaseCurveInput, WeekTargetInput } from "./rules/volume-curve";
+export { validateWeekDeltas } from "./rules/week-delta";
+export type {
+  WeekDeltaContext,
+  WeekDeltaOutcome,
+  WeekDeltaProposal,
+  WeekDeltaSession,
+} from "./rules/week-delta";
 export { fillWeek, minRunDistanceM } from "./rules/week-fill";
 export type { FillWeekInput, FillWeekResult } from "./rules/week-fill";
 export { clampWeeklyVolume, maxWeeklyVolumeM } from "./rules/weekly-volume";

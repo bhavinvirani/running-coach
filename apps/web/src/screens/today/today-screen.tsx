@@ -8,13 +8,15 @@ import { LatestRun } from "./parts/latest-run";
 import { NextSevenDays } from "./parts/next-seven-days";
 import { ReconnectGarminLink } from "./parts/reconnect-garmin-link";
 import { SyncNowButton } from "./parts/sync-now-button";
+import { WeeklyReview } from "./parts/weekly-review";
 import { useTodayScreen } from "./use-today";
 
 /**
- * Today tab: Sync now, or Reconnect Garmin once the login expired, the latest run, and with an active plan
- * the next 7 days, where their workouts stand on Garmin, and Not feeling 100% to pause training (or the
- * open pause with I'm back). Empty until the first sync stores a run; the next 7 days show below the
- * empty state too, since a plan can start before any run is stored.
+ * Today tab: Sync now, or Reconnect Garmin once the login expired, the latest run, the coach's review of
+ * the week that ended, and with an active plan the next 7 days, where their workouts stand on Garmin, and
+ * Not feeling 100% to pause training (or the open pause with I'm back). Empty until the first sync stores
+ * a run; a written weekly review and the next 7 days show below the empty state too, since a plan can
+ * start before any run is stored.
  */
 export function TodayScreen() {
   const screen = useTodayScreen();
@@ -63,6 +65,16 @@ export function TodayScreen() {
   const refetchFailed = screen.refetchError ? (
     <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
   ) : null;
+  const weeklyReview = (readyOnly: boolean) =>
+    screen.today === undefined || screen.timeZone === undefined ? null : (
+      <WeeklyReview
+        {...screen.review}
+        units={units}
+        today={screen.today}
+        timeZone={screen.timeZone}
+        readyOnly={readyOnly}
+      />
+    );
   const nextSevenDays =
     screen.today === undefined ? null : (
       <NextSevenDays
@@ -89,6 +101,7 @@ export function TodayScreen() {
           {action}
         </div>
         {syncOutcome}
+        {weeklyReview(true)}
         {nextSevenDays}
       </TodayLayout>
     );
@@ -100,6 +113,7 @@ export function TodayScreen() {
       {syncOutcome}
       {refetchFailed}
       <LatestRun activity={data} units={units} bests={screen.runBests.get(data.id) ?? NO_BESTS} />
+      {weeklyReview(false)}
       {nextSevenDays}
     </TodayLayout>
   );

@@ -8,6 +8,12 @@ import {
   planChangeFixture,
   walkRunSessionFixture,
 } from "@/test/fixtures-adaptation";
+import {
+  reviewChangeFixture,
+  reviewEasySessionFixture,
+  reviewRestSessionFixture,
+  reviewScaledSessionFixture,
+} from "@/test/fixtures-weekly-review";
 import { adjustmentLine, isRestChange, planChangeLine, snapshotAmount } from "./session-adjustment";
 
 describe("adjustmentLine", () => {
@@ -87,6 +93,33 @@ describe("adjustmentLine", () => {
     );
   });
 
+  it("says the weekly review changed a session it cut, naming only the distance (review scale)", () => {
+    expect(adjustmentLine(reviewScaledSessionFixture(), "km")).toBe(
+      "Changed in your weekly review, was 18.0 km",
+    );
+  });
+
+  it("names the original type when the weekly review made a quality session easy (review easy)", () => {
+    expect(adjustmentLine(reviewEasySessionFixture(), "km")).toBe(
+      "Changed in your weekly review, was Tempo 8.2 km",
+    );
+  });
+
+  it("says the weekly review skipped a session it turned into a rest (review rest)", () => {
+    expect(adjustmentLine(reviewRestSessionFixture(), "km")).toBe("Skipped in your weekly review");
+  });
+
+  it("gives what a session the review changed was in mi when the runner uses miles (review unit conversion)", () => {
+    expect(adjustmentLine(reviewScaledSessionFixture(), "mi")).toBe(
+      "Changed in your weekly review, was 11.2 mi",
+    );
+  });
+
+  it("never calls a review's change a walk-run, even with that title (review is not a return)", () => {
+    const titled = { ...reviewScaledSessionFixture(), title: "Walk-run" };
+    expect(adjustmentLine(titled, "km")).toBe("Changed in your weekly review, was 18.0 km");
+  });
+
   it("names the original type of a session the return eased into another type (re-entry type change)", () => {
     const planned = planSessionFixture("2026-10-15");
     const eased = planSessionFixture("2026-10-15", {
@@ -113,6 +146,11 @@ describe("isRestChange", () => {
     expect(isRestChange(easedSessionFixture())).toBe(false);
     expect(isRestChange(walkRunSessionFixture())).toBe(false);
     expect(isRestChange(planSessionFixture("2026-10-09", { status: "skipped" }))).toBe(false);
+  });
+
+  it("is true for a session the weekly review turned into a rest, and false for one it cut (review rest)", () => {
+    expect(isRestChange(reviewRestSessionFixture())).toBe(true);
+    expect(isRestChange(reviewScaledSessionFixture())).toBe(false);
   });
 });
 
@@ -160,5 +198,14 @@ describe("planChangeLine", () => {
 
   it("converts both sides to mi when the runner uses miles (unit conversion)", () => {
     expect(planChangeLine(planChangeFixture(), "mi")).toBe("Thu 8 Intervals 7.2 mi → Easy 6.6 mi");
+  });
+
+  it("reads a weekly review's change the same way, in km and mi (review change, unit conversion)", () => {
+    expect(planChangeLine(reviewChangeFixture(), "km")).toBe(
+      "Sun 18 Long run 18.0 km → Long run 16.2 km",
+    );
+    expect(planChangeLine(reviewChangeFixture(), "mi")).toBe(
+      "Sun 18 Long run 11.2 mi → Long run 10.1 mi",
+    );
   });
 });

@@ -17,3 +17,4 @@ export * from "./contracts/calendar";
 export * from "./contracts/coach";
 export * from "./contracts/pause";
 export * from "./contracts/coach-service";
+export * from "./contracts/weekly-review";

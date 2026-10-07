@@ -1,7 +1,7 @@
 import { INSIGHT_MAX_TOKENS } from "../../../client";
 import type { CoachEvalDefinition } from "../../../eval";
 import { RUN_INSIGHT_PROMPT, RUN_INSIGHT_VERSION } from "../../../run-insight";
-import { voiceProblems } from "../../../voice";
+import { namesDistanceOrTime, voiceProblems } from "../../../voice";
 import {
   buildRunInsightInput,
   type InsightActivity,
@@ -25,9 +25,6 @@ export interface RunInsightEvalInput {
 
 const FACTOR_MIN = 0.5;
 const FACTOR_MAX = 1.1;
-// The app shows the engine's numbers for a change, which may differ from the coach's after clamping.
-const DISTANCE_OR_TIME =
-  /\b\d+(?:[.,]\d+)?\s?(?:km|kilomet(?:er|re)s?|mi|miles?|m|met(?:er|re)s?|min|minutes?|h|hours?)\b|\b\d{1,2}:\d{2}\b/i;
 
 /**
  * What breaks the voice or the plan change's rules in a v2 output, one line per problem: the voice over
@@ -48,7 +45,7 @@ export function runInsightOutputProblems(output: RunInsightOutput): string[] {
   if (kind === "none" && nextStep !== null) problems.push("adjustment.nextStep: set for none");
   if (kind !== "none" && nextStep === null)
     problems.push(`adjustment.nextStep: missing for ${kind}`);
-  if (nextStep !== null && DISTANCE_OR_TIME.test(nextStep)) {
+  if (nextStep !== null && namesDistanceOrTime(nextStep)) {
     problems.push("adjustment.nextStep: names a distance or time");
   }
   return problems;

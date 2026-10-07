@@ -303,7 +303,8 @@ export interface AnalyzeRunOptions {
 // left) and plan_auth_failed (a rejected plan token) included, gives the same answer again.
 const RETRYABLE_REASONS: ReadonlySet<CoachFallbackReason> = new Set(["timeout", "unavailable"]);
 
-function isForeignKeyViolation(error: unknown): boolean {
+/** A write failed on a foreign key: a row it points at was deleted meanwhile. */
+export function isForeignKeyViolation(error: unknown): boolean {
   const cause = (error as { cause?: { code?: unknown } }).cause;
   return (cause?.code ?? (error as { code?: unknown }).code) === "23503";
 }

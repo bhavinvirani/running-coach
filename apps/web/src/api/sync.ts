@@ -45,13 +45,15 @@ export function useSyncNow() {
     // learn of the best-efforts job the sync queued, which starts their poll, and a run already checked
     // gets its PB chip. After every sync, finished or failed, the API marks the plan's sessions done or
     // missed, may ease them for a return, and unlinks runs Garmin no longer lists, so Today's next 7 days,
-    // the plan and each session are read again too. Returned, so the sync stays pending until the new run
-    // and its session are on screen: no flash of the old ones.
+    // the plan and each session are read again too. A sync after a week ended queues its weekly review,
+    // so the reviews are read again and Today's card starts polling while the coach writes. Returned, so
+    // the sync stays pending until the new run and its session are on screen: no flash of the old ones.
     onSettled: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: resourceKey("activities") }),
         queryClient.invalidateQueries({ queryKey: resourceKey("me") }),
         queryClient.invalidateQueries({ queryKey: resourceKey("personal-bests") }),
+        queryClient.invalidateQueries({ queryKey: resourceKey("reviews") }),
         refreshSessionViews(queryClient),
       ]),
   });

@@ -3,7 +3,8 @@ import {
   runInsightOutputSchema,
   runInsightSchema,
 } from "../../src/coach/prompts/run-insight/schema";
-import { voiceProblems } from "../../src/coach/voice";
+import { weeklyReviewOutputSchema } from "../../src/coach/prompts/weekly-review/schema";
+import { namesDistanceOrTime, voiceProblems } from "../../src/coach/voice";
 
 const card = {
   headline: "18.0 km long run at 5:40 /km.",
@@ -70,5 +71,44 @@ describe("voiceProblems", () => {
       "adjustment.nextStep: praise or hype word",
       "adjustment.nextStep: 408 characters, max 400",
     ]);
+  });
+
+  it("checks every change in a list of objects by its index (weekly-review changes)", () => {
+    const review = {
+      headline: "3 of 4 sessions done, 32.0 km.",
+      whatHappened: "Saturday's easy run was missed.",
+      whatItMeans: "84% of the planned distance.",
+      nextWeek: "3 sessions and 33.0 km.",
+    };
+    const change = { session: "s1", kind: "easy", factor: null, note: "Run Thursday easy." };
+    expect(voiceProblems({ ...review, changes: [change] }, weeklyReviewOutputSchema)).toEqual([]);
+
+    const problems = voiceProblems(
+      {
+        ...review,
+        changes: [change, { ...change, session: "s2", note: `Well done ${"x".repeat(200)}` }],
+      },
+      weeklyReviewOutputSchema,
+    );
+
+    expect(problems).toEqual([
+      "changes[1].note: praise or hype word",
+      "changes[1].note: 210 characters, max 200",
+    ]);
+  });
+});
+
+describe("namesDistanceOrTime", () => {
+  it.each(["Run it as 6.4 km.", "Run 4 miles.", "Run for 30 minutes.", "Finish in 36:00."])(
+    "finds a distance or time in %s",
+    (text) => {
+      expect(namesDistanceOrTime(text)).toBe(true);
+    },
+  );
+
+  it("finds none in a day and a reason", () => {
+    expect(
+      namesDistanceOrTime("Run Thursday's tempo easy, so the legs recover after 3 runs."),
+    ).toBe(false);
   });
 });

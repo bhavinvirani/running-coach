@@ -84,6 +84,24 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
               },
             },
             {
+              path: "plan/reviews",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/reviews/reviews-screen")).ReviewsScreen,
+                ),
+              },
+            },
+            {
+              path: "plan/reviews/:id",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/review/review-screen")).ReviewScreen,
+                ),
+              },
+            },
+            {
               // A workout of the runner's own; "new" outranks ":id" in React Router's matching.
               path: "plan/sessions/new",
               ErrorBoundary: ScreenErrorBoundary,

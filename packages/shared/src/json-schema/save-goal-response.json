@@ -782,6 +782,7 @@
                                   "type": "string",
                                   "enum": [
                                     "coach",
+                                    "review",
                                     "pause",
                                     "gap"
                                   ]

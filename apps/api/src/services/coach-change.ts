@@ -24,20 +24,22 @@ import {
 import { addDays, mondayOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
 import { runDate, runDateWithin } from "./run-dates";
-import { activePlan, type Executor, openPause, runnerToday } from "./runner-state";
+import { activePlan, type Executor, openPause, pauseCovering, runnerToday } from "./runner-state";
 import { adjustedOf, snapshotOf } from "./session-view";
 
 // The coach's change to the plan after a run (SPEC: Plan engine, slice 9): which session it may change,
 // asked before the Claude call so the prompt can say whether a change is allowed, and the change itself,
 // which the engine's validateDelta accepts, clamps or rejects. Every proposal is logged in plan_adjustment,
-// one per run, so the insight job retrying applies nothing twice.
+// one per run, so the insight job retrying applies nothing twice. The weekly review's changes
+// (review-change.ts) read the session's history and recent runs through the helpers here.
 
 const log = logger.child({ module: "coach-change" });
 
 /** Only the runner's newest run, and only one from the last 7 days, may change the plan (SPEC). */
 export const COACH_CHANGE_RUN_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const ACCEPTED: AdjustmentOutcome[] = ["applied", "clamped"];
+/** The outcomes that changed a session; a rejected proposal changed nothing. */
+export const ACCEPTED: AdjustmentOutcome[] = ["applied", "clamped"];
 
 /**
  * The first session after the run's local date and not before the runner's today, planned or moved, of
@@ -66,10 +68,64 @@ export async function nextSessionAfter(
   return row ?? null;
 }
 
+/** The longest run of the 30 local days up to today, as the plan's baseline reads it; 0 with none. */
+export async function longestRecentRunM(
+  executor: Executor,
+  userId: string,
+  today: string,
+): Promise<number> {
+  // Measured runs only: a typed-in distance is not a measured one.
+  const [longest] = await executor
+    .select({ distanceM: max(activity.distanceM) })
+    .from(activity)
+    .where(
+      and(
+        eq(activity.userId, userId),
+        eq(activity.isManual, false),
+        runDateWithin(addDays(today, 1 - LONGEST_RUN_LOOKBACK_DAYS), today),
+      ),
+    );
+  return Math.round(longest?.distanceM ?? 0);
+}
+
+export interface SessionHistory {
+  /** The run coach or a weekly review changed it: one coach-or-review change per session. */
+  coachAdjusted: boolean;
+  /** A pause or gap re-entry changed it: it may shrink, never grow. */
+  eased: boolean;
+}
+
+/** What earlier applied or clamped changes made of each session, by id; a session never changed has none. */
+export async function sessionHistories(
+  executor: Executor,
+  sessionIds: readonly string[],
+): Promise<Map<string, SessionHistory>> {
+  const histories = new Map<string, SessionHistory>();
+  if (sessionIds.length === 0) return histories;
+  const rows = await executor
+    .selectDistinct({ sessionId: planAdjustment.planSessionId, source: planAdjustment.source })
+    .from(planAdjustment)
+    .where(
+      and(
+        inArray(planAdjustment.planSessionId, [...sessionIds]),
+        inArray(planAdjustment.outcome, ACCEPTED),
+      ),
+    );
+  for (const { sessionId, source } of rows) {
+    if (sessionId === null) continue;
+    const history = histories.get(sessionId) ?? { coachAdjusted: false, eased: false };
+    if (source === "coach" || source === "review") history.coachAdjusted = true;
+    if (source === "pause" || source === "gap") history.eased = true;
+    histories.set(sessionId, history);
+  }
+  return histories;
+}
+
 /**
  * What the engine reads around the session: its week; the week before's planned distance, skipped and
  * missed sessions left out (none in the plan's first week, which has no week before it); recent runs; the
- * goal; and the changes already made to it, by the coach or by a pause or gap re-entry (eased).
+ * goal; the changes already made to it, by the coach after a run or in a weekly review, or by a pause or
+ * gap re-entry (eased); and whether a pause held a day of the week before (afterPause: no rise).
  */
 async function deltaContext(
   executor: Executor,
@@ -110,27 +166,7 @@ async function deltaContext(
               other.date < monday && other.status !== "skipped" && other.status !== "missed",
           )
           .reduce((sum, other) => sum + other.target.distanceM, 0);
-  // As the plan's baseline reads it: measured runs only, a typed-in distance is not a measured one.
-  const [longest] = await executor
-    .select({ distanceM: max(activity.distanceM) })
-    .from(activity)
-    .where(
-      and(
-        eq(activity.userId, userId),
-        eq(activity.isManual, false),
-        runDateWithin(addDays(today, 1 - LONGEST_RUN_LOOKBACK_DAYS), today),
-      ),
-    );
-  const [goalRow] = await executor
-    .select({ daysPerWeek: goal.daysPerWeek })
-    .from(goal)
-    .where(eq(goal.id, active.goalId));
-  const changedBy = await executor
-    .selectDistinct({ source: planAdjustment.source })
-    .from(planAdjustment)
-    .where(
-      and(eq(planAdjustment.planSessionId, session.id), inArray(planAdjustment.outcome, ACCEPTED)),
-    );
+  const history = (await sessionHistories(executor, [session.id])).get(session.id);
   return {
     today,
     session: {
@@ -140,14 +176,24 @@ async function deltaContext(
     },
     weekSessions,
     previousWeekM,
-    longestRecentM: Math.round(longest?.distanceM ?? 0),
-    daysPerWeek: goalRow?.daysPerWeek ?? active.inputs.goal.daysPerWeek,
+    longestRecentM: await longestRecentRunM(executor, userId, today),
+    daysPerWeek: await daysPerWeekOf(executor, active),
     paces: active.paces,
     // The caller found no open pause.
     paused: false,
-    coachAdjusted: changedBy.some(({ source }) => source === "coach"),
-    eased: changedBy.some(({ source }) => source === "pause" || source === "gap"),
+    coachAdjusted: history?.coachAdjusted ?? false,
+    eased: history?.eased ?? false,
+    afterPause: (await pauseCovering(executor, userId, addDays(monday, -7))) !== null,
   };
+}
+
+/** The runs a week the plan is built for: the goal's now, else the plan's inputs. */
+export async function daysPerWeekOf(executor: Executor, active: PlanRow): Promise<number> {
+  const [goalRow] = await executor
+    .select({ daysPerWeek: goal.daysPerWeek })
+    .from(goal)
+    .where(eq(goal.id, active.goalId));
+  return goalRow?.daysPerWeek ?? active.inputs.goal.daysPerWeek;
 }
 
 type Target =
@@ -215,7 +261,8 @@ export interface CoachChangeTarget {
  * Before the Claude call: whether the coach may change the plan after this run, and which session. Beyond
  * the run and pause rules (resolveTarget) it asks the engine about a rest, which is never clamped, so it
  * fails only for what no change may touch: a custom workout, a race, a locked session, or one the coach
- * already changed. The answer can go stale during the call; applyCoachChange decides again.
+ * already changed after a run or in a weekly review. The answer can go stale during the call;
+ * applyCoachChange decides again.
  */
 export async function coachChangeTarget(
   userId: string,
@@ -253,12 +300,13 @@ export interface CoachChangeResult {
   changed: boolean;
 }
 
-function toPlanChange(
+/** A logged change that applied or clamped, as a card shows it, dated as the session is now. */
+export function toPlanChange(
   row: Pick<PlanAdjustmentRow, "planSessionId" | "kind" | "outcome" | "before" | "after">,
   date: string,
 ): PlanChange {
   if (row.planSessionId === null || row.before === null || row.after === null) {
-    throw new Error("An applied coach change has no session, before or after");
+    throw new Error("An applied plan change has no session, before or after");
   }
   return {
     sessionId: row.planSessionId,

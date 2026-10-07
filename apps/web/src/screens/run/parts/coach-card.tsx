@@ -7,15 +7,15 @@ import type {
   RunInsightCard,
   Units,
 } from "@running-coach/shared";
-import { ThumbsDown, ThumbsUp, type LucideIcon } from "lucide-react";
 import { Link } from "react-router";
 import type { ScreenState } from "@/api/screen-state";
+import { FeedbackThumbs } from "@/components/feedback-thumbs";
+import { PlanChangeText } from "@/components/plan-change-text";
 import { RetryAlert } from "@/components/retry-alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { errorMessage, isVersionMismatch } from "@/lib/errors";
 import { formatDayTime } from "@/lib/format";
-import { planChangeLine } from "@/lib/session-adjustment";
 import { Note, RunSection } from "./run-section";
 
 const TITLE = "Coach";
@@ -295,10 +295,7 @@ function PlanChangePart({ change, units }: { change: PlanChange; units: Units })
   return (
     <div className="flex flex-col gap-1">
       <h3 className="text-caption text-ink-2">Plan change</h3>
-      <p className="text-body text-ink">{planChangeLine(change, units)}</p>
-      {change.clamped ? (
-        <p className="text-caption text-ink-2">Kept inside the plan&apos;s limits</p>
-      ) : null}
+      <PlanChangeText change={change} units={units} />
     </div>
   );
 }
@@ -371,66 +368,12 @@ function Thumbs({
   setFeedback: (insightId: string, feedback: CoachFeedback | null) => void;
   error: Error | null;
 }) {
-  // Tapping the selected thumb clears it.
-  const toggle = (value: CoachFeedback) =>
-    setFeedback(insight.id, insight.feedback === value ? null : value);
-
   return (
-    <>
-      <div className="-mr-2 flex justify-end gap-1">
-        <Thumb
-          icon={ThumbsUp}
-          label="Helpful"
-          pressed={insight.feedback === "up"}
-          onClick={() => toggle("up")}
-        />
-        <Thumb
-          icon={ThumbsDown}
-          label="Not helpful"
-          pressed={insight.feedback === "down"}
-          onClick={() => toggle("down")}
-        />
-      </div>
-      {error ? (
-        <p role="alert" className="text-body text-ink">
-          {errorMessage(error)}
-        </p>
-      ) : null}
-    </>
-  );
-}
-
-/**
- * The word beside the icon is the label. Pressed is drawn like the app's other toggles (SegmentedField),
- * not in accent, which is kept for the primary action.
- */
-function Thumb({
-  icon: Icon,
-  label,
-  pressed,
-  onClick,
-}: {
-  icon: LucideIcon;
-  label: string;
-  pressed: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      variant="ghost"
-      aria-pressed={pressed}
-      onClick={onClick}
-      className={cn(
-        "px-3",
-        // Also under the pointer: ghost's hover background would hide the pressed state after a click.
-        pressed
-          ? "bg-surface-2 font-semibold text-ink hover:bg-surface-2"
-          : "font-normal text-ink-2",
-      )}
-    >
-      <Icon aria-hidden="true" strokeWidth={1.75} />
-      {label}
-    </Button>
+    <FeedbackThumbs
+      feedback={insight.feedback}
+      onChange={(feedback) => setFeedback(insight.id, feedback)}
+      error={error}
+    />
   );
 }
 
