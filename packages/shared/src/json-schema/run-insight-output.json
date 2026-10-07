@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "headline": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "whatHappened": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "whatItMeans": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "nextStep": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "caution": {
+      "type": "string",
+      "enum": [
+        "none",
+        "easy_next",
+        "rest_and_check"
+      ]
+    },
+    "adjustment": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "none",
+            "scale",
+            "easy",
+            "rest"
+          ]
+        },
+        "factor": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "nextStep": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "factor",
+        "nextStep"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "headline",
+    "whatHappened",
+    "whatItMeans",
+    "nextStep",
+    "caution",
+    "adjustment"
+  ],
+  "additionalProperties": false
+}

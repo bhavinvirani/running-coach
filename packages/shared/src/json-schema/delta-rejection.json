@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "race",
+    "custom",
+    "locked",
+    "adjusted",
+    "paused",
+    "stale_run",
+    "no_session",
+    "no_change",
+    "invalid"
+  ]
+}

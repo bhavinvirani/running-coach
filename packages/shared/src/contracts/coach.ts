@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { planChangeSchema } from "./plan";
 
 /** easy_next: the next run should be easy. rest_and_check: rest, and see a professional if it persists. */
 export const runInsightCautionSchema = z.enum(["none", "easy_next", "rest_and_check"]);
@@ -20,6 +21,36 @@ export const runInsightSchema = z
   })
   .strict();
 export type RunInsight = z.infer<typeof runInsightSchema>;
+
+/**
+ * What the coach proposes for the next planned session (run-insight v2). none: no change. scale: the
+ * session times a factor. easy: a quality session as an easy run of the same time. rest: skip it.
+ */
+export const coachAdjustmentKindSchema = z.enum(["none", "scale", "easy", "rest"]);
+export type CoachAdjustmentKind = z.infer<typeof coachAdjustmentKindSchema>;
+
+export const coachAdjustmentSchema = z
+  .object({
+    kind: coachAdjustmentKindSchema,
+    /** For scale: the share of the planned session, 0.5 to 1.1; the engine clamps anything outside its caps. */
+    factor: z.number().nullable(),
+    /**
+     * The next step to show instead of nextStep when the engine makes the change, without the new numbers,
+     * which the app shows from the engine; null with none. A rejected change drops it with the change.
+     */
+    nextStep: z.string().min(1).max(400).nullable(),
+  })
+  .strict();
+export type CoachAdjustment = z.infer<typeof coachAdjustmentSchema>;
+
+/**
+ * What Claude returns for a run from run-insight v2: the card plus the proposed change. The API stores the
+ * card alone (runInsightSchema), its nextStep taken from the adjustment when the engine applied it.
+ */
+export const runInsightOutputSchema = runInsightSchema
+  .extend({ adjustment: coachAdjustmentSchema })
+  .strict();
+export type RunInsightOutput = z.infer<typeof runInsightOutputSchema>;
 
 /**
  * Why a card was built without the model. missing_key is never stored, because no key queues no job, but
@@ -69,6 +100,8 @@ export const runInsightCardSchema = z
     /** Null when the model wrote the card. */
     fallbackReason: coachFallbackReasonSchema.nullable(),
     feedback: coachFeedbackSchema.nullable(),
+    /** The change the coach made to the next session after this run, as the engine applied it; null when none. */
+    planChange: planChangeSchema.nullable(),
     createdAt: z.iso.datetime(),
   })
   .strict();

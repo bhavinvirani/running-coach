@@ -773,6 +773,149 @@
                             }
                           ]
                         },
+                        "adjustment": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "enum": [
+                                    "coach",
+                                    "pause",
+                                    "gap"
+                                  ]
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "scale",
+                                    "easy",
+                                    "rest",
+                                    "re_entry"
+                                  ]
+                                },
+                                "activityId": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "original": {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "easy",
+                                        "intervals",
+                                        "tempo",
+                                        "long",
+                                        "race_practice",
+                                        "race",
+                                        "strength",
+                                        "rest"
+                                      ]
+                                    },
+                                    "title": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 60
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "enum": [
+                                        "planned",
+                                        "done",
+                                        "missed",
+                                        "moved",
+                                        "skipped"
+                                      ]
+                                    },
+                                    "target": {
+                                      "type": "object",
+                                      "properties": {
+                                        "distanceM": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "durationS": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "zone": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "enum": [
+                                                "easy",
+                                                "marathon",
+                                                "threshold",
+                                                "interval",
+                                                "repetition",
+                                                "race"
+                                              ]
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "distanceM",
+                                        "durationS",
+                                        "zone"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "title",
+                                    "status",
+                                    "target"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "kind",
+                                "activityId",
+                                "original",
+                                "at"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "paused": {
+                          "type": "boolean"
+                        },
                         "onGarmin": {
                           "type": "boolean"
                         }
@@ -787,6 +930,8 @@
                         "source",
                         "title",
                         "activityId",
+                        "adjustment",
+                        "paused",
                         "onGarmin"
                       ],
                       "additionalProperties": false
