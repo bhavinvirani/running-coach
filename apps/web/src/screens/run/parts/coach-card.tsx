@@ -170,7 +170,7 @@ function AddKey() {
 function AddKeyLink() {
   return (
     <Button asChild variant="secondary" className="self-start">
-      <Link to="/settings">Add Claude key</Link>
+      <Link to="/settings/claude">Add Claude key</Link>
     </Button>
   );
 }
@@ -347,7 +347,7 @@ function FallbackAction({
       {reason === "key_invalid" ? (
         <div className="flex flex-wrap gap-3">
           <Button asChild variant="secondary">
-            <Link to="/settings">Replace key</Link>
+            <Link to="/settings/claude">Replace key</Link>
           </Button>
           {tryAgain}
         </div>

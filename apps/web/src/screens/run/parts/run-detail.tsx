@@ -1,5 +1,6 @@
 import type { Activity, Units } from "@running-coach/shared";
 import type { ReactNode } from "react";
+import { Link } from "react-router";
 import { isApiError } from "@/api/client";
 import { HrZonesChart } from "@/charts/hr-zones-chart";
 import { toLapPoint } from "@/charts/lap-point";
@@ -23,7 +24,8 @@ type RunDetailProps = {
 
 /**
  * Everything Garmin holds beyond the summary, each part on its own card: route, splits (pace bars, or the
- * lap table on Show table), HR zones, cadence and elevation.
+ * lap table on Show table), HR zones with a way to edit them (none without heart rate), cadence and
+ * elevation.
  * It has its own loading and error states, because the first open fetches it from Garmin (about 5 s) and
  * that fetch can fail while the stats above stay good.
  */
@@ -66,13 +68,15 @@ export function RunDetail({ state, activity, units, onRetry }: RunDetailProps) {
           table={(count) => <SplitsTable laps={laps.slice(0, count)} units={units} />}
         />
       </RunSection>
-      <RunSection title="Heart rate zones">
-        {hrZones === null ? (
-          <Note>No heart rate recorded, so no zones.</Note>
-        ) : (
+      {/* A run without heart rate has no zones: no card, rather than a card saying so. */}
+      {hrZones === null ? null : (
+        <RunSection title="Heart rate zones">
           <HrZonesChart zones={hrZones} />
-        )}
-      </RunSection>
+          <Button asChild variant="secondary" className="self-start">
+            <Link to="/settings/hr-zones">Edit zones</Link>
+          </Button>
+        </RunSection>
+      )}
       <RunSection title="Cadence">
         {streams.cadence === null ? (
           <Note>No cadence recorded.</Note>

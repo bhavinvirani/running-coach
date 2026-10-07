@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MISSING,
   elevationUnitLabel,
+  formatBpmRange,
   formatCadence,
   formatCalories,
   formatCount,
@@ -175,6 +176,19 @@ describe("formatHeartRate", () => {
     expect(formatHeartRate(null)).toBe(MISSING);
     expect(formatHeartRate(undefined)).toBe(MISSING);
     expect(formatHeartRate(0)).toBe(MISSING);
+  });
+});
+
+describe("formatBpmRange", () => {
+  it("names both whole bounds of a zone with the unit once", () => {
+    expect(formatBpmRange(118, 136)).toBe("118-136 bpm");
+    expect(formatBpmRange(175.6, 196)).toBe("176-196 bpm");
+  });
+
+  it("shows the dash while a bound is missing or the range runs backwards", () => {
+    expect(formatBpmRange(Number.NaN, 136)).toBe(MISSING);
+    expect(formatBpmRange(118, null)).toBe(MISSING);
+    expect(formatBpmRange(140, 136)).toBe(MISSING);
   });
 });
 

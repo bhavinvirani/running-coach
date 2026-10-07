@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": [
+        "custom",
+        "garmin",
+        "estimated",
+        "none"
+      ]
+    },
+    "zones": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "maxHr": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 240
+            },
+            "lowBpm": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ],
+              "items": false,
+              "minItems": 5,
+              "maxItems": 5
+            }
+          },
+          "required": [
+            "maxHr",
+            "lowBpm"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "source",
+    "zones"
+  ],
+  "additionalProperties": false
+}

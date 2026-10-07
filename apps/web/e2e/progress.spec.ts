@@ -177,13 +177,14 @@ test("lists runs by week, newest first, and Show earlier weeks loads older ones"
 test("shows the week totals in miles once Settings switches units", async ({ page }) => {
   await seedRunHistory();
   await page.goto("/settings");
+  await page.getByRole("link", { name: "Units, Kilometers" }).click();
 
   const saved = page.waitForResponse(
     (response) =>
       response.request().method() === "PATCH" && response.url().endsWith("/api/me/settings"),
   );
-  // The radio itself is visually hidden; a thumb taps its label.
-  await page.getByRole("group", { name: "Units" }).getByText("mi", { exact: true }).click();
+  // The row is the radio's label: a thumb taps the words, not the 20 px ring.
+  await page.getByRole("radiogroup", { name: "Units" }).getByText("Miles", { exact: true }).click();
   expect((await saved).ok()).toBe(true);
 
   await page

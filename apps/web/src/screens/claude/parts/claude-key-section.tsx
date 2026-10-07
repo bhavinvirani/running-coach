@@ -4,7 +4,7 @@ import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { CoachCredentialField } from "./coach-credential-field";
-import { Row, Section } from "./section";
+import { SettingsCard, SettingsRow } from "@/components/settings-card";
 
 const HELPER =
   "The coach uses your own Claude API key, about $1 a month, paid to Anthropic. It is stored encrypted.";
@@ -44,14 +44,14 @@ type ClaudeKeySectionProps = ClaudeKeyProps & {
 export function ClaudeKeySection({ credential, ...key }: ClaudeKeySectionProps) {
   if (credential === undefined) {
     return (
-      <Section title="Claude key">
+      <SettingsCard title="Claude key">
         <ClaudeKey {...key} />
-      </Section>
+      </SettingsCard>
     );
   }
 
   return (
-    <Section title="Claude">
+    <SettingsCard title="Claude">
       <div>
         <CoachCredentialField value={credential.choice} onChange={credential.choose} />
         {credential.error ? (
@@ -65,7 +65,7 @@ export function ClaudeKeySection({ credential, ...key }: ClaudeKeySectionProps) 
       ) : (
         <ClaudeKey {...key} />
       )}
-    </Section>
+    </SettingsCard>
   );
 }
 
@@ -112,7 +112,7 @@ function ClaudeKey({
   if (hasKey && !replacing) {
     return (
       <>
-        <Row label="Status">Saved</Row>
+        <SettingsRow label="Status">Saved</SettingsRow>
         <div className="flex flex-col items-start gap-3 py-4">
           {removeError ? (
             <p role="alert" className="text-body text-ink">

@@ -122,6 +122,20 @@ export function formatHeartRate(bpm: number | null | undefined): string {
   return Math.round(bpm).toString();
 }
 
+/**
+ * A heart-rate zone from its lower to its upper bound, both counted in: 118, 136 → "118-136 bpm". The dash
+ * while either end is missing or the range runs backwards, as it can while a zone is being edited.
+ */
+export function formatBpmRange(
+  lowBpm: number | null | undefined,
+  highBpm: number | null | undefined,
+): string {
+  const low = formatHeartRate(lowBpm);
+  const high = formatHeartRate(highBpm);
+  if (low === MISSING || high === MISSING || Number(high) < Number(low)) return MISSING;
+  return `${low}-${high} bpm`;
+}
+
 /** The calendar fields of a UTC instant in a time zone, read from parts so every browser agrees. */
 function zonedParts(isoUtc: string | null | undefined, timeZone: string) {
   if (!isoUtc) return null;

@@ -47,3 +47,13 @@ export function isGpsGlitch(distanceM: number, durationS: number): boolean {
   const pace = paceSecondsPerUnit(distanceM, durationS, "km");
   return pace !== null && pace < GPS_GLITCH_PACE_S_PER_KM;
 }
+
+/** A heart rate as a whole percent of max HR. */
+export function percentOfMaxHr(bpm: number, maxHr: number): number {
+  return Math.round((bpm / maxHr) * 100);
+}
+
+/** The whole bpm at a percent of max HR. */
+export function bpmAtPercentOfMaxHr(percent: number, maxHr: number): number {
+  return Math.round((percent / 100) * maxHr);
+}

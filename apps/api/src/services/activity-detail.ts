@@ -14,6 +14,8 @@ import { logger } from "../lib/logger";
 import { activityColumns, toActivity } from "./activities";
 import { getRunBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess } from "./garmin-account";
+import { secondsInZones } from "./hr-zone-time";
+import { customHrZoneFloors } from "./hr-zones";
 
 // One run with what Garmin holds about it beyond its summary. The detail is fetched on demand, once: the
 // stream row marks it fetched, laps and stream commit together, and a stored detail is answered without
@@ -25,8 +27,12 @@ function runNotFound(): DomainError {
   return new DomainError(ErrorCode.notFound, 404, "That run does not exist.");
 }
 
-/** The stored laps and samples, or null before the detail was fetched. */
-async function readDetail(activityId: string): Promise<ActivityDetail | null> {
+/**
+ * The stored laps and samples, or null before the detail was fetched. With the runner's own zones the
+ * seconds in zone come from the stored HR series on every read, so a detail fetched again or a zone edit
+ * shows at once; else Garmin's seconds as stored.
+ */
+async function readDetail(userId: string, activityId: string): Promise<ActivityDetail | null> {
   // Stream first: laps commit with it, so once it is visible its laps are too.
   const [stream] = await db
     .select()
@@ -44,6 +50,7 @@ async function readDetail(activityId: string): Promise<ActivityDetail | null> {
     .from(activityLap)
     .where(eq(activityLap.activityId, activityId))
     .orderBy(asc(activityLap.idx));
+  const floors = await customHrZoneFloors(userId);
   return {
     laps,
     streams: {
@@ -55,7 +62,7 @@ async function readDetail(activityId: string): Promise<ActivityDetail | null> {
       speedMps: stream.speedMps,
     },
     route: stream.route,
-    hrZones: stream.hrZones,
+    hrZones: floors ? secondsInZones(stream.elapsedS, stream.hr, floors) : stream.hrZones,
   };
 }
 
@@ -85,7 +92,10 @@ export async function getActivity(userId: string, id: string): Promise<ActivityR
     .from(activity)
     .where(and(eq(activity.id, id), eq(activity.userId, userId)));
   if (!row) throw runNotFound();
-  const [detail, bestEfforts] = await Promise.all([readDetail(id), getRunBestEfforts(userId, id)]);
+  const [detail, bestEfforts] = await Promise.all([
+    readDetail(userId, id),
+    getRunBestEfforts(userId, id),
+  ]);
   return { activity: toActivity(row), detail, bestEfforts };
 }
 

@@ -27,8 +27,8 @@ import { expect, test } from "./fixtures/login";
 // "test-<fixture>.<nonce>" picks the fixture it answers with (apps/api/test/fixtures/claude); on the owner's
 // Claude plan, the coach service over the fake Claude Code CLI, where the prompt's schema picks the output
 // fixture it answers with (apps/coach/test/fixtures). The runner is the owner and the coach service is set
-// up, so Settings always offers the plan, and every test starts on a key. No test connects Garmin, so no
-// app-open sync runs.
+// up, so the Claude screen always offers the plan, and every test starts on a key. No test connects Garmin,
+// so no app-open sync runs.
 
 /**
  * The card the fake Claude's "valid" fixture writes (apps/api/test/fixtures/claude/valid.json), as the
@@ -141,7 +141,7 @@ async function expectValidCard(coach: Locator): Promise<void> {
 
 test("saves a key Claude accepts, keeps it after a reload, and removes it", async ({ page }) => {
   const key = fakeClaudeKey("valid");
-  await page.goto("/settings");
+  await page.goto("/settings/claude");
   const section = region(page, "Claude");
   const field = section.getByLabel("Claude API key");
 
@@ -175,7 +175,7 @@ test("a key Claude rejects says what to do, stays in the field to fix, and is no
   page,
 }) => {
   const rejected = fakeClaudeKey("key-invalid");
-  await page.goto("/settings");
+  await page.goto("/settings/claude");
   const section = region(page, "Claude");
   const field = section.getByLabel("Claude API key");
 
@@ -281,7 +281,7 @@ test("Try again on a fallback card asks the coach again, and its card replaces t
   });
 });
 
-test("a fallback card for a rejected key offers Replace key, which opens Settings, beside Try again", async ({
+test("a fallback card for a rejected key offers Replace key, which opens the Claude screen, beside Try again", async ({
   page,
 }) => {
   await seedRun();
@@ -307,12 +307,15 @@ test("a fallback card for a rejected key offers Replace key, which opens Setting
   await expect(coach.getByRole("button", { name: "Helpful", exact: true })).toHaveCount(0);
 
   await coach.getByRole("link", { name: "Replace key" }).click();
-  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Claude", level: 1 })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/claude$/);
   await expect(region(page, "Claude").getByText("Saved", { exact: true })).toBeVisible();
   await expect(region(page, "Claude").getByRole("button", { name: "Replace key" })).toBeVisible();
 });
 
-test("without a key the run offers only Add Claude key, which opens Settings", async ({ page }) => {
+test("without a key the run offers only Add Claude key, which opens the Claude screen", async ({
+  page,
+}) => {
   await seedRun();
   const runId = await openSeededRun(page);
   const coach = region(page, "Coach");
@@ -325,15 +328,15 @@ test("without a key the run offers only Add Claude key, which opens Settings", a
   expect(await getInsight(page, runId)).toEqual({ state: "no_key" });
 
   await coach.getByRole("link", { name: "Add Claude key" }).click();
-  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole("heading", { name: "Claude", level: 1 })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/claude$/);
   await expect(region(page, "Claude").getByLabel("Claude API key")).toBeVisible();
 });
 
 test("the owner picks the Claude plan, which replaces the key form and stays after a reload, and API key brings it back", async ({
   page,
 }) => {
-  await page.goto("/settings");
+  await page.goto("/settings/claude");
   const section = region(page, "Claude");
   const choice = section.getByRole("group", { name: "Coach uses" });
   const plan = choice.getByRole("radio", { name: "Claude plan", exact: true });
@@ -372,7 +375,7 @@ test("the owner picks the Claude plan, which replaces the key form and stays aft
 test("a Claude plan the server no longer offers says to use an API key and keeps the key form", async ({
   page,
 }) => {
-  // Settings offered the plan from /api/me, and the server stopped offering it before the tap.
+  // The Claude screen offered the plan from /api/me, and the server stopped offering it before the tap.
   const refusal = {
     type: "about:blank",
     title: "Conflict",
@@ -389,7 +392,7 @@ test("a Claude plan the server no longer offers says to use an API key and keeps
         })
       : route.continue(),
   );
-  await page.goto("/settings");
+  await page.goto("/settings/claude");
   const section = region(page, "Claude");
   const apiKey = section
     .getByRole("group", { name: "Coach uses" })
@@ -408,7 +411,7 @@ test("on the Claude plan without a key, Ask the coach gets the run's card from t
   page,
 }) => {
   await seedRun();
-  // Picking the plan in Settings has its own test; here the run is what is under test.
+  // Picking the plan on the Claude screen has its own test; here the run is what is under test.
   const chosen = await page.request.patch("/api/me/settings", {
     data: { coachCredential: "plan" },
   });

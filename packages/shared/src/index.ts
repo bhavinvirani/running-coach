@@ -4,6 +4,7 @@ export * from "./distances";
 export * from "./contracts/problem";
 export * from "./contracts/auth";
 export * from "./contracts/me";
+export * from "./contracts/hr-zones";
 export * from "./contracts/garmin";
 export * from "./contracts/activity";
 export * from "./contracts/sync";

@@ -75,7 +75,10 @@ describe("GarminPushLine", () => {
     );
 
     expect(screen.getByText(/to send these workouts to your watch\.$/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/settings/garmin",
+    );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 

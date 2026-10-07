@@ -703,7 +703,7 @@ describe("TodayScreen", () => {
     expect(line).toHaveClass("text-body", "text-ink");
     expect(line.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const reconnect = screen.getByRole("link", { name: "Reconnect Garmin" });
-    expect(reconnect).toHaveAttribute("href", "/settings");
+    expect(reconnect).toHaveAttribute("href", "/settings/garmin");
     expect(reconnect).toHaveAttribute("data-variant", "secondary");
     expect(header()).toContainElement(reconnect);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -716,7 +716,7 @@ describe("TodayScreen", () => {
 
     expect((await screen.findByRole("alert")).textContent).toBe(errorMessages.garmin_auth_expired);
     const reconnect = screen.getByRole("link", { name: "Reconnect Garmin" });
-    expect(reconnect).toHaveAttribute("href", "/settings");
+    expect(reconnect).toHaveAttribute("href", "/settings/garmin");
     // The sentence carries the one action, so the header leaves it out.
     expect(header()).not.toContainElement(reconnect);
     expect(
@@ -725,14 +725,14 @@ describe("TodayScreen", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("opens Settings from Reconnect Garmin (expired login)", async () => {
+  it("opens the Garmin screen in Settings from Reconnect Garmin (expired login)", async () => {
     fakeTodayApi({ me: expiredMe });
     const { router } = renderToday();
 
     await userEvent.click(await screen.findByRole("link", { name: "Reconnect Garmin" }));
 
     expect(await screen.findByText("Route not under test")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/settings");
+    expect(router.state.location.pathname).toBe("/settings/garmin");
   });
 
   it("turns Sync now into Reconnect Garmin once a sync finds the login expired, with the line once and no Retry (expired login)", async () => {
@@ -1216,7 +1216,7 @@ describe("TodayScreen next 7 days", () => {
 
     expect(within(week).getByRole("link", { name: "Settings" })).toHaveAttribute(
       "href",
-      "/settings",
+      "/settings/garmin",
     );
     expect(
       within(week).getByRole("link", { name: "Intervals, 11.6 km, 1:04:00, Not on Garmin" }),

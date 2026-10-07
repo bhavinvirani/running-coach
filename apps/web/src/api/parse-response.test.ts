@@ -3,6 +3,7 @@ import {
   activityWeeksResponseSchema,
   calendarResponseSchema,
   endPauseResponseSchema,
+  hrZonesResponseSchema,
   garminPushResponseSchema,
   importProgressSchema,
   insightResponseSchema,
@@ -54,6 +55,7 @@ import {
   pausedSessionFixture,
   planChangeFixture,
 } from "@/test/fixtures-adaptation";
+import { hrZonesFixture } from "@/test/fixtures-hr-zones";
 import { parseResponse } from "./parse-response";
 
 type Json = Record<PropertyKey, unknown>;
@@ -108,6 +110,8 @@ const bodies: [name: string, schema: z.ZodType, body: unknown][] = [
   ["no pause", pauseResponseSchema, pauseResponseFixture(null)],
   ["end pause", endPauseResponseSchema, endPauseResponseFixture()],
   ["end pause with none open", endPauseResponseSchema, endPauseResponseFixture(null)],
+  ["custom zones", hrZonesResponseSchema, { source: "custom", zones: hrZonesFixture() }],
+  ["no zones", hrZonesResponseSchema, { source: "none", zones: null }],
   [
     "moved session",
     moveSessionResponseSchema,

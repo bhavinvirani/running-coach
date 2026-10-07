@@ -161,14 +161,14 @@ describe("CoachCard", () => {
       ),
     ).toHaveClass("text-body", "text-ink-2");
     const link = within(coach()).getByRole("link", { name: "Add Claude key" });
-    expect(link).toHaveAttribute("href", "/settings");
+    expect(link).toHaveAttribute("href", "/settings/claude");
     expect(within(coach()).queryAllByRole("link")).toHaveLength(1);
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
     expect(within(coach()).queryByRole("status")).not.toBeInTheDocument();
     expect(within(coach()).queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
 
     await userEvent.click(link);
-    expect(router.state.location.pathname).toBe("/settings");
+    expect(router.state.location.pathname).toBe("/settings/claude");
     expect(asks(calls)).toEqual([]);
   });
 
@@ -248,7 +248,7 @@ describe("CoachCard", () => {
     renderRun();
 
     const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
-    expect(link).toHaveAttribute("href", "/settings");
+    expect(link).toHaveAttribute("href", "/settings/claude");
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
     expect(within(coach()).queryByText(/usage limit/)).not.toBeInTheDocument();
     expect(asks(calls)).toEqual([]);
@@ -544,12 +544,12 @@ describe("CoachCard", () => {
       await within(await findCoach()).findByText(fallback.content.headline),
     ).toBeInTheDocument();
     const link = within(coach()).getByRole("link", { name: "Replace key" });
-    expect(link).toHaveAttribute("href", "/settings");
+    expect(link).toHaveAttribute("href", "/settings/claude");
     expect(within(coach()).getByRole("button", { name: "Try again" })).toBeEnabled();
     expect(within(coach()).queryByRole("button", { name: "Helpful" })).not.toBeInTheDocument();
 
     await userEvent.click(link);
-    expect(router.state.location.pathname).toBe("/settings");
+    expect(router.state.location.pathname).toBe("/settings/claude");
     expect(asks(calls)).toEqual([]);
   });
 
@@ -643,7 +643,7 @@ describe("CoachCard", () => {
     renderRun();
 
     const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
-    expect(link).toHaveAttribute("href", "/settings");
+    expect(link).toHaveAttribute("href", "/settings/claude");
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
   });
 
@@ -655,7 +655,7 @@ describe("CoachCard", () => {
       const { router } = renderRun();
 
       const link = await within(await findCoach()).findByRole("link", { name: "Add Claude key" });
-      expect(link).toHaveAttribute("href", "/settings");
+      expect(link).toHaveAttribute("href", "/settings/claude");
       // The card still says what happened; only the action changes.
       expect(within(coach()).getByText(fallback.content.headline)).toBeInTheDocument();
       expect(within(coach()).queryAllByRole("link")).toHaveLength(1);
@@ -663,7 +663,7 @@ describe("CoachCard", () => {
       expect(within(coach()).queryByRole("link", { name: "Replace key" })).not.toBeInTheDocument();
 
       await userEvent.click(link);
-      expect(router.state.location.pathname).toBe("/settings");
+      expect(router.state.location.pathname).toBe("/settings/claude");
       expect(asks(calls)).toEqual([]);
     },
   );
@@ -730,7 +730,7 @@ describe("CoachCard", () => {
     );
 
     const link = await within(coach()).findByRole("link", { name: "Add Claude key" });
-    expect(link).toHaveAttribute("href", "/settings");
+    expect(link).toHaveAttribute("href", "/settings/claude");
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
     expect(within(coach()).queryByRole("alert")).not.toBeInTheDocument();
     expect(asks(calls)).toHaveLength(1);
@@ -750,7 +750,7 @@ describe("CoachCard", () => {
     );
 
     const link = await within(coach()).findByRole("link", { name: "Add Claude key" });
-    expect(link).toHaveAttribute("href", "/settings");
+    expect(link).toHaveAttribute("href", "/settings/claude");
     expect(within(coach()).getByText(fallback.content.headline)).toBeInTheDocument();
     expect(within(coach()).queryByRole("button")).not.toBeInTheDocument();
     expect(within(coach()).queryByRole("alert")).not.toBeInTheDocument();

@@ -30,6 +30,7 @@ import { advisoryLockKey } from "../../src/lib/lock-key";
 import { activityDetailLimiter } from "../../src/routes/activities";
 import { upsertActivities } from "../../src/services/garmin-sync";
 import { importHistoryPage } from "../../src/services/history-import";
+import { secondsInZones } from "../../src/services/hr-zone-time";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import {
   connectGarmin,
@@ -41,6 +42,7 @@ import {
   garminBundle,
   seedImport,
 } from "../seed";
+import { CUSTOM_ZONES, createRunWithSeries, garminZones, replaceSeries } from "../seed-hr-zones";
 
 const app = createTestApp();
 const PATH = "/api/activities/latest";
@@ -1079,5 +1081,165 @@ describe("POST /api/activities/:id/detail", () => {
     expect(problem.retryAfterSeconds).toBeLessThanOrEqual(60);
     expect(response.headers["retry-after"]).toBe(String(problem.retryAfterSeconds));
     expect(sent()).toEqual([]);
+  });
+});
+
+// Seconds in zone with the runner's own zones (slice 12a): computed from the stored series on every read.
+// CUSTOM_ZONES' floors are 100, 120, 140, 160 and 180 bpm; each sample holds until the next.
+const ZONE_SERIES = {
+  elapsedS: [0, 10, 20, 35, 50, 60.4, 90.4, 100],
+  hr: [95, 120, 130, null, 150, 175, 181, 160],
+};
+/** ZONE_SERIES in CUSTOM_ZONES: 10 s below zone 1, 15 s without a reading, the last sample adds nothing. */
+const ZONE_SERIES_SECONDS = [
+  { zone: 1, lowBpm: 100, seconds: 0 },
+  { zone: 2, lowBpm: 120, seconds: 25 },
+  { zone: 3, lowBpm: 140, seconds: 10 },
+  { zone: 4, lowBpm: 160, seconds: 30 },
+  { zone: 5, lowBpm: 180, seconds: 10 },
+];
+/** What Garmin stored for the run: its own floors and seconds. */
+const GARMIN_STORED = garminZones([98, 117, 137, 156, 176], [11, 22, 33, 44, 55]);
+const ROUTE: [number, number][] = [
+  [0, -30],
+  [0.001, -30],
+];
+
+async function zonesOfRun(agent: Agent, id: string) {
+  const response = await agent.get(`/api/activities/${id}`);
+  expect(response.status).toBe(200);
+  return activityResponseSchema.parse(response.body).detail?.hrZones;
+}
+
+async function saveCustomZones(agent: Agent) {
+  expect((await agent.put("/api/hr-zones").send(CUSTOM_ZONES)).status).toBe(200);
+}
+
+describe("GET /api/activities/:id with custom heart-rate zones", () => {
+  it("computes each zone's seconds from the stored HR series with custom zones (custom zones)", async () => {
+    const agent = await signedInAgent(app);
+    const run = await createRunWithSeries(await ownerId(), {
+      ...ZONE_SERIES,
+      hrZones: GARMIN_STORED,
+      route: ROUTE,
+    });
+    await saveCustomZones(agent);
+
+    expect(await zonesOfRun(agent, run.id)).toEqual(ZONE_SERIES_SECONDS);
+  });
+
+  it("answers Garmin's stored seconds unchanged without custom zones", async () => {
+    const agent = await signedInAgent(app);
+    const run = await createRunWithSeries(await ownerId(), {
+      ...ZONE_SERIES,
+      hrZones: GARMIN_STORED,
+    });
+
+    expect(await zonesOfRun(agent, run.id)).toEqual(GARMIN_STORED);
+  });
+
+  it("answers Garmin's stored seconds again after Reset to Garmin's", async () => {
+    const agent = await signedInAgent(app);
+    const run = await createRunWithSeries(await ownerId(), {
+      ...ZONE_SERIES,
+      hrZones: GARMIN_STORED,
+    });
+    await saveCustomZones(agent);
+    expect(await zonesOfRun(agent, run.id)).toEqual(ZONE_SERIES_SECONDS);
+
+    expect((await agent.delete("/api/hr-zones")).status).toBe(200);
+
+    expect(await zonesOfRun(agent, run.id)).toEqual(GARMIN_STORED);
+  });
+
+  it.each([
+    ["no heart-rate series", null],
+    ["a series without a reading", [null, null, null]],
+  ])("answers hrZones null with custom zones for a run with %s (missing HR)", async (_case, hr) => {
+    const agent = await signedInAgent(app);
+    const run = await createRunWithSeries(await ownerId(), {
+      elapsedS: [0, 10, 20],
+      hr,
+      hrZones: null,
+    });
+    await saveCustomZones(agent);
+
+    const response = await agent.get(`/api/activities/${run.id}`);
+
+    expect(response.status).toBe(200);
+    const { detail } = activityResponseSchema.parse(response.body);
+    expect(detail?.hrZones).toBeNull();
+    expect(detail?.streams.elapsedS).toEqual([0, 10, 20]);
+  });
+
+  it("computes a treadmill run's zones like an outdoor run's (indoor run)", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    const outdoor = await createRunWithSeries(userId, {
+      ...ZONE_SERIES,
+      hrZones: GARMIN_STORED,
+      route: ROUTE,
+    });
+    const treadmill = await createRunWithSeries(
+      userId,
+      { ...ZONE_SERIES, hrZones: GARMIN_STORED, route: null },
+      { type: "treadmill_running", isIndoor: true },
+    );
+    await saveCustomZones(agent);
+
+    expect(await zonesOfRun(agent, treadmill.id)).toEqual(ZONE_SERIES_SECONDS);
+    expect(await zonesOfRun(agent, outdoor.id)).toEqual(ZONE_SERIES_SECONDS);
+  });
+
+  it("follows the stored series when the run's detail is stored again (duplicate or edited activity)", async () => {
+    const agent = await signedInAgent(app);
+    const run = await createRunWithSeries(await ownerId(), {
+      ...ZONE_SERIES,
+      hrZones: GARMIN_STORED,
+    });
+    await saveCustomZones(agent);
+    expect(await zonesOfRun(agent, run.id)).toEqual(ZONE_SERIES_SECONDS);
+
+    await replaceSeries(run.id, {
+      elapsedS: [0, 40, 100, 160],
+      hr: [110, 165, 185, 185],
+      hrZones: GARMIN_STORED,
+    });
+
+    expect((await zonesOfRun(agent, run.id))?.map((zone) => zone.seconds)).toEqual([
+      40, 0, 0, 60, 60,
+    ]);
+  });
+
+  it("answers zones computed from the fetched series in the detail fetch (run detail)", async () => {
+    const { agent, run } = await ownerWithRun();
+    await saveCustomZones(agent);
+
+    const { detail } = await fetchDetail(agent, run.id);
+
+    if (!detail) throw new Error("no detail");
+    const [stream] = await db.select().from(activityStream);
+    expect(detail.hrZones).toEqual(
+      secondsInZones(stream!.elapsedS, stream!.hr, CUSTOM_ZONES.lowBpm),
+    );
+    expect(detail.hrZones?.map((zone) => zone.lowBpm)).toEqual(CUSTOM_ZONES.lowBpm);
+    expect(detail.hrZones).not.toEqual(stream!.hrZones);
+    expect(detail.hrZones?.reduce((sum, zone) => sum + zone.seconds, 0)).toBeGreaterThan(0);
+  });
+
+  it("uses only the signed-in runner's custom zones", async () => {
+    const other = await signedInAgent(app, {
+      email: "other@example.com",
+      password: "another-horse-battery-staple",
+      name: "Other Runner",
+    });
+    await saveCustomZones(other);
+    const agent = await signedInAgent(app);
+    const run = await createRunWithSeries(await ownerId(), {
+      ...ZONE_SERIES,
+      hrZones: GARMIN_STORED,
+    });
+
+    expect(await zonesOfRun(agent, run.id)).toEqual(GARMIN_STORED);
   });
 });

@@ -209,6 +209,11 @@ test("opens a stored race from Progress with its stats, splits, charts and route
   await expect(zones.getByRole("img", { name: "Heart rate zones chart" })).toHaveCount(0);
   await zones.getByRole("button", { name: "Show chart" }).click();
   await expect(zones.getByRole("img", { name: "Heart rate zones chart" })).toBeVisible();
+  // hr-zones.spec.ts follows it.
+  await expect(zones.getByRole("link", { name: "Edit zones" })).toHaveAttribute(
+    "href",
+    "/settings/hr-zones",
+  );
 
   // A stored detail is shown as it is: the screen never asks Garmin again.
   expect(detailPosts).toEqual([]);
@@ -300,7 +305,7 @@ test("the first open fetches the detail from Garmin: a failure keeps the stats, 
 });
 
 // One sync for the three runs.
-test("a treadmill run has no route or elevation, a run without heart rate has no zones, and a race says so", async ({
+test("a treadmill run has no route or elevation, a run without heart rate has no zones card, and a race says so", async ({
   page,
 }) => {
   // From this cursor the sync stores the fixture's six runs of 6 to 27 Sep. Its best-efforts job finds the
@@ -349,12 +354,9 @@ test("a treadmill run has no route or elevation, a run without heart rate has no
   // The table's Avg HR column shows the dash for every lap.
   await section(page, "Splits").getByRole("button", { name: "Show table" }).click();
   await expect(split(page, 1)).toHaveText(["1", "1.0 km", "6:30", "–"]);
-  const zones = section(page, "Heart rate zones");
-  await expect(
-    zones.getByText("No heart rate recorded, so no zones.", { exact: true }),
-  ).toBeVisible();
-  await expect(zones.getByRole("img")).toHaveCount(0);
-  await expect(zones.getByRole("button", { name: "Show table" })).toHaveCount(0);
+  // Without heart rate there are no zones to show or edit: no card at all, rather than one saying so.
+  await expect(section(page, "Heart rate zones")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Edit zones" })).toHaveCount(0);
   // Outdoors, so the route and elevation are there.
   await expect(section(page, "Route").getByRole("img", { name: "Route sketch" })).toBeVisible();
   await expect(
