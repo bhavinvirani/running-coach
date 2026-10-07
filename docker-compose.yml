@@ -1,9 +1,15 @@
 # Local Postgres for dev (running_coach), integration tests (running_coach_test) and e2e (running_coach_e2e).
 # Port 5434 because 5432 is often taken by a host Postgres. Matches Neon's Postgres 17.
+# One container serves every worktree, and every folder starts it with `up -d --wait --no-recreate postgres`:
+# compose's config hash includes the bind-mount path, which differs per folder, so a plain `up` from a worktree
+# would recreate the shared container mid-test. A change here takes one plain `docker compose up -d --wait
+# postgres` from the main folder while nothing runs (the volume stays).
 name: running-coach
 services:
   postgres:
     image: postgres:17-alpine
+    # One `pnpm test` peaked at 49 connections, and up to three lanes' suites plus their e2e runs share this server.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
