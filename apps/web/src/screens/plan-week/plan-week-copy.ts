@@ -1,3 +1,6 @@
+import type { PlanSession } from "@running-coach/shared";
+import { isRestChange } from "@/lib/session-adjustment";
+
 /** Every sentence and label on a plan week, so the wording is read and changed in one place. */
 export const planWeekCopy = {
   /** The title while the plan loads or when there is no such week. */
@@ -12,4 +15,21 @@ export const planWeekCopy = {
   /** Add's name for a screen reader, which hears seven of them: "Add a workout on Thu 8 Oct". */
   addOn: (day: string) => `Add a workout on ${day}`,
   skipped: "Skipped",
+  done: "Done",
+  missed: "Missed",
+  paused: "Paused",
 } as const;
+
+/**
+ * What happened to a session, for its row: Skipped, Done, Missed or Paused (in an open pause); null while
+ * it is to come, moved or not. A rest the coach or a pause made is left to its adjustment line, which says
+ * it was skipped and by what.
+ */
+export function sessionStateWord(
+  session: Pick<PlanSession, "status" | "paused" | "adjustment">,
+): string | null {
+  if (session.status === "skipped") return isRestChange(session) ? null : planWeekCopy.skipped;
+  if (session.status === "done") return planWeekCopy.done;
+  if (session.status === "missed") return planWeekCopy.missed;
+  return session.paused ? planWeekCopy.paused : null;
+}

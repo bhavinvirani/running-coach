@@ -495,7 +495,8 @@ describe("POST /api/sync, runs deleted on Garmin", () => {
     for (const table of [bestEffort, activityLap, activityStream, coachMessage]) {
       expect(await db.select().from(table).where(eq(table.activityId, deleted.id))).toEqual([]);
     }
-    expect(await storedSession(session.id)).toMatchObject({ status: "done", activityId: null });
+    // Run matching after the sync: no run on its date any more, so it is missed (session-match.test.ts).
+    expect(await storedSession(session.id)).toMatchObject({ status: "missed", activityId: null });
     const bests = personalBestsResponseSchema.parse((await agent.get("/api/personal-bests")).body);
     expect(bests.bests).toEqual([
       expect.objectContaining({ distanceKey: "5k", timeS: 1580, activityId: nextFastest.id }),

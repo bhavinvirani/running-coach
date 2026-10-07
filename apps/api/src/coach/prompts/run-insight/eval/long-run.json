@@ -28,19 +28,32 @@
         }
       ],
       "next": {
-        "date": "2026-09-29",
-        "type": "easy",
+        "date": "2026-09-28",
+        "type": "intervals",
         "title": null,
-        "distanceM": 8000,
-        "durationS": 2880
+        "distanceM": 9000,
+        "durationS": 3000
+      }
+    },
+    "context": {
+      "previousRunDays": 2,
+      "pause": null,
+      "planChange": {
+        "allowed": true,
+        "reason": null
       }
     }
   },
   "output": {
-    "headline": "18.0 km long run in 1:42:00 at 5:40 /km, matching the planned 18.0 km.",
-    "whatHappened": "A Sunday morning long run of 18.0 km at 5:40 /km, against a planned 18.0 km in 1:45:00. Average heart rate was 148 bpm, max 166 bpm, with 142 m of climbing and a cadence of 168.",
-    "whatItMeans": "The distance matched the plan and the time came in 3:00 under it, so the pace was a little quicker than planned. A 148 bpm average with a 166 bpm max points to a steady, controlled effort over 142 m of climbing.",
-    "nextStep": "Keep Monday light. Then run Tuesday's easy session as written: 8.0 km in 48:00, at a relaxed pace.",
-    "caution": "easy_next"
+    "headline": "18.0 km long run at 5:40 /km, heart rate averaging 148 bpm.",
+    "whatHappened": "The planned long run: 18.0 km in 1:42:00 against a planned 18.0 km in 1:45:00. You averaged 5:40 /km with a heart rate of 148 bpm (max 166 bpm) and 142 m of climbing.",
+    "whatItMeans": "An average of 148 bpm with a max of 166 bpm is a steady, controlled effort for 18.0 km with some hills. You ran 3 minutes under the planned time, so the pace was slightly quicker than the plan expected.",
+    "nextStep": "Monday's intervals are 9.0 km in 50:00, as written. Coming the day after an 18.0 km run, keep the reps controlled and ease off if your legs feel heavy.",
+    "caution": "easy_next",
+    "adjustment": {
+      "kind": "easy",
+      "factor": null,
+      "nextStep": "Run Monday's intervals as an easy run instead, so your legs recover from the long run before the next hard session."
+    }
   }
 }

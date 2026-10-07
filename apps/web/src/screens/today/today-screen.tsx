@@ -12,8 +12,9 @@ import { useTodayScreen } from "./use-today";
 
 /**
  * Today tab: Sync now, or Reconnect Garmin once the login expired, the latest run, and with an active plan
- * the next 7 days and where their workouts stand on Garmin. Empty until the first sync stores a run; the
- * next 7 days show below the empty state too, since a plan can start before any run is stored.
+ * the next 7 days, where their workouts stand on Garmin, and Not feeling 100% to pause training (or the
+ * open pause with I'm back). Empty until the first sync stores a run; the next 7 days show below the
+ * empty state too, since a plan can start before any run is stored.
  */
 export function TodayScreen() {
   const screen = useTodayScreen();
@@ -70,6 +71,7 @@ export function TodayScreen() {
         units={units}
         send={screen.send}
         unschedule={screen.unschedule}
+        pause={screen.pause}
       />
     );
 

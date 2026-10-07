@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { type CoachFallbackReason, insightResponseSchema } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import request from "supertest";
@@ -10,20 +8,25 @@ import { coachMessage } from "../../src/db/schema";
 import * as analyzeRunQueue from "../../src/jobs/analyze-run-queue";
 import { getBoss, startBoss, stopBoss } from "../../src/jobs/boss";
 import { askCoachLimiter } from "../../src/routes/insights";
-import { configureCoachService, FAKE_COACH_SECRET } from "../fake-coach-service";
+import { getInsight } from "../../src/services/insights";
+import { configureCoachService, FAKE_COACH_SECRET, VALID_CARD } from "../fake-coach-service";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
-import { claudeKey, createLongRun, createUser, setSettings } from "../seed";
+import {
+  claudeKey,
+  createLongRun,
+  createPlan,
+  createSession,
+  createUser,
+  setSettings,
+} from "../seed";
+import { adjustedSession, createAdjustment } from "../seed-adaptation";
 
 // The run screen's coach card. pg-boss runs without workers, so a queued analyze-run job stays queued;
 // the job itself is tested in test/jobs/analyze-run.test.ts.
 
 const app = createTestApp();
 
-const validOutput = (
-  JSON.parse(
-    readFileSync(path.join(import.meta.dirname, "../fixtures/claude/valid.json"), "utf8"),
-  ) as { responses: [{ body: { content: [{ json: unknown }] } }] }
-).responses[0].body.content[0].json;
+const validOutput = VALID_CARD;
 
 beforeAll(async () => {
   const boss = await startBoss();
@@ -78,7 +81,7 @@ async function storeCard(
       userId,
       kind: "insight",
       activityId,
-      promptVersion: "run-insight/v1",
+      promptVersion: "run-insight/v2",
       model: fallbackReason ? null : "claude-opus-5-5",
       content: validOutput,
       fallbackReason,
@@ -131,8 +134,60 @@ describe("GET /api/activities/:id/insight", () => {
         content: validOutput,
         fallbackReason: null,
         feedback: null,
+        planChange: null,
         createdAt: card.createdAt.toISOString(),
       },
+    });
+  });
+
+  it("answers ready with the plan change the card made, as the engine applied it, and none for a rejected one", async () => {
+    const { agent, userId, run } = await owner({ key: true });
+    const card = await storeCard(userId, run.id);
+    const active = await createPlan(userId);
+    const session = await createSession(userId, active.id, { date: "2026-09-29" });
+    const after = {
+      ...adjustedSession(session),
+      target: { ...session.target, distanceM: 6400 },
+    };
+    await createAdjustment(userId, session, {
+      activityId: run.id,
+      coachMessageId: card.id,
+      outcome: "clamped",
+      after,
+    });
+
+    const response = await agent.get(insightPath(run.id));
+
+    expect(insightResponseSchema.parse(response.body)).toMatchObject({
+      state: "ready",
+      insight: {
+        id: card.id,
+        planChange: {
+          sessionId: session.id,
+          date: "2026-09-29",
+          kind: "scale",
+          clamped: true,
+          before: { type: "easy", target: { distanceM: session.target.distanceM } },
+          after: { type: "easy", target: { distanceM: 6400 } },
+        },
+      },
+    });
+
+    const otherId = await createUser("other@example.com");
+    const othersRun = await createLongRun(otherId);
+    const rejected = await storeCard(otherId, othersRun.id);
+    await createAdjustment(otherId, null, {
+      activityId: othersRun.id,
+      coachMessageId: rejected.id,
+      outcome: "rejected",
+      reason: "race",
+      applied: null,
+      before: null,
+      after: null,
+    });
+    expect(await getInsight(otherId, othersRun.id)).toMatchObject({
+      state: "ready",
+      insight: { id: rejected.id, planChange: null },
     });
   });
 
@@ -419,7 +474,7 @@ describe("PUT /api/insights/:id/feedback", () => {
       expect(response.status).toBe(200);
       expect(insightResponseSchema.parse(response.body)).toMatchObject({
         state: "ready",
-        insight: { id: card.id, feedback },
+        insight: { id: card.id, feedback, planChange: null },
       });
       const [stored] = await db.select().from(coachMessage).where(eq(coachMessage.id, card.id));
       expect(stored?.feedback).toBe(feedback);

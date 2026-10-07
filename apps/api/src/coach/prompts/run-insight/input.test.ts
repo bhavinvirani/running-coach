@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildRunInsightInput,
+  buildRunInsightInput as buildInput,
   type InsightActivity,
+  type InsightContext,
   type InsightPlan,
   type InsightSession,
+  type InsightSettings,
 } from "./input";
 
-// The user message: the run's numbers and data notes, then the plan lines in the user's units.
+// The user message: the run's numbers and data notes, the previous run and an open pause, then the plan
+// lines in the user's units and whether the coach may change the next session.
 
 const run: InsightActivity = {
   type: "running",
@@ -37,8 +40,27 @@ const intervals: InsightSession = {
   durationS: 3000,
 };
 
+/** A run two days after the last, no pause, a change allowed. */
+const context: InsightContext = {
+  previousRunDays: 2,
+  pause: null,
+  planChange: { allowed: true, reason: null },
+};
+
+function buildRunInsightInput(
+  activity: InsightActivity,
+  settings: InsightSettings,
+  plan: InsightPlan | null,
+  extra: Partial<InsightContext> = {},
+): string {
+  return buildInput(activity, settings, plan, { ...context, ...extra });
+}
+
+/** The message's lines without the plan change line, which always comes last. */
 function lines(message: string): string[] {
-  return message.split("\n");
+  const all = message.split("\n");
+  expect(all.at(-1)).toMatch(/^Plan change for the next session: /);
+  return all.slice(0, -1);
 }
 
 describe("buildRunInsightInput", () => {
@@ -154,5 +176,82 @@ describe("buildRunInsightInput", () => {
     expect(message).toContain("Average pace: not available");
     expect(message).toContain("the GPS distance is wrong. Ignore pace.");
     expect(message).toContain("Plan: none");
+  });
+
+  it.each([
+    [2, "Previous run: 2 days before"],
+    [1, "Previous run: 1 day before"],
+    [0, "Previous run: the same day"],
+    [null, "Previous run: none on record"],
+  ] as const)("states the days since the previous run (%s) before the plan lines", (days, line) => {
+    const message = buildRunInsightInput(
+      run,
+      { units: "km", coachDetail: "short" },
+      { planned: [easy], next: intervals },
+      { previousRunDays: days },
+    );
+
+    expect(lines(message).slice(-3)).toEqual([
+      line,
+      "Planned that day: Easy (easy), 8.0 km, 45:00",
+      "Next planned session: Thursday 8 October 2026, Intervals (intervals), 9.0 km, 50:00",
+    ]);
+  });
+
+  it.each([
+    ["sick", "Training pause: sick since Monday 5 October 2026"],
+    ["injured", "Training pause: pain or injury since Monday 5 October 2026"],
+    ["break", "Training pause: a break since Monday 5 October 2026"],
+  ] as const)(
+    "states an open %s pause in words with its start date (illness or injury pause)",
+    (reason, line) => {
+      const message = buildRunInsightInput(run, { units: "km", coachDetail: "short" }, null, {
+        pause: { reason, startDate: "2026-10-05" },
+        planChange: { allowed: false, reason: "paused" },
+      });
+
+      expect(message.split("\n").slice(-4)).toEqual([
+        "Previous run: 2 days before",
+        line,
+        "Plan: none",
+        "Plan change for the next session: not allowed (training is paused)",
+      ]);
+    },
+  );
+
+  it("has no pause line while training runs", () => {
+    const message = buildRunInsightInput(run, { units: "km", coachDetail: "short" }, null);
+
+    expect(message).not.toContain("Training pause");
+  });
+
+  it("says a plan change is allowed as the last line", () => {
+    const message = buildRunInsightInput(
+      run,
+      { units: "km", coachDetail: "short" },
+      { planned: [], next: intervals },
+    );
+
+    expect(message.split("\n").at(-1)).toBe("Plan change for the next session: allowed");
+  });
+
+  it.each([
+    ["race", "the next session is a race"],
+    ["custom", "the next session is the runner's own workout"],
+    ["locked", "the next session is done, missed or past"],
+    ["adjusted", "the coach already changed the next session"],
+    ["stale_run", "only the newest run of the last 7 days can change the plan"],
+    ["no_session", "nothing is planned after this run"],
+  ] as const)("says why a plan change is not allowed in plain words (%s)", (reason, words) => {
+    const message = buildRunInsightInput(
+      run,
+      { units: "km", coachDetail: "short" },
+      { planned: [], next: intervals },
+      { planChange: { allowed: false, reason } },
+    );
+
+    expect(message.split("\n").at(-1)).toBe(
+      `Plan change for the next session: not allowed (${words})`,
+    );
   });
 });

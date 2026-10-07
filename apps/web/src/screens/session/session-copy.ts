@@ -1,6 +1,7 @@
-import type { MoveWarning, SessionStatus } from "@running-coach/shared";
+import type { MoveWarning, PlanSession, SessionStatus } from "@running-coach/shared";
 import { daysBetween } from "@/lib/dates";
 import { formatCountValue, formatShortDay } from "@/lib/format";
+import { isRestChange } from "@/lib/session-adjustment";
 import { sessionTypeName } from "@/lib/session-type";
 
 /** Every sentence and label on the session screen, so the wording is read and changed in one place. */
@@ -21,6 +22,8 @@ export const sessionCopy = {
   keepWorkout: "Keep workout",
   removeQuestion: "Delete this workout? It comes off your watch too.",
   edit: "Edit workout",
+  /** A done session's link to the run that completed it. */
+  openRun: "Open run",
 } as const;
 
 const STATUS_WORDS: Readonly<Record<SessionStatus, string | null>> = {
@@ -31,9 +34,19 @@ const STATUS_WORDS: Readonly<Record<SessionStatus, string | null>> = {
   skipped: "Skipped",
 };
 
-/** What happened to the session, for the line under its name; null while it is simply planned. */
-export function statusWord(status: SessionStatus): string | null {
-  return STATUS_WORDS[status];
+/**
+ * What happened to the session, for the line under its name: its status, Paused for one to come in an open
+ * pause; null while it is simply planned, and for a rest the coach or a pause made, whose adjustment line
+ * says it was skipped and by what.
+ */
+export function statusWord(
+  session: Pick<PlanSession, "status" | "paused" | "adjustment">,
+): string | null {
+  if (session.status === "skipped" && isRestChange(session)) return null;
+  if (session.paused && (session.status === "planned" || session.status === "moved")) {
+    return "Paused";
+  }
+  return STATUS_WORDS[session.status];
 }
 
 /** A repeat's count as its group heading: "5 x". */

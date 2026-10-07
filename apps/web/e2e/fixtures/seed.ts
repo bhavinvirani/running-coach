@@ -114,15 +114,16 @@ const pinnedLastSyncAt = "2026-09-26T12:00:00Z";
 export const syncFromRaceDay = "2026-09-07T12:00:00Z";
 
 /** Garmin's event type for every fixture run that is not a race (sync.json, history.json). */
-const UNCATEGORIZED = "uncategorized";
+export const UNCATEGORIZED = "uncategorized";
 
-const runnerId = `(select id from "user" where email = $1)`;
+/** The runner's user id in SQL, from its email as the query's $1. */
+export const runnerId = `(select id from "user" where email = $1)`;
 
 /**
  * Seeds what the API has no route for, on a connection of its own that closes at once: the suite runs one
  * test at a time, so nothing needs a pool or stays open after a worker ends.
  */
-async function withDatabase<T>(work: (client: pg.Client) => Promise<T>): Promise<T> {
+export async function withDatabase<T>(work: (client: pg.Client) => Promise<T>): Promise<T> {
   const client = new pg.Client({ connectionString: e2eDatabaseUrl });
   await client.connect();
   try {
@@ -192,21 +193,24 @@ const runnerInsightJobs = `from pgboss.job where name = 'analyze-run'
 
 /**
  * Every test starts from "no goal or plan, no runs, no coach cards, no history import, Garmin not
- * connected, no Claude key, default settings": no workout push of the runner is left (clearPushes), coach
- * jobs still waiting are deleted, then the runner's plan sessions, plans, goal, coach cards, runs, import
- * progress, Garmin connection and Claude key are deleted, then the settings go back to the defaults through
- * the API, the way the app changes them, so the MeResponse returned already shows the reset state. An
- * import page job left queued by an earlier test finds no progress row and does nothing; a best-efforts
- * batch left waiting is deleted (clearBestEffortsBatches); a coach job already running finds its run gone
- * and stores nothing.
+ * connected, no Claude key, no pause, default settings": no workout push of the runner is left
+ * (clearPushes), coach jobs still waiting are deleted, then the runner's plan changes, pauses, plan
+ * sessions, plans, goal, coach cards, runs, import progress, Garmin connection and Claude key are deleted,
+ * then the settings go back to the defaults through the API, the way the app changes them, so the
+ * MeResponse returned already shows the reset state. An import page job left queued by an earlier test
+ * finds no progress row and does nothing; a best-efforts batch left waiting is deleted
+ * (clearBestEffortsBatches); a coach job already running finds its run gone and stores nothing.
  */
 export async function resetRunner(request: APIRequestContext): Promise<MeResponse> {
   await withDatabase(async (db) => {
     await clearPushes(db);
     await db.query(`delete ${runnerInsightJobs} and state in ('created', 'retry')`, [runner.email]);
-    // Sessions before their plans, plans before their goal, cards before their runs: each would go with
-    // its parent (on delete cascade), but each table is emptied by its own user_id so none is left behind
-    // if that ever changes.
+    // Changes before their sessions, sessions before their plans, plans before their goal, cards before
+    // their runs: each would go with its parent (on delete cascade), but each table is emptied by its own
+    // user_id so none is left behind if that ever changes. A rejected coach proposal has no session to go
+    // with, and an open pause would hold the next test's sessions.
+    await db.query(`delete from plan_adjustment where user_id = ${runnerId}`, [runner.email]);
+    await db.query(`delete from training_pause where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from plan_session where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from plan where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from goal where user_id = ${runnerId}`, [runner.email]);

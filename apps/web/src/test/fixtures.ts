@@ -259,7 +259,8 @@ export function goalFixture(overrides: Partial<Goal> = {}): Goal {
   });
 }
 
-function easyFor(durationS: number): Step {
+/** An easy run step by time only, as planFixture writes its easy runs. */
+export function easyFor(durationS: number): Step {
   return { kind: "run", zone: "easy", distanceM: null, durationS };
 }
 
@@ -285,6 +286,8 @@ function session(
     source: "plan",
     title: null,
     activityId: null,
+    adjustment: null,
+    paused: false,
     onGarmin: false,
   };
 }
@@ -466,6 +469,8 @@ export function customSessionFixture(overrides: Partial<PlanSession> = {}): Plan
     source: "custom",
     title: "Hill reps",
     activityId: null,
+    adjustment: null,
+    paused: false,
     onGarmin: false,
     ...overrides,
   };
@@ -537,6 +542,7 @@ export function insightCardFixture(overrides: Partial<RunInsightCard> = {}): Run
     },
     fallbackReason: null,
     feedback: null,
+    planChange: null,
     createdAt: "2026-09-27T07:10:00Z",
     ...overrides,
   });

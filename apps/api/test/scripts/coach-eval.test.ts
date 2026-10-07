@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -28,11 +28,6 @@ const coach = await startFakeCoachService();
 afterAll(async () => {
   await coach.close();
 });
-
-const validFixture = JSON.parse(
-  await readFile(path.join(import.meta.dirname, "../fixtures/claude/valid.json"), "utf8"),
-) as { responses: [{ body: { content: [{ json: unknown }] } }] };
-const validOutput = validFixture.responses[0].body.content[0].json;
 
 let dir: string;
 
@@ -67,7 +62,7 @@ describe("runRunInsightEval", () => {
       cases.map(({ evalCase: { input } }) => [
         {
           role: "user",
-          content: buildRunInsightInput(input.activity, input.settings, input.plan),
+          content: buildRunInsightInput(input.activity, input.settings, input.plan, input.context),
         },
       ]),
     );
@@ -94,7 +89,7 @@ describe("runRunInsightEval", () => {
     expect(results.every((result) => result.written)).toBe(true);
     const after = await readRunInsightEvalCases(dir);
     expect(after.map(({ evalCase }) => evalCase)).toEqual(
-      before.map(({ evalCase }) => ({ input: evalCase.input, output: validOutput })),
+      before.map(({ evalCase }) => ({ input: evalCase.input, output: VALID_OUTPUT })),
     );
   });
 
@@ -109,6 +104,21 @@ describe("runRunInsightEval", () => {
 
     expect(results.map((result) => [result.failure, result.written])).toEqual(
       before.map(() => ["invalid_output", false]),
+    );
+    expect(await readRunInsightEvalCases(dir)).toEqual(before);
+  });
+
+  it("with write, reports a change outside the prompt's rules (a factor of 0.2) and does not write it", async () => {
+    const before = await readRunInsightEvalCases(dir);
+
+    const results = await runRunInsightEval({
+      credential: { kind: "key", apiKey: claudeKey("adjust-scale-far") },
+      dir,
+      write: true,
+    });
+
+    expect(results.map((result) => [result.failure, result.voiceProblems, result.written])).toEqual(
+      before.map(() => [null, ["adjustment.factor: 0.2, outside 0.5 to 1.1"], false]),
     );
     expect(await readRunInsightEvalCases(dir)).toEqual(before);
   });
@@ -154,7 +164,7 @@ describe("runRunInsightEval on the Claude plan (--plan)", () => {
     );
     expect(coach.runs.map((run) => run.body.input)).toEqual(
       cases.map(({ evalCase: { input } }) =>
-        buildRunInsightInput(input.activity, input.settings, input.plan),
+        buildRunInsightInput(input.activity, input.settings, input.plan, input.context),
       ),
     );
   });

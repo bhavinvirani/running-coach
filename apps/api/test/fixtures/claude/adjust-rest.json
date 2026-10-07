@@ -1,0 +1,31 @@
+{
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "text",
+            "json": {
+              "headline": "10.0 km at 5:00 /km with a max heart rate of 204 bpm.",
+              "whatHappened": "10.0 km in 50:00 at 5:00 /km, average heart rate 176 bpm, max 204 bpm.",
+              "whatItMeans": "204 bpm is far above the rest of the run: a sensor error or a sign of illness.",
+              "nextStep": "Run Thursday's easy run as written, only if you feel well: 8.0 km.",
+              "caution": "rest_and_check",
+              "adjustment": {
+                "kind": "rest",
+                "factor": null,
+                "nextStep": "Skip Thursday's run and rest. If the heart rate stays high at rest or you feel unwell, see a doctor."
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1240,
+          "output_tokens": 212
+        }
+      }
+    }
+  ]
+}

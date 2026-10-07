@@ -3,7 +3,7 @@ import { COACH_RUN_MAX_RETRY_AFTER_S, type CoachRunFailure } from "@running-coac
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callCoach, INSIGHT_MAX_TOKENS } from "../../src/coach/client";
 import { PLAN_LIMIT_DEFAULT_RETRY_S } from "../../src/coach/plan-client";
-import { runInsightSchema } from "../../src/coach/prompts/run-insight/schema";
+import { runInsightOutputSchema } from "../../src/coach/prompts/run-insight/schema";
 import { config } from "../../src/lib/config";
 import type * as loggerModule from "../../src/lib/logger";
 import { withRequestId } from "../../src/lib/logger";
@@ -51,9 +51,9 @@ function callPlan() {
   return callCoach({
     credential: { kind: "plan" },
     prompt: "run-insight",
-    version: "v1",
+    version: "v2",
     input: INPUT,
-    schema: runInsightSchema,
+    schema: runInsightOutputSchema,
     maxTokens: INSIGHT_MAX_TOKENS,
   });
 }
@@ -109,7 +109,7 @@ describe("callCoach on the Claude plan", () => {
       jsonSchema: {
         $schema: "http://json-schema.org/draft-07/schema#",
         type: "object",
-        required: ["headline", "whatHappened", "whatItMeans", "nextStep", "caution"],
+        required: ["headline", "whatHappened", "whatItMeans", "nextStep", "caution", "adjustment"],
         additionalProperties: false,
       },
     });
@@ -317,7 +317,7 @@ describe("callCoach on the Claude plan", () => {
     expect(result).toEqual({ ok: false, failure: "unavailable", usage: null, requestId: null });
     expect(coachLog.error).toHaveBeenCalledTimes(1);
     const [fields, message] = coachLog.error.mock.calls[0] as [Record<string, unknown>, string];
-    expect(fields).toMatchObject({ status: 401, promptVersion: "run-insight/v1" });
+    expect(fields).toMatchObject({ status: 401, promptVersion: "run-insight/v2" });
     expect(message).toContain("COACH_SERVICE_SECRET");
     expect(logged()).not.toContain(wrongSecret);
     expect(logged()).not.toContain(FAKE_COACH_SECRET);
@@ -354,7 +354,7 @@ describe("callCoach on the Claude plan", () => {
 
     expect(coachLog.info).toHaveBeenCalledWith(
       {
-        promptVersion: "run-insight/v1",
+        promptVersion: "run-insight/v2",
         model: config.COACH_MODEL,
         durationMs: expect.any(Number) as unknown,
         wakeMs: expect.any(Number) as unknown,

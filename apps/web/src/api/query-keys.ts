@@ -4,7 +4,15 @@
  * which matches every list and detail of that resource.
  */
 export type Resource =
-  "me" | "activities" | "import" | "personal-bests" | "plan" | "calendar" | "sessions" | "insights";
+  | "me"
+  | "activities"
+  | "import"
+  | "personal-bests"
+  | "plan"
+  | "calendar"
+  | "sessions"
+  | "insights"
+  | "pause";
 
 type Id = string | number;
 

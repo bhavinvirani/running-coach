@@ -3,6 +3,7 @@ import {
   claudeKeyRequestSchema,
   insightFeedbackRequestSchema,
   insightResponseSchema,
+  runInsightOutputSchema,
   runInsightSchema,
 } from "./coach";
 
@@ -52,6 +53,7 @@ describe("insightResponseSchema", () => {
         id: "0b9a4c1e-6f6b-4d55-9a51-3f8f0f2f1a10",
         content: card,
         fallbackReason: null,
+        planChange: null,
         feedback: "up",
         createdAt: "2026-10-03T07:00:00.000Z",
       },
@@ -81,5 +83,30 @@ describe("insightFeedbackRequestSchema", () => {
 
   it("rejects anything else", () => {
     expect(insightFeedbackRequestSchema.safeParse({ feedback: "meh" }).success).toBe(false);
+  });
+});
+
+describe("runInsightOutputSchema", () => {
+  it("accepts the card with no change and with a proposed scale", () => {
+    expect(
+      runInsightOutputSchema.safeParse({
+        ...card,
+        adjustment: { kind: "none", factor: null, nextStep: null },
+      }).success,
+    ).toBe(true);
+    expect(
+      runInsightOutputSchema.safeParse({
+        ...card,
+        adjustment: {
+          kind: "scale",
+          factor: 0.8,
+          nextStep: "Keep Thursday's run easy and a little shorter than planned.",
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a card without the adjustment", () => {
+    expect(runInsightOutputSchema.safeParse(card).success).toBe(false);
   });
 });

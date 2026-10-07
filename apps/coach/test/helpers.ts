@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
-import { type CoachRunRequest, runInsightSchema } from "@running-coach/shared";
+import { type CoachRunRequest, runInsightOutputSchema } from "@running-coach/shared";
 import { z } from "zod";
 import { type Config, parseConfig } from "../src/config";
 import { createLogger } from "../src/logger";
@@ -109,7 +109,7 @@ export function runRequest(overrides: Partial<CoachRunRequest> = {}): CoachRunRe
   return {
     system: SYSTEM_PROMPT,
     input: INPUT,
-    jsonSchema: z.toJSONSchema(runInsightSchema, { target: "draft-7" }),
+    jsonSchema: z.toJSONSchema(runInsightOutputSchema, { target: "draft-7" }),
     model: "claude-opus-5-5",
     fallbackModel: "claude-sonnet-5-5",
     maxTokens: 4000,

@@ -1,6 +1,8 @@
 import { planWeekCopy } from "../../src/screens/plan-week/plan-week-copy";
 import { expect, test } from "../fixtures/login";
+import { fitViewportToPage } from "../fixtures/screens";
 import { planWeekTwoAt, seedPlan } from "../fixtures/seed";
+import { planWeekThreeAt, seedAdjustedPlan } from "../fixtures/seed-adaptation";
 
 test("plan week shows week 2 of the seeded plan, Monday to Sunday", async ({ page }) => {
   await seedPlan();
@@ -22,4 +24,39 @@ test("plan week shows week 2 of the seeded plan, Monday to Sunday", async ({ pag
 
   // No mask: the week's dates and steps are the seed's.
   await expect(page).toHaveScreenshot("plan-week.png", { fullPage: true });
+});
+
+test("plan week shows what the adaptation made of week 3: done, missed, changed by the coach, eased and walk-run", async ({
+  page,
+}) => {
+  await seedAdjustedPlan();
+  // Thu 22 Oct: Mon 19 and Wed 21 are past, and Add shows from Thursday on.
+  await page.clock.setFixedTime(planWeekThreeAt);
+
+  await page.goto("/plan/weeks/3");
+  const days = page.getByRole("region", { name: planWeekCopy.days });
+  // Each session's link carries its state and change, so these wait for every row the capture is about.
+  await expect(
+    days.getByRole("link", {
+      name: /^Walk-run, Easy, Mon 19 Oct, Done, .*, Walk-run for your return, was Easy 4\.9 km$/,
+    }),
+  ).toBeVisible();
+  await expect(
+    days.getByRole("link", {
+      name: /^Easy, Wed 21 Oct, Missed, .*, Changed by the coach, was Tempo 6\.9 km$/,
+    }),
+  ).toBeVisible();
+  await expect(
+    days.getByRole("link", { name: /^Easy, Fri 23 Oct, .*, Eased for your return, was 4\.9 km$/ }),
+  ).toBeVisible();
+  await expect(
+    days.getByRole("link", {
+      name: /^Long run, Sun 25 Oct, .*, Eased for your return, was 15\.0 km$/,
+    }),
+  ).toBeVisible();
+  await expect(days.getByRole("listitem")).toHaveCount(7);
+
+  await fitViewportToPage(page);
+  // No mask: the week's dates, steps and changes are the seed's, made with the engine's own rules.
+  await expect(page).toHaveScreenshot("plan-week-adjusted.png", { fullPage: true });
 });

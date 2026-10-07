@@ -87,6 +87,49 @@ describe("describeSteps", () => {
     expect(describeSteps(race, paces, "km")).toBe("4:56 /km race pace");
   });
 
+  it("reads a recovery after a run step inside a repeat as a walk (walk-run)", () => {
+    const walkRun: SessionSteps = [
+      {
+        repeat: 4,
+        steps: [
+          { kind: "run", zone: "easy", distanceM: null, durationS: 240 },
+          { kind: "recovery", zone: "easy", distanceM: null, durationS: 60 },
+        ],
+      },
+    ];
+    expect(describeSteps(walkRun, paces, "km")).toBe("4 x 4 min easy with 1 min walk");
+  });
+
+  it("keeps a recovery after a threshold run step a jog, not a walk (built threshold run with recovery)", () => {
+    const built: SessionSteps = [
+      {
+        repeat: 6,
+        steps: [
+          { kind: "run", zone: "threshold", distanceM: null, durationS: 180 },
+          { kind: "recovery", zone: "easy", distanceM: null, durationS: 60 },
+        ],
+      },
+    ];
+    expect(describeSteps(built, paces, "km")).toBe("6 x 3 min at 5:00-5:07 /km with 1 min jog");
+  });
+
+  it("keeps a recovery after a work step a jog, beside a walk after a run step (jog after work)", () => {
+    const mixed: SessionSteps = [
+      {
+        repeat: 3,
+        steps: [
+          { kind: "work", zone: "threshold", distanceM: 1000, durationS: null },
+          { kind: "recovery", zone: "easy", distanceM: null, durationS: 120 },
+          { kind: "run", zone: "easy", distanceM: null, durationS: 240 },
+          { kind: "recovery", zone: "easy", distanceM: null, durationS: 60 },
+        ],
+      },
+    ];
+    expect(describeSteps(mixed, paces, "km")).toBe(
+      "3 x (1 km at 5:00-5:07 /km, 4 min easy) with 2 min jog and 1 min walk",
+    );
+  });
+
   it("reads a rep by time, with a recovery by distance", () => {
     const strides: SessionSteps = [
       {

@@ -5,8 +5,10 @@ import {
   planConflictSchema,
   planGenerationInputSchema,
   planGenerationResultSchema,
+  planDeltaSchema,
   planResponseSchema,
   saveGoalResponseSchema,
+  sessionAdjustmentSchema,
   sessionStepsSchema,
   stepSchema,
 } from "./plan";
@@ -90,6 +92,8 @@ const planWeek = {
       source: "plan",
       title: null,
       activityId: null,
+      adjustment: null,
+      paused: false,
       onGarmin: false,
     },
   ],
@@ -283,5 +287,67 @@ describe("saveGoalResponseSchema", () => {
     expect(saveGoalResponseSchema.safeParse({ ok: true, goal: goalRow, plan: null }).success).toBe(
       false,
     );
+  });
+});
+
+describe("planDeltaSchema", () => {
+  it("accepts a scale with any factor, for the engine to clamp, and easy and rest without one", () => {
+    for (const delta of [
+      { kind: "scale", factor: 0.8 },
+      { kind: "scale", factor: 3 },
+      { kind: "scale", factor: -1 },
+      { kind: "easy" },
+      { kind: "rest" },
+    ]) {
+      expect(planDeltaSchema.safeParse(delta).success).toBe(true);
+    }
+  });
+
+  it("rejects a scale without a factor and a factor on rest", () => {
+    expect(planDeltaSchema.safeParse({ kind: "scale" }).success).toBe(false);
+    expect(planDeltaSchema.safeParse({ kind: "rest", factor: 1 }).success).toBe(false);
+  });
+});
+
+describe("sessionAdjustmentSchema", () => {
+  const original = {
+    type: "tempo",
+    title: null,
+    status: "planned",
+    target: { distanceM: 8000, durationS: 2520, zone: "threshold" },
+  };
+
+  it("accepts a coach change with its run and a pause re-entry without one", () => {
+    const at = "2026-10-06T07:00:00.000Z";
+    expect(
+      sessionAdjustmentSchema.safeParse({
+        source: "coach",
+        kind: "easy",
+        activityId: "5e4b9b4d-3f9f-4d7e-8d3b-9e0d5b3f4a55",
+        original,
+        at,
+      }).success,
+    ).toBe(true);
+    expect(
+      sessionAdjustmentSchema.safeParse({
+        source: "pause",
+        kind: "re_entry",
+        activityId: null,
+        original,
+        at,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an unknown source", () => {
+    expect(
+      sessionAdjustmentSchema.safeParse({
+        source: "runner",
+        kind: "scale",
+        activityId: null,
+        original,
+        at: "2026-10-06T07:00:00.000Z",
+      }).success,
+    ).toBe(false);
   });
 });

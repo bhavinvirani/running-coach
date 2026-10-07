@@ -106,6 +106,8 @@ function generatedWeeks(weeks: Plan["weeks"]) {
         activityId: _activityId,
         source: _source,
         title: _title,
+        adjustment: _adjustment,
+        paused: _paused,
         onGarmin: _onGarmin,
         ...session
       }) => session,

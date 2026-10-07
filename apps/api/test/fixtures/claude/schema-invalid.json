@@ -12,11 +12,19 @@
               "whatHappened": "18.0 km in 1:42:00.",
               "whatItMeans": "An aerobic long run.",
               "nextStep": "Run easy next.",
-              "caution": "maybe"
+              "caution": "maybe",
+              "adjustment": {
+                "kind": "none",
+                "factor": null,
+                "nextStep": null
+              }
             }
           }
         ],
-        "usage": { "input_tokens": 1180, "output_tokens": 60 }
+        "usage": {
+          "input_tokens": 1180,
+          "output_tokens": 60
+        }
       }
     }
   ]

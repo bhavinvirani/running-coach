@@ -3,12 +3,14 @@ import { useMemo, useState } from "react";
 import { useLatestActivity } from "@/api/activities";
 import { useCalendar, useSendToGarmin, useUnscheduleGarmin } from "@/api/calendar";
 import { useGarminConnection, useGarminConnectionSeen, useSettings } from "@/api/me";
+import { useEndPause, usePause, useStartPause } from "@/api/pause";
 import { NO_RUN_BESTS, bestDistancesByRun, usePersonalBests } from "@/api/personal-bests";
 import { screenState } from "@/api/screen-state";
 import { useLatestSync, useSyncNow } from "@/api/sync";
 import { addDays, today } from "@/lib/dates";
 import type { SendState } from "@/components/garmin-push-line";
 import type { UnscheduleState } from "./parts/other-garmin-workouts";
+import type { PauseState } from "./parts/use-pause-flow";
 import { syncOutcomeLine } from "./today-copy";
 
 /**
@@ -21,7 +23,9 @@ import { syncOutcomeLine } from "./today-copy";
  * (throwOnFirstLoadMismatch), since only a reload into the server's version can show it. The sync's
  * progress and outcome come from the mutation cache, so leaving Today mid-sync and coming back still shows
  * "Syncing…", then its result. The next 7 days come from the calendar, today to six days on in the
- * runner's time zone, with Send to Garmin and Unschedule for the workouts the app did not create.
+ * runner's time zone, with Send to Garmin and Unschedule for the workouts the app did not create. With an
+ * active plan (the calendar answers its paces) the open pause is read too, with Pause training and I'm
+ * back; a runner without a plan has nothing to pause, so it is never asked for.
  */
 export function useTodayScreen() {
   const latest = useLatestActivity();
@@ -38,6 +42,9 @@ export function useTodayScreen() {
   );
   const send = useSendToGarmin();
   const unschedule = useUnscheduleGarmin();
+  const pause = usePause(calendar.data !== undefined && calendar.data.paces !== null);
+  const startPause = useStartPause();
+  const endPause = useEndPause();
   // The header's Reconnect Garmin is the only place Today says why its sessions are not on Garmin.
   useGarminConnectionSeen(calendar.data?.garmin.connection);
   // Kept here rather than read from the mutation, which forgets one workout's error when the next starts.
@@ -81,6 +88,22 @@ export function useTodayScreen() {
         });
       },
     } satisfies UnscheduleState,
+    pause: {
+      state: screenState(pause),
+      starting: startPause.isPending,
+      startError: startPause.error,
+      onStart: (reason, onStarted) => {
+        // A new pause makes the last I'm back's line stale.
+        endPause.reset();
+        startPause.mutate(reason, { onSuccess: onStarted });
+      },
+      onChoose: () => startPause.reset(),
+      ending: endPause.isPending,
+      endError: endPause.error,
+      onEnd: (onEnded) =>
+        endPause.mutate(undefined, { onSuccess: (response) => onEnded(response.reEntry) }),
+      reEntry: endPause.data?.reEntry ?? null,
+    } satisfies PauseState,
   };
 }
 

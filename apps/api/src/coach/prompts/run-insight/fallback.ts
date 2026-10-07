@@ -14,6 +14,7 @@ import {
 import {
   describeSession,
   type InsightActivity,
+  type InsightContext,
   type InsightPlan,
   type InsightSettings,
 } from "./input";
@@ -21,8 +22,10 @@ import type { RunInsight } from "./schema";
 
 // The card shown when there is no usable model output: no key, a refusal, max_tokens, invalid JSON, a
 // timeout, Claude being down, a rejected key, a request Claude turned down (no credit left) or a
-// rejected plan token. Built from the run's numbers and the next planned session alone, in the same
-// shape as the model's. The reason is the shared enum the API stores.
+// rejected plan token. Built from the run's numbers, the next planned session and an open pause alone,
+// in the stored card's shape (runInsightSchema), with caution rest_and_check during a pause for illness or
+// injury. It never proposes a plan change: only the model does.
+// The reason is the shared enum the API stores.
 
 export type RunInsightFallbackReason = CoachFallbackReason;
 
@@ -56,7 +59,19 @@ export const RUN_INSIGHT_FALLBACK_REASONS: readonly RunInsightFallbackReason[] =
 
 const SAFETY = "Rest or run easy if anything hurts or you feel unwell.";
 
-function nextStepOf(plan: InsightPlan | null, settings: InsightSettings): string {
+function nextStepOf(
+  plan: InsightPlan | null,
+  settings: InsightSettings,
+  pause: InsightContext["pause"],
+): string {
+  // Paused sessions are on hold: never "run it as written" while the runner is ill, hurt or away.
+  if (pause) {
+    const since = `Training has been paused since ${formatLocalDate(pause.startDate)}.`;
+    if (pause.reason === "break") {
+      return `${since} Tap I'm back on Today when you are ready to train. ${SAFETY}`;
+    }
+    return `${since} Rest until you feel well, then tap I'm back on Today. See a doctor or physio if it does not get better.`;
+  }
   // No active plan: there is nothing to follow, so the safe default is an easy run or a rest day.
   if (!plan) return `Keep your next run easy, or take a rest day. ${SAFETY}`;
   if (!plan.next) return `Follow the plan for your next session. ${SAFETY}`;
@@ -69,6 +84,7 @@ export function buildRunInsightFallback(
   settings: InsightSettings,
   reason: RunInsightFallbackReason,
   plan: InsightPlan | null,
+  pause: InsightContext["pause"] = null,
 ): RunInsight {
   const { units } = settings;
   const distance = formatDistance(activity.distanceM, units);
@@ -94,7 +110,8 @@ export function buildRunInsightFallback(
     headline: pace ? `${distance} in ${duration} at ${pace}.` : `${distance} in ${duration}.`,
     whatHappened: facts.join(" "),
     whatItMeans: WHY[reason],
-    nextStep: nextStepOf(plan, settings),
-    caution: "none",
+    nextStep: nextStepOf(plan, settings, pause),
+    // Ill or hurt: rest and check, as the coach's own card would say (coach-prompts rule: safety).
+    caution: pause !== null && pause.reason !== "break" ? "rest_and_check" : "none",
   };
 }

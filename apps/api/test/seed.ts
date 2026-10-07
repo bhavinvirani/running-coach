@@ -351,7 +351,8 @@ export const INTERVAL_STEPS: SessionSteps = sessionStepsSchema.parse([
   { kind: "cooldown", zone: "easy", distanceM: 2000, durationS: null },
 ]);
 
-const PLAN_INPUTS = planGenerationInputSchema.parse({
+/** The inputs a seeded plan was generated from: a 4-day fitness goal, 30 km weeks, a run 2 days back. */
+export const PLAN_INPUTS = planGenerationInputSchema.parse({
   goal: {
     kind: "fitness",
     distanceKey: null,

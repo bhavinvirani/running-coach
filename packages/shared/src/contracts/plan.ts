@@ -107,8 +107,9 @@ export type SessionTarget = z.infer<typeof sessionTargetSchema>;
 
 /**
  * planned: as the engine or the runner made it. moved: planned, then moved by the runner to another day
- * of its week. skipped: dropped by the runner, never made up (a custom one is hidden instead). done and
- * missed arrive with run matching (slice 9).
+ * of its week. skipped: dropped by the runner, by the coach (a rest), or by a pause, never made up (a
+ * custom one is hidden instead). done: a run on its local date completed it. missed: its date passed with
+ * no run; it stays on that date and is never rescheduled.
  */
 export const sessionStatusSchema = z.enum(["planned", "done", "missed", "moved", "skipped"]);
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
@@ -140,6 +141,9 @@ export const SESSION_TYPE_NAMES: Readonly<Record<SessionType, string>> = {
   rest: "Rest",
 };
 
+/** The engine's title for a session its re-entry made walk-run, shown in place of the type's name. */
+export const WALK_RUN_TITLE = "Walk-run";
+
 /** A session as the engine emits it, before the API gives it a row. */
 export const generatedSessionSchema = z
   .object({
@@ -151,15 +155,112 @@ export const generatedSessionSchema = z
   .strict();
 export type GeneratedSession = z.infer<typeof generatedSessionSchema>;
 
+/**
+ * Who changed a session after the plan was made. coach: the coach's proposal after a run, as the engine
+ * accepted or clamped it. pause: the re-entry when the runner ended a pause. gap: the re-entry after a run
+ * that followed 7 or more days without one, with no pause.
+ */
+export const adjustmentSourceSchema = z.enum(["coach", "pause", "gap"]);
+export type AdjustmentSource = z.infer<typeof adjustmentSourceSchema>;
+
+/**
+ * scale: shorter or longer by a factor (a quality session loses reps instead). easy: a quality session
+ * turned into an easy run of the same time. rest: the session skipped. re_entry: eased for the return after
+ * time off, with walk-run in the first week after illness or injury.
+ */
+export const adjustmentKindSchema = z.enum(["scale", "easy", "rest", "re_entry"]);
+export type AdjustmentKind = z.infer<typeof adjustmentKindSchema>;
+
+/**
+ * A change proposed for one session; `validateDelta` in the engine accepts, clamps or rejects it. A scale's
+ * factor is the share of the planned session, unbounded here because the engine clamps it to its caps.
+ */
+export const planDeltaSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("scale"), factor: z.number() }).strict(),
+  z.object({ kind: z.literal("easy") }).strict(),
+  z.object({ kind: z.literal("rest") }).strict(),
+]);
+export type PlanDelta = z.infer<typeof planDeltaSchema>;
+
+/**
+ * Why a proposed change was dropped. race: a race is never changed. custom: the runner's own workouts
+ * stay as built. locked: past, done, missed or skipped. adjusted: the coach already changed this session.
+ * paused: training is paused. stale_run: only the newest run of the last 7 days may change the plan.
+ * no_session: nothing is planned after the run. no_change: the change would leave the session as it is.
+ * invalid: a scale without a usable factor, or a change without its own next step.
+ */
+export const deltaRejectionSchema = z.enum([
+  "race",
+  "custom",
+  "locked",
+  "adjusted",
+  "paused",
+  "stale_run",
+  "no_session",
+  "no_change",
+  "invalid",
+]);
+export type DeltaRejection = z.infer<typeof deltaRejectionSchema>;
+
+/** applied: as proposed. clamped: applied after the engine pulled it inside its caps. rejected: dropped. */
+export const adjustmentOutcomeSchema = z.enum(["applied", "clamped", "rejected"]);
+export type AdjustmentOutcome = z.infer<typeof adjustmentOutcomeSchema>;
+
+/** A session as it stood before or after a change: enough to say "Tempo 8.0 km → Easy 6.4 km". */
+export const sessionSnapshotSchema = z
+  .object({
+    type: sessionTypeSchema,
+    title: z.string().min(1).max(SESSION_TITLE_MAX).nullable(),
+    status: sessionStatusSchema,
+    target: sessionTargetSchema,
+  })
+  .strict();
+export type SessionSnapshot = z.infer<typeof sessionSnapshotSchema>;
+
+/** The latest change made to a session since its plan was made. */
+export const sessionAdjustmentSchema = z
+  .object({
+    source: adjustmentSourceSchema,
+    kind: adjustmentKindSchema,
+    /** The run that prompted it: the reviewed run (coach) or the run that ended the gap; null for a pause. */
+    activityId: z.uuid().nullable(),
+    /** The session as the plan had it before its first change. */
+    original: sessionSnapshotSchema,
+    at: z.iso.datetime(),
+  })
+  .strict();
+export type SessionAdjustment = z.infer<typeof sessionAdjustmentSchema>;
+
+/** One session the coach changed after a run, as the engine applied it: shown on the run's coach card. */
+export const planChangeSchema = z
+  .object({
+    sessionId: z.uuid(),
+    date: z.iso.date(),
+    kind: adjustmentKindSchema,
+    /** The engine pulled the proposal inside its caps. */
+    clamped: z.boolean(),
+    before: sessionSnapshotSchema,
+    after: sessionSnapshotSchema,
+  })
+  .strict();
+export type PlanChange = z.infer<typeof planChangeSchema>;
+
 export const planSessionSchema = generatedSessionSchema
   .extend({
     id: z.uuid(),
     status: sessionStatusSchema,
     source: sessionSourceSchema,
-    /** The runner's name for a custom workout; null names it by its type. */
+    /** The runner's name for a custom workout, or the engine's for a changed one ("Walk-run"); null names it by its type. */
     title: z.string().min(1).max(SESSION_TITLE_MAX).nullable(),
-    /** The run that completed it, once slice 9 matches runs to sessions. */
+    /** The run that completed it (status done). */
     activityId: z.uuid().nullable(),
+    /** The latest change the coach or a re-entry made to it; null while it is as planned. */
+    adjustment: sessionAdjustmentSchema.nullable(),
+    /**
+     * On or after the start of the runner's open pause and not done: off the watch, and skipped when the
+     * pause ends.
+     */
+    paused: z.boolean(),
     /**
      * True when Garmin holds this session as it is now: its workout uploaded with the current steps and
      * paces, and scheduled on its date. The push status (calendar.ts) says why one in the window is not.

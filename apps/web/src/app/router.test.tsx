@@ -35,8 +35,8 @@ function renderApp(path: string, queryClient = testQueryClient()) {
 }
 
 /**
- * The API for a signed-in runner with one stored run, a finished import and a plan, who synced a moment
- * ago, so opening the app sends no sync: that has its own test below.
+ * The API for a signed-in runner with one stored run, a finished import and a plan, no pause, who synced a
+ * moment ago, so opening the app sends no sync: that has its own test below.
  */
 function signedIn({ path, query }: FakeRequest): Response {
   if (path === "/api/me") {
@@ -51,6 +51,7 @@ function signedIn({ path, query }: FakeRequest): Response {
   }
   if (path === "/api/plan") return json(planResponseFixture());
   if (path === "/api/calendar") return json(calendarFixture(query.get("from") ?? "2026-10-05"));
+  if (path === "/api/pause") return json({ pause: null });
   if (path === `/api/sessions/${planSessionId("2026-10-08")}`) return json(sessionDetailFixture());
   if (path === `/api/sessions/${customSessionFixture().id}`) {
     return json(sessionDetailFixture({ session: customSessionFixture() }));

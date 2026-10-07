@@ -6,13 +6,26 @@ import { coachMessage, user } from "../../src/db/schema";
 import { config } from "../../src/lib/config";
 import { analyzeRun } from "../../src/services/insights";
 import {
+  CHANGE_OUTPUT,
+  cardOf,
   configureCoachService,
   PLAN_OWNER_EMAIL,
   PLAN_USAGE,
   startFakeCoachService,
-  VALID_OUTPUT,
+  VALID_CARD,
 } from "../fake-coach-service";
-import { claudeKey, claudeRequests, createLongRun, createUser, setSettings } from "../seed";
+import {
+  claudeKey,
+  claudeRequests,
+  createLongRun,
+  createPlan,
+  createRunOn,
+  createSession,
+  createUser,
+  setSettings,
+  storedSession,
+} from "../seed";
+import { storedAdjustments } from "../seed-adaptation";
 
 // analyzeRun, the analyze-run job's work, on the owner's Claude plan through a fake coach service. The
 // key path is in run-insight.test.ts; the job's deferral and retries in test/jobs/analyze-run.test.ts.
@@ -64,9 +77,9 @@ describe("analyzeRun on the Claude plan", () => {
     expect(card).toMatchObject({
       kind: "insight",
       activityId: run.id,
-      promptVersion: "run-insight/v1",
+      promptVersion: "run-insight/v2",
       model: config.COACH_MODEL,
-      content: VALID_OUTPUT,
+      content: VALID_CARD,
       usage: PLAN_USAGE,
       fallbackReason: null,
     });
@@ -174,5 +187,74 @@ describe("analyzeRun on the Claude plan", () => {
     expect(outcome).toEqual({ status: "skipped", reason: "no_key" });
     expect(coach.healthChecks).toEqual([]);
     expect(await cards()).toEqual([]);
+  });
+});
+
+describe("the plan change on the Claude plan (run-insight v2)", () => {
+  // Wednesday 2026-10-14 in UTC: this morning's run is the newest, an easy 8 km is planned Thursday.
+  const NOW = new Date("2026-10-14T10:00:00Z");
+
+  async function ownerWithPlan() {
+    const userId = await createUser(PLAN_OWNER_EMAIL);
+    await setSettings(userId, { coachCredential: "plan" });
+    const active = await createPlan(userId);
+    const run = await createRunOn(userId, "2026-10-14");
+    const session = await createSession(userId, active.id, { date: "2026-10-15" });
+    return { userId, run, session };
+  }
+
+  it("stores the plan's output with a change: the next session scaled in place, logged against the card, the card's next step the change's", async () => {
+    coach.use({ run: { kind: "change" } });
+    const { userId, run, session } = await ownerWithPlan();
+
+    const outcome = await analyzeRun(userId, run.id, { lastAttempt: false, now: NOW });
+
+    const [card] = await cards();
+    expect(outcome).toEqual({ status: "stored", coachMessageId: card?.id, fallbackReason: null });
+    expect(card).toMatchObject({
+      promptVersion: "run-insight/v2",
+      usage: PLAN_USAGE,
+      content: { ...cardOf(CHANGE_OUTPUT), nextStep: CHANGE_OUTPUT.adjustment.nextStep },
+    });
+    expect((await storedSession(session.id)).target.distanceM).toBe(6400);
+    expect(await storedAdjustments(userId)).toEqual([
+      expect.objectContaining({
+        source: "coach",
+        kind: "scale",
+        outcome: "applied",
+        planSessionId: session.id,
+        coachMessageId: card?.id,
+      }),
+    ]);
+    expect(String(coach.runs[0]?.body.input)).toMatch(
+      /^Plan change for the next session: allowed$/m,
+    );
+    expect(coach.runs[0]?.body.jsonSchema).toMatchObject({
+      required: expect.arrayContaining(["adjustment"]) as unknown,
+    });
+  });
+
+  it("stores the plan_auth_failed card and changes nothing when Claude rejects the plan token (token expiry)", async () => {
+    coach.use({ run: { kind: "failure", failure: "plan_auth_failed" } });
+    const { userId, run, session } = await ownerWithPlan();
+
+    const outcome = await analyzeRun(userId, run.id, { lastAttempt: false, now: NOW });
+
+    expect(outcome).toMatchObject({ status: "stored", fallbackReason: "plan_auth_failed" });
+    expect(await storedSession(session.id)).toEqual(session);
+    expect(await storedAdjustments(userId)).toEqual([]);
+  });
+
+  it("stores nothing and changes nothing while the plan's usage limit defers the run (Claude quota)", async () => {
+    coach.use({ run: { kind: "failure", failure: "plan_limited", retryAfterSeconds: 5400 } });
+    const { userId, run, session } = await ownerWithPlan();
+
+    await expect(analyzeRun(userId, run.id, { lastAttempt: true, now: NOW })).rejects.toMatchObject(
+      { code: ErrorCode.claudePlanLimited, retryAfterSeconds: 5400 },
+    );
+
+    expect(await cards()).toEqual([]);
+    expect(await storedSession(session.id)).toEqual(session);
+    expect(await storedAdjustments(userId)).toEqual([]);
   });
 });

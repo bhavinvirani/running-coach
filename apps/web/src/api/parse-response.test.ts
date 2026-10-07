@@ -2,12 +2,14 @@ import {
   activityResponseSchema,
   activityWeeksResponseSchema,
   calendarResponseSchema,
+  endPauseResponseSchema,
   garminPushResponseSchema,
   importProgressSchema,
   insightResponseSchema,
   latestActivityResponseSchema,
   meResponseSchema,
   moveSessionResponseSchema,
+  pauseResponseSchema,
   personalBestsResponseSchema,
   planResponseSchema,
   problemSchema,
@@ -29,6 +31,7 @@ import {
   garminPushStatusFixture,
   goalFixture,
   importProgressFixture,
+  insightCardFixture,
   insightReadyFixture,
   meFixture,
   personalBestFixture,
@@ -40,6 +43,17 @@ import {
   signInFixture,
   weekFixture,
 } from "@/test/fixtures";
+import {
+  coachEasySessionFixture,
+  coachRestSessionFixture,
+  doneSessionFixture,
+  easedSessionFixture,
+  endPauseResponseFixture,
+  missedSessionFixture,
+  pauseResponseFixture,
+  pausedSessionFixture,
+  planChangeFixture,
+} from "@/test/fixtures-adaptation";
 import { parseResponse } from "./parse-response";
 
 type Json = Record<PropertyKey, unknown>;
@@ -67,10 +81,33 @@ const bodies: [name: string, schema: z.ZodType, body: unknown][] = [
     calendarResponseSchema,
     calendarFixture("2026-10-05", { extra: [customSessionFixture()] }),
   ],
+  [
+    "calendar with done, missed, paused and adjusted sessions",
+    calendarResponseSchema,
+    calendarFixture("2026-10-05", {
+      extra: [
+        doneSessionFixture(),
+        missedSessionFixture(),
+        pausedSessionFixture(),
+        coachEasySessionFixture(),
+        coachRestSessionFixture(),
+        easedSessionFixture("gap"),
+      ],
+    }),
+  ],
   ["Garmin push", garminPushResponseSchema, { garmin: garminPushStatusFixture() }],
   ["import", importProgressSchema, importProgressFixture()],
   ["insight", insightResponseSchema, insightReadyFixture()],
   ["fallback insight", insightResponseSchema, insightReadyFixture(fallbackCardFixture())],
+  [
+    "insight with a plan change",
+    insightResponseSchema,
+    insightReadyFixture(insightCardFixture({ planChange: planChangeFixture({ clamped: true }) })),
+  ],
+  ["open pause", pauseResponseSchema, pauseResponseFixture()],
+  ["no pause", pauseResponseSchema, pauseResponseFixture(null)],
+  ["end pause", endPauseResponseSchema, endPauseResponseFixture()],
+  ["end pause with none open", endPauseResponseSchema, endPauseResponseFixture(null)],
   [
     "moved session",
     moveSessionResponseSchema,
@@ -95,6 +132,11 @@ const bodies: [name: string, schema: z.ZodType, body: unknown][] = [
     },
   ],
   ["session", sessionDetailResponseSchema, sessionDetailFixture()],
+  [
+    "eased session",
+    sessionDetailResponseSchema,
+    sessionDetailFixture({ session: easedSessionFixture() }),
+  ],
   ["sign in", signInResponseSchema, signInFixture()],
   ["sign out", signOutResponseSchema, { success: true }],
   [

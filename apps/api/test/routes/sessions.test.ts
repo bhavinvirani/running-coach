@@ -32,6 +32,7 @@ import {
   storedSession,
   TEMPO_STEPS,
 } from "../seed";
+import { createPause } from "../seed-adaptation";
 
 // /api/sessions on the real Postgres. pg-boss runs without workers, so a push a change queues stays
 // queued. Sessions are dated in January 2030, today or later whatever day the tests run, and in 2020 for
@@ -103,6 +104,8 @@ describe("GET /api/sessions/:id", () => {
         source: "plan",
         title: null,
         activityId: null,
+        adjustment: null,
+        paused: false,
         onGarmin: false,
       },
       paces: PACES,
@@ -517,5 +520,58 @@ describe("today in the runner's time zone", () => {
     ).rejects.toMatchObject({ code: ErrorCode.sessionLocked });
     const moved = await moveSession(userId, custom.id, "2026-10-04", now);
     expect(moved.session.date).toBe("2026-10-04");
+  });
+});
+
+describe("sessions during a pause", () => {
+  it("returns 409 session_locked for a move, a skip or an edit of a session the open pause holds, and stores nothing (illness or injury pause)", async () => {
+    const { agent, userId, planId } = await owner();
+    const tuesday = await createSession(userId, planId, { date: TUESDAY });
+    const custom = await createSession(userId, null, { date: THURSDAY, title: "Strides" });
+    await createPause(userId, { startedOn: MONDAY });
+
+    expectProblem(
+      await agent.post(`/api/sessions/${tuesday.id}/move`).send({ date: SATURDAY }),
+      409,
+      ErrorCode.sessionLocked,
+    );
+    expectProblem(await agent.delete(`/api/sessions/${tuesday.id}`), 409, ErrorCode.sessionLocked);
+    expectProblem(
+      await agent.put(`/api/sessions/${custom.id}`).send(hills),
+      409,
+      ErrorCode.sessionLocked,
+    );
+
+    expect(await storedSession(tuesday.id)).toMatchObject({ date: TUESDAY, status: "planned" });
+    expect(await storedSession(custom.id)).toMatchObject({ title: "Strides", status: "planned" });
+    expect(await pushJobs(userId)).toEqual([]);
+  });
+
+  it("returns 409 session_locked for a new custom workout on or after the open pause's start, and stores nothing (illness or injury pause)", async () => {
+    const { agent, userId } = await owner();
+    await createPause(userId, { startedOn: MONDAY });
+
+    for (const date of [MONDAY, THURSDAY]) {
+      const response = await agent.post("/api/sessions").send({ ...hills, date });
+      expect(expectProblem(response, 409, ErrorCode.sessionLocked).detail).toBe(
+        "Training is paused. Tap I'm back on Today before adding a workout.",
+      );
+    }
+
+    expect(await db.select().from(planSession).where(eq(planSession.userId, userId))).toEqual([]);
+    expect(await pushJobs(userId)).toEqual([]);
+    const before = await agent.post("/api/sessions").send({ ...hills, date: "2030-01-06" });
+    expect(before.status).toBe(201);
+  });
+
+  it("changes sessions again once the pause has ended", async () => {
+    const { agent, userId, planId } = await owner();
+    const tuesday = await createSession(userId, planId, { date: TUESDAY });
+    await createPause(userId, { startedOn: MONDAY, endedOn: MONDAY });
+
+    const response = await agent.delete(`/api/sessions/${tuesday.id}`);
+
+    expect(response.status).toBe(200);
+    expect(detailOf(response).session).toMatchObject({ status: "skipped", paused: false });
   });
 });

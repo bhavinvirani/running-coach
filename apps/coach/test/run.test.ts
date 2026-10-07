@@ -2,7 +2,7 @@ import { request as httpRequest } from "node:http";
 import {
   coachRunResponseSchema,
   problemSchema,
-  runInsightSchema,
+  runInsightOutputSchema,
   type CoachRunResponse,
 } from "@running-coach/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -45,7 +45,7 @@ describe("POST /v1/run", () => {
 
     expect(response.ok).toBe(true);
     if (!response.ok) return;
-    expect(runInsightSchema.parse(response.output).caution).toBe("none");
+    expect(runInsightOutputSchema.parse(response.output).adjustment.kind).toBe("none");
     expect(response.model).toBe("claude-opus-5-5");
     // Input counts cache writes too (6 + 1890), so it compares with an API-key call.
     expect(response.usage).toEqual({ inputTokens: 1896, outputTokens: 210 });

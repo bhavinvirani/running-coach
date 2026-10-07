@@ -17,9 +17,13 @@ import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { garminCaption } from "@/lib/garmin-state";
 import { formatDistance, formatDuration, formatLocalDay, formatUpcomingDay } from "@/lib/format";
+import { adjustmentLine, isRestChange } from "@/lib/session-adjustment";
+import { canAdd } from "@/lib/session-days";
 import { sessionTypeName } from "@/lib/session-type";
 import { sessionName } from "@/lib/workout-steps";
 import { OtherGarminWorkouts, type UnscheduleState } from "./other-garmin-workouts";
+import { NotFeelingButton, PauseNotice, PausePanel } from "./pause-training";
+import { usePauseFlow, type PauseState } from "./use-pause-flow";
 
 const TITLE = "Next 7 days";
 
@@ -30,27 +34,47 @@ type NextSevenDaysProps = {
   units: Units;
   send: SendState;
   unschedule: UnscheduleState;
+  pause: PauseState;
 };
 
 /**
  * The plan's coming week on Today: a row per day from today with its sessions, each opening its session
- * screen with its Garmin state, an Add per day for a workout of the runner's own, and the workouts on the
- * Garmin calendar the app did not put there. Shown only with an active plan (the calendar answers its
- * paces); a runner without one sees Today as before.
+ * screen with its Garmin state or what happened to it and any change the coach or a return made, an Add
+ * per day for a workout of the runner's own (none from an open pause's start, which the API refuses), and
+ * the workouts on the Garmin calendar the app did not put there. Not feeling 100% beside the heading
+ * pauses training, and while a pause is open its card sits above the week with I'm back. Shown only with an active plan (the calendar answers its paces); a runner without
+ * one sees Today as before. The week waits for the pause as well as the calendar, so the paused card never
+ * pushes a loaded week down.
  */
-export function NextSevenDays({ calendar, today, units, send, unschedule }: NextSevenDaysProps) {
+export function NextSevenDays(props: NextSevenDaysProps) {
+  const { calendar } = props;
   if (calendar.status === "success" && calendar.data.paces === null) return null;
+  return <PlanWeekAhead {...props} />;
+}
+
+function PlanWeekAhead({ calendar, today, units, send, unschedule, pause }: NextSevenDaysProps) {
+  const flow = usePauseFlow(pause);
+  const pending =
+    calendar.status === "pending" ||
+    (calendar.status === "success" && pause.state.status === "pending");
+  const loaded = calendar.status === "success" && !pending;
+  // A pause that failed to load leaves Add on every day: the API still refuses one dated in a pause.
+  const pauseStart =
+    pause.state.status === "success" ? (pause.state.data.pause?.startDate ?? null) : null;
 
   // Every branch renders the same tree at the root, so the section stays in place as the data arrives.
   return (
     <>
-      <section
-        aria-label={TITLE}
-        aria-busy={calendar.status === "pending"}
-        className="flex flex-col gap-2"
-      >
-        <h2 className="text-body font-semibold text-ink">{TITLE}</h2>
-        {calendar.status === "pending" ? (
+      {loaded ? <PauseNotice flow={flow} pause={pause} /> : null}
+      <section aria-label={TITLE} aria-busy={pending} className="flex flex-col gap-2">
+        {/* As tall as Not feeling 100%, so the heading stays put whether or not the button shows. */}
+        <div className="flex min-h-11 items-center justify-between gap-4">
+          <h2 className="text-body font-semibold text-ink">{TITLE}</h2>
+          {loaded ? <NotFeelingButton flow={flow} /> : null}
+        </div>
+        {flow.choosing ? <PausePanel flow={flow} pause={pause} /> : null}
+        {/* The status spelt out beside pending, so the branches below narrow the calendar. */}
+        {calendar.status === "pending" || pending ? (
           <NextSevenDaysSkeleton />
         ) : calendar.status === "error" ? (
           <div className="flex flex-col items-start gap-4">
@@ -73,6 +97,7 @@ export function NextSevenDays({ calendar, today, units, send, unschedule }: Next
                   key={day.date}
                   day={day}
                   today={today}
+                  addable={canAdd(day.date, today, pauseStart)}
                   units={units}
                   // A send in flight reads Sending at once, as the push line does.
                   garmin={{
@@ -92,13 +117,21 @@ export function NextSevenDays({ calendar, today, units, send, unschedule }: Next
   );
 }
 
-type DayRowProps = { day: CalendarDay; today: string; units: Units; garmin: GarminPushStatus };
+type DayRowProps = {
+  day: CalendarDay;
+  today: string;
+  /** Whether the day takes Add: not in an open pause. */
+  addable: boolean;
+  units: Units;
+  garmin: GarminPushStatus;
+};
 
 /**
- * One day: "Today", "Tomorrow" or "Thu 8" on the left, its sessions in the middle, Add on the right. Each
- * column's first line is 44 px high, the tap target, so they line up however many sessions the day has.
+ * One day: "Today", "Tomorrow" or "Thu 8" on the left, its sessions in the middle, Add on the right when
+ * the day takes one. Each column's first line is 44 px high, the tap target, so they line up however many
+ * sessions the day has.
  */
-function DayRow({ day, today, units, garmin }: DayRowProps) {
+function DayRow({ day, today, addable, units, garmin }: DayRowProps) {
   return (
     <li className="flex items-start gap-3 py-1">
       <time
@@ -118,35 +151,42 @@ function DayRow({ day, today, units, garmin }: DayRowProps) {
               key={session.id}
               session={session}
               units={units}
-              caption={garminCaption(session, garmin, today)}
+              // A rest the coach or a pause made says it was skipped; the caption would say it twice.
+              caption={isRestChange(session) ? null : garminCaption(session, garmin, today)}
+              adjustment={adjustmentLine(session, units)}
             />
           ))
         )}
       </div>
-      <Link
-        to={`/plan/sessions/new?date=${day.date}`}
-        aria-label={`Add a workout on ${formatLocalDay(day.date)}`}
-        className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-sm text-body font-semibold text-ink active:bg-surface-2"
-      >
-        Add
-      </Link>
+      {addable ? (
+        <Link
+          to={`/plan/sessions/new?date=${day.date}`}
+          aria-label={`Add a workout on ${formatLocalDay(day.date)}`}
+          className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-sm text-body font-semibold text-ink active:bg-surface-2"
+        >
+          Add
+        </Link>
+      ) : null}
     </li>
   );
 }
 
 /**
  * A session as its name, then its type when a title took the name's place (the dot's color alone does not
- * say it), distance and time, then where it stands on Garmin on a line of its own, so no row wraps a
- * caption under its time at 390 px and every row reads the same way.
+ * say it), distance and time, then where it stands on Garmin or what happened to it (Done, Missed, Paused)
+ * on a line of its own, so no row wraps a caption under its time at 390 px and every row reads the same
+ * way, and last what it was before the coach or a return changed it.
  */
 function SessionLink({
   session,
   units,
   caption,
+  adjustment,
 }: {
   session: PlanSession;
   units: Units;
   caption: string | null;
+  adjustment: string | null;
 }) {
   const skipped = session.status === "skipped";
   const { distanceM, durationS } = session.target;
@@ -157,7 +197,7 @@ function SessionLink({
   const type = session.title === null ? null : sessionTypeName(session.type);
   const facts = [type, distance, duration].filter((part) => part !== null);
   // Named in words: read from the lines, a screen reader would run "11.6 km" into "1:04:00".
-  const label = [name, ...facts, caption].filter((part) => part !== null).join(", ");
+  const label = [name, ...facts, caption, adjustment].filter((part) => part !== null).join(", ");
 
   return (
     <Link
@@ -176,6 +216,7 @@ function SessionLink({
         </DotLine>
       ) : null}
       {caption === null ? null : <span className="text-caption text-ink-2">{caption}</span>}
+      {adjustment === null ? null : <span className="text-caption text-ink-2">{adjustment}</span>}
     </Link>
   );
 }

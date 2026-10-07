@@ -23,6 +23,7 @@ import {
   recordGarminSuccess,
   requireGarminConnection,
 } from "./garmin-account";
+import { openPause } from "./runner-state";
 import {
   garminColumnsAfter,
   inWindow,
@@ -96,7 +97,13 @@ async function readPushState(userId: string, window: PushWindow) {
       ),
     )
     .orderBy(asc(planSession.date), asc(planSession.id));
-  return { units: settings.units, activePlan: active ?? null, sessions };
+  const pause = await openPause(db, userId);
+  return {
+    units: settings.units,
+    activePlan: active ?? null,
+    pausedFrom: pause?.startedOn ?? null,
+    sessions,
+  };
 }
 
 /** Stores what each result says Garmin now holds for its session, all in one transaction. */

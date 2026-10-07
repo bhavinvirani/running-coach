@@ -1,4 +1,4 @@
-import type { CoachCredential, CoachFeedback, InsightResponse } from "@running-coach/shared";
+import type { CoachCredential, CoachFeedback, InsightResponse, Units } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -14,6 +14,7 @@ import {
   insightReadyFixture,
   meFixture,
 } from "@/test/fixtures";
+import { planChangeFixture } from "@/test/fixtures-adaptation";
 import { holdPolls } from "@/test/held-polls";
 import { renderScreen } from "@/test/render";
 import { RunScreen } from "../run-screen";
@@ -34,6 +35,8 @@ type FakeCoachApi = {
   credentials?: CoachCredential[];
   /** The runner's time zone in settings; the fixture's by default. */
   timeZone?: string;
+  /** The runner's units in settings; the fixture's (km) by default. */
+  units?: Units;
   /** What GET .../insight answers, in order; the last one repeats. */
   reads?: Answer[];
   /** What POST .../insight (Ask the coach, Try again) answers. */
@@ -50,6 +53,7 @@ function answer(value: Answer): Response | Promise<Response> {
 function fakeCoachApi({
   credentials = ["key"],
   timeZone = meFixture().settings.timezone,
+  units = meFixture().settings.units,
   reads = [{ state: "none" }],
   ask = { state: "pending" },
   feedback = (sent) => json(insightReadyFixture(insightCardFixture({ feedback: sent }))),
@@ -65,6 +69,7 @@ function fakeCoachApi({
       const settings = {
         ...meFixture().settings,
         timezone: timeZone,
+        units,
         hasClaudeKey: coachCredential === "key",
         coachCredential,
         claudePlanAvailable: coachCredential === "plan",
@@ -341,6 +346,74 @@ describe("CoachCard", () => {
     const line = await within(await findCoach()).findByText(text);
     expect(line).toHaveTextContent(new RegExp(`^${text}$`));
     expect(line).toHaveClass("text-body", "text-ink");
+  });
+
+  it("shows the plan change the coach made as a part after Next, without the limits caption when applied as proposed (plan change)", async () => {
+    const card = insightCardFixture({ planChange: planChangeFixture() });
+    fakeCoachApi({ reads: [insightReadyFixture(card)] });
+    renderRun();
+
+    await within(await findCoach()).findByText(card.content.headline);
+    const parts = within(coach()).getAllByRole("heading", { level: 3 });
+    expect(parts.map((part) => part.textContent)).toEqual([
+      "What happened",
+      "What it means",
+      "Next",
+      "Plan change",
+    ]);
+    const change = parts[3]!.parentElement!;
+    expect(change).toHaveTextContent(/^Plan changeThu 8 Intervals 11\.6 km → Easy 10\.6 km$/);
+    expect(within(change).getByText(/^Thu 8/)).toHaveClass("text-body", "text-ink");
+    expect(within(coach()).queryByText("Kept inside the plan's limits")).not.toBeInTheDocument();
+  });
+
+  it("says the change was kept inside the plan's limits when the engine clamped the coach's proposal (plan change clamped)", async () => {
+    const clamped = planChangeFixture({
+      kind: "scale",
+      clamped: true,
+      after: {
+        ...planChangeFixture().before,
+        target: { distanceM: 10500, durationS: 3456, zone: "interval" },
+      },
+    });
+    fakeCoachApi({ reads: [insightReadyFixture(insightCardFixture({ planChange: clamped }))] });
+    renderRun();
+
+    const change = (await within(await findCoach()).findByRole("heading", { name: "Plan change" }))
+      .parentElement!;
+    expect(
+      within(change).getByText("Thu 8 Intervals 11.6 km → Intervals 10.5 km"),
+    ).toBeInTheDocument();
+    expect(within(change).getByText("Kept inside the plan's limits")).toHaveClass(
+      "text-caption",
+      "text-ink-2",
+    );
+  });
+
+  it("reads a coach rest as the session skipped (plan change rest)", async () => {
+    const before = planChangeFixture().before;
+    const rest = planChangeFixture({
+      kind: "rest",
+      after: { ...before, status: "skipped" },
+    });
+    fakeCoachApi({ reads: [insightReadyFixture(insightCardFixture({ planChange: rest }))] });
+    renderRun();
+
+    expect(
+      await within(await findCoach()).findByText("Thu 8 Intervals 11.6 km skipped"),
+    ).toBeInTheDocument();
+  });
+
+  it("gives the plan change's distances in mi when the runner uses miles (unit conversion)", async () => {
+    fakeCoachApi({
+      units: "mi",
+      reads: [insightReadyFixture(insightCardFixture({ planChange: planChangeFixture() }))],
+    });
+    renderRun();
+
+    expect(
+      await within(await findCoach()).findByText("Thu 8 Intervals 7.2 mi → Easy 6.6 mi"),
+    ).toBeInTheDocument();
   });
 
   it("marks the thumb tapped, clears it on a second tap and sends each change", async () => {

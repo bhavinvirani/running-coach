@@ -1,11 +1,12 @@
 import type { GarminPushStatus, PlanSession } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
-import { garminCaption } from "./garmin-state";
+import { garminCaption, isSessionStateCaption, type GarminCaption } from "./garmin-state";
 
 const TODAY = "2026-10-08";
 
-const run: Pick<PlanSession, "status" | "onGarmin" | "steps" | "date"> = {
+const run: Pick<PlanSession, "status" | "paused" | "onGarmin" | "steps" | "date"> = {
   status: "planned",
+  paused: false,
   onGarmin: false,
   steps: [{ kind: "run", zone: "easy", distanceM: null, durationS: 2700 }],
   date: TODAY,
@@ -20,6 +21,34 @@ const ok: Pick<GarminPushStatus, "connection" | "pushing" | "error"> = {
 describe("garminCaption", () => {
   it("says Skipped for a skipped session, before anything else", () => {
     expect(garminCaption({ ...run, status: "skipped", onGarmin: true }, ok, TODAY)).toBe("Skipped");
+  });
+
+  it("says Done for a session a run completed, even while Garmin still holds it", () => {
+    expect(garminCaption({ ...run, status: "done", onGarmin: true }, ok, TODAY)).toBe("Done");
+  });
+
+  it("says Missed for a past session with no run, which stays on its date (missed session)", () => {
+    expect(garminCaption({ ...run, status: "missed", date: "2026-10-07" }, ok, TODAY)).toBe(
+      "Missed",
+    );
+  });
+
+  it("says Paused instead of the Garmin state for a session in an open pause (pause)", () => {
+    expect(
+      garminCaption({ ...run, paused: true }, { ...ok, error: "garmin_unavailable" }, TODAY),
+    ).toBe("Paused");
+    expect(garminCaption({ ...run, paused: true, onGarmin: true }, ok, TODAY)).toBe("Paused");
+  });
+
+  it("says Skipped rather than Paused for a session skipped before or by the pause (pause)", () => {
+    expect(garminCaption({ ...run, paused: true, status: "skipped" }, ok, TODAY)).toBe("Skipped");
+  });
+
+  it("tells what happened to a session apart from where it is on Garmin", () => {
+    const states: GarminCaption[] = ["Skipped", "Done", "Missed", "Paused"];
+    expect(states.map(isSessionStateCaption)).toEqual([true, true, true, true]);
+    expect(isSessionStateCaption("On Garmin")).toBe(false);
+    expect(isSessionStateCaption("Waiting to send")).toBe(false);
   });
 
   it("says On Garmin once Garmin holds the session as it is", () => {

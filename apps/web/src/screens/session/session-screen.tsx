@@ -1,6 +1,6 @@
 import { distanceInUnits, type SessionDetailResponse, type Units } from "@running-coach/shared";
 import type { ReactNode } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { BackLink } from "@/components/back-link";
 import { DotLine } from "@/components/dot-line";
 import { GarminPushLine, type SendState } from "@/components/garmin-push-line";
@@ -10,7 +10,8 @@ import { Stat } from "@/components/stat";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { MISSING, formatDistanceValue, formatDuration, formatLocalDay } from "@/lib/format";
-import { garminCaption } from "@/lib/garmin-state";
+import { garminCaption, isSessionStateCaption } from "@/lib/garmin-state";
+import { adjustmentLine } from "@/lib/session-adjustment";
 import { sessionTypeName } from "@/lib/session-type";
 import { sessionName } from "@/lib/workout-steps";
 import { SessionActions, type MoveState, type SkipState } from "./parts/session-actions";
@@ -20,9 +21,11 @@ import { canChange } from "@/lib/session-days";
 import { useSessionScreen } from "./use-session";
 
 /**
- * One session at /plan/sessions/:id: its type and name, distance and time, the steps the watch runs with
+ * One session at /plan/sessions/:id: its type and name, what happened to it (Done, Missed, Paused...) and
+ * what it was before the coach or a return changed it, distance and time, the steps the watch runs with
  * their paces, where it stands on Garmin, and for a session still to come Move, Skip session or Delete
- * workout, and Edit workout for the runner's own. Keyed by id, so another session starts over.
+ * workout, and Edit workout for the runner's own; a done one opens the run that completed it. Keyed by
+ * id, so another session starts over.
  */
 export function SessionScreen() {
   const { id = "" } = useParams();
@@ -89,6 +92,7 @@ function SessionContent({ detail, units, today, send, move, skip }: SessionConte
     { ...garmin, pushing: garmin.pushing || send.sending },
     today,
   );
+  const adjustment = adjustmentLine(session, units);
 
   return (
     <>
@@ -98,8 +102,9 @@ function SessionContent({ detail, units, today, send, move, skip }: SessionConte
         </p>
         <DotLine className="text-caption text-ink-2">
           {session.title === null ? null : sessionTypeName(session.type)}
-          {statusWord(session.status)}
+          {statusWord(session)}
         </DotLine>
+        {adjustment === null ? null : <p className="text-caption text-ink-2">{adjustment}</p>}
       </div>
       <div className="flex gap-8">
         {distance === MISSING ? null : (
@@ -110,7 +115,8 @@ function SessionContent({ detail, units, today, send, move, skip }: SessionConte
       {session.steps.length > 0 ? (
         <StepsList steps={session.steps} paces={paces} units={units} />
       ) : null}
-      {caption !== null && caption !== "Skipped" ? (
+      {/* Skipped, done, missed and paused sessions are off Garmin's to-do: the line above says why. */}
+      {caption !== null && !isSessionStateCaption(caption) ? (
         <section aria-label={sessionCopy.garmin} className="flex flex-col gap-2">
           <h2 className="text-body font-semibold text-ink">{sessionCopy.garmin}</h2>
           <div className="flex flex-col gap-3 rounded-md bg-surface-1 p-4">
@@ -121,6 +127,11 @@ function SessionContent({ detail, units, today, send, move, skip }: SessionConte
       ) : null}
       {canChange(session, today) ? (
         <SessionActions session={session} name={name} today={today} move={move} skip={skip} />
+      ) : null}
+      {session.status === "done" && session.activityId !== null ? (
+        <Button asChild variant="secondary" className="self-start">
+          <Link to={`/runs/${session.activityId}`}>{sessionCopy.openRun}</Link>
+        </Button>
       ) : null}
     </>
   );

@@ -112,13 +112,16 @@ function EditWorkout({ id }: { id: string }) {
   }
 
   const { session, paces } = data;
-  // Only the runner's own workouts are built here, and only while they can still change.
+  // Only the runner's own workouts are built here, and only while they can still change. A pause is
+  // checked first: it ends with I'm back, which the past-or-done sentence would not tell the runner.
   const blocked =
     session.source !== "custom"
       ? builderCopy.notCustom
-      : canChange(session, today)
-        ? null
-        : errorMessages.session_locked;
+      : session.paused
+        ? builderCopy.paused
+        : canChange(session, today)
+          ? null
+          : errorMessages.session_locked;
   if (blocked !== null) {
     return (
       <BuilderLayout title={title}>

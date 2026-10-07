@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { json, problem, stubFetch } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
 import { testQueryClient } from "@/test/render";
+import { calendarKey } from "./calendar";
 import { meQueryOptions } from "./me";
 import { planKey } from "./plan";
 import { actionKey, detailKey, listKey } from "./query-keys";
@@ -83,11 +84,12 @@ describe("useSyncNow", () => {
 });
 
 describe("useSyncNow refreshes", () => {
-  /** What the screens hold before the sync: the plan, one session and the latest run, all fresh. */
+  /** What the screens hold before the sync: the plan, the calendar, one session and the latest run, all fresh. */
   function cachedViews() {
     const queryClient = testQueryClient();
     const views = {
       plan: planKey,
+      calendar: calendarKey("2026-10-08", "2026-10-14"),
       session: sessionKey("3c1d2e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"),
       latest: detailKey("activities", "latest"),
       bests: listKey("personal-bests"),
@@ -110,26 +112,22 @@ describe("useSyncNow refreshes", () => {
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
     const { result } = renderHook(() => useSyncNow(), { wrapper });
-    await act(() => result.current.mutateAsync());
+    await act(() => result.current.mutateAsync().catch(() => undefined));
     return invalidated();
   }
 
-  it("the plan and its sessions as well as the runs and bests after a sync that removed runs deleted on Garmin (deleted activity)", async () => {
-    expect(await syncWith(synced(0, 1))).toEqual({
-      plan: true,
-      session: true,
-      latest: true,
-      bests: true,
-    });
+  const everything = { plan: true, calendar: true, session: true, latest: true, bests: true };
+
+  it("the plan, the calendar and each session as well as the runs and bests after a sync that removed runs deleted on Garmin (deleted activity)", async () => {
+    expect(await syncWith(synced(0, 1))).toEqual(everything);
   });
 
-  it("the runs and bests but not the plan after a sync that removed none", async () => {
-    expect(await syncWith(synced(1))).toEqual({
-      plan: false,
-      session: false,
-      latest: true,
-      bests: true,
-    });
+  it("the plan, the calendar and each session after a sync that brought a run in, which the API matched to its session (run matching)", async () => {
+    expect(await syncWith(synced(1))).toEqual(everything);
+  });
+
+  it("the plan, the calendar and each session after a sync that failed partway, whose stored runs were matched too (partial sync)", async () => {
+    expect(await syncWith(problem(502, ErrorCode.garminUnavailable))).toEqual(everything);
   });
 });
 

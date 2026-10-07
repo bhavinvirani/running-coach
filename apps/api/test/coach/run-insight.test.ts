@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { ErrorCode } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +6,7 @@ import { db } from "../../src/db/client";
 import { activity, coachMessage, user } from "../../src/db/schema";
 import { config } from "../../src/lib/config";
 import { analyzeRun } from "../../src/services/insights";
+import { VALID_CARD } from "../fake-coach-service";
 import {
   claudeKey,
   claudeRequests,
@@ -21,12 +20,10 @@ import {
 } from "../seed";
 
 // The coach end to end against the fake Claude (global-setup.ts): the key names the fixture it replays.
-// analyzeRun is the analyze-run job's work; the job's retries are in test/jobs/analyze-run.test.ts.
+// analyzeRun is the analyze-run job's work; the job's retries are in test/jobs/analyze-run.test.ts, the
+// plan change the output proposes in run-insight-change.test.ts.
 
-const validFixture = JSON.parse(
-  readFileSync(path.join(import.meta.dirname, "../fixtures/claude/valid.json"), "utf8"),
-) as { responses: [{ body: { content: [{ json: unknown }] } }] };
-const validOutput = validFixture.responses[0].body.content[0].json;
+const validOutput = VALID_CARD;
 
 async function userWithKey(fixture: string | null, settings: { units?: "km" | "mi" } = {}) {
   const userId = await createUser();
@@ -79,7 +76,7 @@ describe("analyzeRun", () => {
     expect(card).toMatchObject({
       kind: "insight",
       activityId: run.id,
-      promptVersion: "run-insight/v1",
+      promptVersion: "run-insight/v2",
       model: config.COACH_MODEL,
       content: validOutput,
       usage: { inputTokens: 1180, outputTokens: 164 },
@@ -96,6 +93,7 @@ describe("analyzeRun", () => {
     });
     expect(String(body?.system)).toContain("# Voice");
     expect(String(body?.system)).toContain("# Safety");
+    expect(String(body?.system)).toContain("# Plan change");
   });
 
   it("sends numbers in the user's units and no key, token or email (unit conversion)", async () => {
@@ -497,6 +495,11 @@ describe("runInsight", () => {
       activity: await createLongRun(await createUser()),
       settings: { units: "km", coachDetail: "short" },
       plan: null,
+      context: {
+        previousRunDays: null,
+        pause: null,
+        planChange: { allowed: false, reason: "no_session" },
+      },
     });
 
     expect(result).toMatchObject({
@@ -504,6 +507,7 @@ describe("runInsight", () => {
       fallbackReason: "missing_key",
       model: null,
       usage: null,
+      adjustment: null,
     });
   });
 });

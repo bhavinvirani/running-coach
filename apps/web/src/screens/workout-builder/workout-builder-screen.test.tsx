@@ -428,4 +428,22 @@ describe("WorkoutBuilderScreen", () => {
     expect(await screen.findByText(errorMessages.session_locked)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save workout" })).not.toBeInTheDocument();
   });
+
+  it("does not edit a workout an open pause holds, and says to tap I'm back first (illness or injury pauses)", async () => {
+    const held = customSessionFixture({ paused: true });
+    fakeBuilderApi({ detail: sessionDetailFixture({ session: held }) });
+    renderEdit(held.id);
+
+    expect(
+      await screen.findByText(
+        "Training is paused. Tap I'm back on Today before changing this workout.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(errorMessages.session_locked)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open session" })).toHaveAttribute(
+      "href",
+      `/plan/sessions/${held.id}`,
+    );
+    expect(screen.queryByRole("button", { name: "Save workout" })).not.toBeInTheDocument();
+  });
 });

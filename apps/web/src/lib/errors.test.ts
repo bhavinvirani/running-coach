@@ -71,6 +71,13 @@ describe("errorMessage", () => {
     );
   });
 
+  it("names a pause and I'm back on Today for a change the API refuses mid-pause (409 session_locked, illness or injury pauses)", () => {
+    const error = new ApiError({ status: 409, code: ErrorCode.sessionLocked });
+    expect(errorMessage(error)).toBe(
+      "This session can no longer change: it is past, done or skipped, or training is paused. Refresh to see it, or tap I'm back on Today.",
+    );
+  });
+
   it("explains a network failure separately from a server error", () => {
     const error = new ApiError({ status: 0, code: ErrorCode.internal, network: true });
     expect(errorMessage(error)).toBe(networkErrorMessage);
