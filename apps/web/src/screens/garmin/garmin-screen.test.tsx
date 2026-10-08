@@ -579,13 +579,13 @@ describe("GarminScreen", () => {
     expect(screen.queryByLabelText(garminCopy.code)).not.toBeInTheDocument();
   });
 
-  it("says to wait about an hour or use the laptop when Garmin limits sign-ins, and sends it once (Garmin 429)", async () => {
+  it("points to the laptop when Garmin turns a sign-in away, and sends it once (Garmin 429)", async () => {
     const { calls } = renderGarmin(notConnected());
 
     await signIn(RATE_LIMITED_EMAIL);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /^Garmin is limiting sign-ins\. Wait about an hour, then try again, or connect from your laptop with pnpm garmin:connect\.$/,
+      /^Garmin turned this sign-in away, as it often does for sign-ins from a server\. Connect from your laptop instead, with pnpm garmin:connect\.$/,
     );
     expect(screen.getByRole("button", { name: "Connect Garmin" })).toBeEnabled();
     expect(screen.queryByLabelText(garminCopy.code)).not.toBeInTheDocument();
