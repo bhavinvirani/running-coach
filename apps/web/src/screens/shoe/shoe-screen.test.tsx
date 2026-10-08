@@ -315,6 +315,24 @@ describe("ShoeScreen for a stored pair", () => {
     expect(screen.getByRole("status", { name: "Loading shoes" })).toBeInTheDocument();
   });
 
+  it("explains a failed load under Edit shoes and loads the pair again on Retry", async () => {
+    let attempts = 0;
+    stubFetch(({ path }) => {
+      if (path === "/api/me") return json(meFixture());
+      attempts += 1;
+      return attempts === 1 ? problem(500, ErrorCode.internal) : json(shoesResponseFixture());
+    });
+    renderShoe();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(errorMessages.internal);
+    expect(screen.getByRole("heading", { level: 1, name: "Edit shoes" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByLabelText("Brand")).toHaveValue("Northpace");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("keeps the form and offers Retry when a background reload fails", async () => {
     let failing = false;
     stubFetch(({ path }) => {

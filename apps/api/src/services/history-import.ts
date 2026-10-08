@@ -15,7 +15,7 @@ import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
 import { queueBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess, requireGarminConnection } from "./garmin-account";
-import { syncStartDate, writeActivities } from "./garmin-sync";
+import { syncStartDate, upsertActivities } from "./garmin-sync";
 
 // The full-history import (SPEC: History): Garmin's activity list newest first, one job per page by offset,
 // each page committing its runs and its cursor together, so a killed import resumes where it stopped. The
@@ -223,9 +223,7 @@ export async function importHistoryPage({
       localDateOf(new Date(), timezone),
     );
     const written = await db.transaction(async (tx) => {
-      const { written: rows } = await writeActivities(userId, page.activities, tx, {
-        wearActivePairFrom,
-      });
+      const rows = await upsertActivities(userId, page.activities, tx, { wearActivePairFrom });
       // Before the commit: a reader that sees the import done must also see the batch for its runs. The
       // batch waits on the user lock this page holds, so it reads the runs once they are committed; one
       // queued for a page that then rolls back finds nothing new and calls no one.

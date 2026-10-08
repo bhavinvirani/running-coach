@@ -9,7 +9,17 @@ import { errorMessage } from "@/lib/errors";
 import { shoeDetails, shoeName, shoeStatus } from "@/lib/shoe-names";
 import { RunSection } from "./run-section";
 
-const TITLE = "Shoes";
+const copy = {
+  title: "Shoes",
+  empty: "Add a pair to count how far each one runs.",
+  add: "Add shoes",
+  none: "None",
+  noneHelper: "This run counts toward no pair.",
+  change: "Change",
+  choices: "Shoes for this run",
+  saving: "Saving…",
+  loading: "Loading shoes",
+} as const;
 /** The choice for no pair: no uuid can take this value. */
 const NONE = "none";
 
@@ -40,11 +50,12 @@ export function RunShoes({ shoeId, state, pending, error, choose }: RunShoesProp
   if (state.status === "pending") {
     return (
       <ShoesSection>
-        <Card>
-          <div role="status" aria-label="Loading shoes" className="flex min-h-11 items-center">
+        {/* The loaded row's box (PairRow), so the section keeps its height when the pairs arrive. */}
+        <PairRow>
+          <div role="status" aria-label={copy.loading} className="flex min-h-11 items-center">
             <div className="h-4 w-32 rounded-sm bg-surface-2" />
           </div>
-        </Card>
+        </PairRow>
       </ShoesSection>
     );
   }
@@ -71,11 +82,9 @@ export function RunShoes({ shoeId, state, pending, error, choose }: RunShoesProp
       <ShoesSection>
         {refetchFailed}
         <Card>
-          <p className="text-body text-ink-2">
-            No shoes yet. Add a pair to count how far each one runs.
-          </p>
+          <p className="text-body text-ink-2">{copy.empty}</p>
           <Button asChild variant="secondary" className="self-start">
-            <Link to="/settings/shoes/new">Add shoes</Link>
+            <Link to="/settings/shoes/new">{copy.add}</Link>
           </Button>
         </Card>
       </ShoesSection>
@@ -85,9 +94,9 @@ export function RunShoes({ shoeId, state, pending, error, choose }: RunShoesProp
   return (
     <ShoesSection>
       {refetchFailed}
-      <div className="flex items-center justify-between gap-3 rounded-md bg-surface-1 py-2 pr-2 pl-4">
+      <PairRow>
         <span id={nameId} className="min-w-0 truncate text-body text-ink">
-          {worn ? shoeName(worn) : "None"}
+          {worn ? shoeName(worn) : copy.none}
         </span>
         {/* Described by the pair, so a screen reader hears what Change would change. */}
         <Button
@@ -96,12 +105,12 @@ export function RunShoes({ shoeId, state, pending, error, choose }: RunShoesProp
           aria-describedby={nameId}
           onClick={() => setOpen((was) => !was)}
         >
-          Change
+          {copy.change}
         </Button>
-      </div>
+      </PairRow>
       {open ? (
         <ChoiceList
-          label="Shoes for this run"
+          label={copy.choices}
           options={options(pairs)}
           value={worn?.id ?? NONE}
           onChange={(value) => choose(value === NONE ? null : value)}
@@ -109,7 +118,7 @@ export function RunShoes({ shoeId, state, pending, error, choose }: RunShoesProp
       ) : null}
       {pending !== undefined ? (
         <p role="status" className="text-caption text-ink-2">
-          Saving…
+          {copy.saving}
         </p>
       ) : error ? (
         <p role="alert" className="text-body text-ink">
@@ -128,15 +137,24 @@ function options(pairs: readonly Shoe[]): ChoiceOption<string>[] {
       label: shoeName(pair),
       helper: [shoeStatus(pair), ...shoeDetails(pair)].join(" · "),
     })),
-    { value: NONE, label: "None", helper: "This run counts toward no pair." },
+    { value: NONE, label: copy.none, helper: copy.noneHelper },
   ];
 }
 
 function ShoesSection({ children }: { children: ReactNode }) {
   return (
-    <RunSection title={TITLE} className="mt-2" card={false}>
+    <RunSection title={copy.title} className="mt-2" card={false}>
       <div className="flex flex-col gap-2">{children}</div>
     </RunSection>
+  );
+}
+
+/** The pair's row: its name and Change, on the section's card. */
+function PairRow({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md bg-surface-1 py-2 pr-2 pl-4">
+      {children}
+    </div>
   );
 }
 

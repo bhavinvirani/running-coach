@@ -99,8 +99,9 @@ export async function upsertActivities(
   userId: string,
   summaries: GarminActivitySummary[],
   executor: Db | DbTransaction = db,
+  options: WriteActivitiesOptions = {},
 ): Promise<number> {
-  return (await writeActivities(userId, summaries, executor)).written;
+  return (await writeActivities(userId, summaries, executor, options)).written;
 }
 
 export interface WrittenActivities {

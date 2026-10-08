@@ -209,7 +209,7 @@ describe("RunShoes", () => {
 
     const section = await findShoes();
     expect(
-      await within(section).findByText("No shoes yet. Add a pair to count how far each one runs."),
+      await within(section).findByText("Add a pair to count how far each one runs."),
     ).toBeInTheDocument();
     expect(within(section).getByRole("link", { name: "Add shoes" })).toHaveAttribute(
       "href",
@@ -223,7 +223,16 @@ describe("RunShoes", () => {
     renderRun();
 
     const section = await findShoes();
-    expect(within(section).getByRole("status", { name: "Loading shoes" })).toBeInTheDocument();
+    const skeleton = within(section).getByRole("status", { name: "Loading shoes" });
+    // In the loaded row's box, 44 px tall like Change, so the section keeps its height.
+    expect(skeleton).toHaveClass("min-h-11");
+    expect(skeleton.parentElement).toHaveClass(
+      "rounded-md",
+      "bg-surface-1",
+      "py-2",
+      "pr-2",
+      "pl-4",
+    );
     expect(screen.getByRole("region", { name: "Summary" })).toBeInTheDocument();
   });
 

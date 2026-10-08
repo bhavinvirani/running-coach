@@ -48,6 +48,8 @@ export function draftFromInput(input: ShoeInput, units: Units): ShoeDraft {
     model: input.model,
     colour: input.colour ?? "",
     nickname: input.nickname ?? "",
+    // A field's text, not a figure: format.ts would group thousands ("1,000"), which the field would then
+    // read as a decimal comma.
     retireAt: String(Math.round(distanceInUnits(input.retireDistanceM, units))),
     startDistance:
       input.startDistanceM === 0
