@@ -84,12 +84,13 @@ export function logInErrorMessage(error: unknown): string {
 }
 
 /**
- * Why a Garmin sign-in on the Garmin screen failed. Garmin's 429 on a sign-in holds for about an hour, and
- * the laptop CLI is the way round it.
+ * Why a Garmin sign-in on the Garmin screen failed. Garmin's 429 on a password sign-in from the hosted app
+ * is a block on the server (every sign-in strategy answered 429 from Render, #13), which waiting does not
+ * lift; the laptop CLI is the way round it.
  */
 export function garminSignInErrorMessage(error: unknown): string {
   if (isApiError(error) && !error.network && error.code === "garmin_rate_limited") {
-    return "Garmin is limiting sign-ins. Wait about an hour, then try again, or connect from your laptop with pnpm garmin:connect.";
+    return "Garmin turned this sign-in away, as it often does for sign-ins from a server. Connect from your laptop instead, with pnpm garmin:connect.";
   }
   return errorMessage(error);
 }

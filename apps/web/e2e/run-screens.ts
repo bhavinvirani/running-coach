@@ -105,7 +105,9 @@ async function waitForServer(name: string, port: number): Promise<void> {
 
 function runScreens(port: number, args: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
-    child = spawn(process.execPath, [playwrightCli, "test", "--project", "screens", ...args], {
+    // "--project=screens" in one token: "--project" takes a list, so a spec path after "--project screens"
+    // would be read as another project's name.
+    child = spawn(process.execPath, [playwrightCli, "test", "--project=screens", ...args], {
       cwd: webDir,
       stdio: "inherit",
       env: { ...process.env, PW_SCREENS_WS_ENDPOINT: `ws://127.0.0.1:${port}/` },

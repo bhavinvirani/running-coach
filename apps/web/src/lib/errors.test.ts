@@ -119,10 +119,10 @@ describe("logInErrorMessage", () => {
 });
 
 describe("garminSignInErrorMessage", () => {
-  it("says to wait about an hour or use the laptop when Garmin limits sign-ins (Garmin 429)", () => {
+  it("points to the laptop when Garmin turns a sign-in away (Garmin 429)", () => {
     const error = new ApiError({ status: 429, code: ErrorCode.garminRateLimited });
     expect(garminSignInErrorMessage(error)).toBe(
-      "Garmin is limiting sign-ins. Wait about an hour, then try again, or connect from your laptop with pnpm garmin:connect.",
+      "Garmin turned this sign-in away, as it often does for sign-ins from a server. Connect from your laptop instead, with pnpm garmin:connect.",
     );
   });
 
