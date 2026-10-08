@@ -265,11 +265,6 @@ export const MIN_RUN_S = 1200;
 // Source: this app's own choice: work jumps at whole 100 m of week (T in 100 m blocks, reps by shares).
 export const NEEDED_VOLUME_STEP_M = 100;
 
-// Where 20 min runs would leave a gap, shorter equal ones fill it, but never under 15 min: a week
-// that can only hold shorter runs runs fewer days instead. Source: this app's own choice (review of
-// #56), about the shortest easy runs Runna plans.
-export const EASY_RUN_FLOOR_S = 900;
-
 // SPEC "Plan engine": at least 80% of the week's time easy.
 export const HARD_TIME_MAX_SHARE = 0.2;
 

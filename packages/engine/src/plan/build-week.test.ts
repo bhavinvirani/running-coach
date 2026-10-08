@@ -157,20 +157,59 @@ describe("build week", () => {
     expect(sized(4500 + ctx.minRunM)).toEqual([["long", ctx.minRunM]]);
   });
 
-  it("drops the long run where its cap by days to the race is under 20 min, and holds no run to that cap", () => {
+  it("drops the long run where its cap by days to the race is under 20 min, and holds the week's other runs to 20 min: easy runs capped when the long run is dropped", () => {
     // A Thursday 5K 11 days after the week's Sunday caps its long run at 70% of the 5 km seed, 3500
-    // m: a long run of 20 min fits it at 3500 m, not at 3501 m.
+    // m: a long run of 20 min fits it at 3500 m, not at 3501 m, and then no run passes 20 min.
     const ctx = contextOf(fiveK(4, 0));
     const weekStart = addDays(START, 7);
-    const caps = (raceDate: string, minRunM: number) =>
+    const caps = (raceDate: string, minRunM: number, runCapM = 9000) =>
       weekRunCaps(
         { ...ctx, raceDate, minRunM },
-        { weekStart, longRunsBeforeM: [], seedM: 5000, runCapM: 9000 },
+        { weekStart, longRunsBeforeM: [], seedM: 5000, runCapM },
       );
     const thursday = addDays(weekStart, 14 + 3);
     expect(caps(thursday, 3500)).toEqual({ maxRunM: 3500, longRun: true });
-    expect(caps(thursday, 3501)).toEqual({ maxRunM: 9000, longRun: false });
+    expect(caps(thursday, 3501)).toEqual({ maxRunM: 3501, longRun: false });
+    expect(caps(thursday, 4372)).toEqual({ maxRunM: 4372, longRun: false });
+    // 110% of the recent longest still holds under them.
+    expect(caps(thursday, 4372, 4000)).toEqual({ maxRunM: 4000, longRun: false });
     // 14 days out a 5K's long run has no cap by days.
     expect(caps(addDays(thursday, 3), 9000)).toEqual({ maxRunM: 9000, longRun: true });
+  });
+
+  it("runs under 20 min in taper weeks: none, fewer and longer runs instead, the long run alone where the week holds one 20 min run but not two", () => {
+    // A taper week of a long run on Sunday and 3 easy days: each run at least 20 min, so a week
+    // that holds one 20 min run but not two runs the long run alone, and a week under 20 min runs it
+    // at what it holds.
+    const ctx = contextOf(fiveK(4, 5000));
+    const { minRunM } = ctx;
+    const sized = (targetM: number) =>
+      sizeWeek(ctx, {
+        slots: {
+          long: addDays(START, 6),
+          quality: [],
+          easy: [addDays(START, 1), addDays(START, 3), addDays(START, 4)],
+        },
+        keepsBaselineLongest: false,
+        targetM,
+        maxRunM: 20_000,
+        weekNumber: 1,
+        fastFinish: false,
+      }).map((session) => [session.type, session.target.distanceM]);
+    expect(sized(minRunM - 1)).toEqual([["long", minRunM - 1]]);
+    expect(sized(minRunM)).toEqual([["long", minRunM]]);
+    expect(sized(2 * minRunM - 1)).toEqual([["long", 2 * minRunM - 1]]);
+    expect(sized(2 * minRunM)).toEqual([
+      ["long", minRunM],
+      ["easy", minRunM],
+    ]);
+    // 4 runs at 20 min need 4 of them; a week 1 m short runs 3, none under 20 min.
+    const fourM = sized(4 * minRunM);
+    expect(fourM).toHaveLength(4);
+    const threeM = sized(4 * minRunM - 1);
+    expect(threeM).toHaveLength(3);
+    for (const [, meters] of [...fourM, ...threeM]) {
+      expect(meters).toBeGreaterThanOrEqual(minRunM);
+    }
   });
 });

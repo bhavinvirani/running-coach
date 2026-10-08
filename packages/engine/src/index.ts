@@ -67,7 +67,7 @@ export {
   workCapM,
 } from "./rules/quality";
 export type { QualityStepsInput, QualityWorkInput, Work, WorkZone } from "./rules/quality";
-export { raceWeekDays, raceWeekSessions } from "./rules/race-week";
+export { practiceReps, raceWeekDays, raceWeekSessions, raceWeekShortestM } from "./rules/race-week";
 export type {
   RaceWeekDay,
   RaceWeekDayKind,

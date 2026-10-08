@@ -79,7 +79,10 @@ export interface TrainingWeekInput extends WeekSlotsInput {
    * run's cap by days to the race (weekRunCaps).
    */
   maxRunM: number;
-  /** False where the long run's cap by days to the race is under 20 min: its day runs easy. */
+  /**
+   * False where the long run's cap by days to the race is under 20 min: its day runs easy, and no
+   * run passes 20 min (maxRunM).
+   */
   longRun?: boolean;
   /** The long run ends at marathon pace (fast-finish.ts fastFinishWeeks). */
   fastFinish: boolean;
@@ -287,11 +290,42 @@ export function weekSlots(ctx: PlanContext, input: WeekSlotsInput): Slots {
  * the long run, or shrinks the work, the finish or the strides, which only shrink, so the loop
  * ends. Slots with no long run still size one: the long run their volume allows caps every other
  * run. The long run's share follows the days that run (longRunShare), so a taper week of fewer runs
- * than the runner's days holds its volume. Beside fixed sessions the long run takes at most what
- * the target leaves after them, and runs not at all where that is under 20 min, so the week stays
- * under its target.
+ * than the runner's days holds its volume. The long run takes at most what the target leaves after
+ * the fixed sessions, and beside them runs not at all where that is under 20 min, so the week stays
+ * under its target. A taper week runs fewer, longer runs rather than runs under 20 min: the days
+ * its easy runs leave empty give up their slots, so the long run's room and share follow the days
+ * that run, and while an easy or long run is under 20 min it gives up its last day in fill order,
+ * then its last quality day. Each time it is sized again, until no run is under 20 min or only the
+ * long run is left, at what the week holds; every pass drops a day, so the loop ends.
  */
-export function sizeWeek(
+export function sizeWeek(ctx: PlanContext, input: SizeWeekInput): GeneratedSession[] {
+  let { slots } = input;
+  const without = (dates: readonly string[]): Slots => ({
+    ...slots,
+    quality: slots.quality.filter((slot) => !dates.includes(slot.date)),
+    easy: slots.easy.filter((date) => !dates.includes(date)),
+  });
+  for (;;) {
+    const { sessions, fillDates } = sizeSlots(ctx, { ...input, slots });
+    if (input.keepsBaselineLongest) return sessions;
+    const unused = fillDates.slice(sessions.filter((session) => session.type === "easy").length);
+    const short = sessions.some(
+      (session) =>
+        (session.type === "long" || session.type === "easy") &&
+        session.target.distanceM < ctx.minRunM,
+    );
+    const lastDay = fillDates.at(-1) ?? slots.quality.at(-1)?.date;
+    if (unused.length > 0) slots = without(unused);
+    else if (short && lastDay !== undefined) slots = without([lastDay]);
+    else return sessions;
+  }
+}
+
+/**
+ * One sizing of the slots as given (sizeWeek), and the days the easy runs fill in order: the easy
+ * days, then the quality days that run easy; the runs take the first of them.
+ */
+function sizeSlots(
   ctx: PlanContext,
   {
     slots,
@@ -302,14 +336,14 @@ export function sizeWeek(
     weekNumber,
     fastFinish,
   }: SizeWeekInput,
-): GeneratedSession[] {
+): { sessions: GeneratedSession[]; fillDates: string[] } {
   const zones = slots.quality.map((slot) => slot.zone);
   const fixedM = sumM(fixed);
   const fixedLongM = fixed.find((session) => session.type === "long")?.target.distanceM ?? null;
-  // What the target leaves the slots once the fixed sessions are in: the long run's most, and no
-  // long run at all where that is under 20 min.
-  const leftM = fixed.length === 0 ? Infinity : targetM - fixedM + (fixedLongM ?? 0);
-  const hasLong = slots.long !== null && leftM >= ctx.minRunM;
+  // What the target leaves the slots once the fixed sessions are in: the long run's most, and
+  // beside fixed sessions no long run at all where that is under 20 min.
+  const leftM = targetM - fixedM + (fixedLongM ?? 0);
+  const hasLong = slots.long !== null && (fixed.length === 0 || leftM >= ctx.minRunM);
   // Days that run here, the long run's included. Without a long run an easy day stands in for it, so
   // the room is measured alike; the other fixed sessions take their meters, not room.
   const days = Math.max(
@@ -455,7 +489,14 @@ export function sizeWeek(
         runSession(fillSlots[k]!, "easy", easySteps(m, k), ctx.paces),
       ),
     ];
-    return { placed, sessions, actualM: sumM(sessions) + fixedM, finishM, stridesAt };
+    return {
+      placed,
+      sessions,
+      actualM: sumM(sessions) + fixedM,
+      finishM,
+      stridesAt,
+      fillDates: fillSlots,
+    };
   };
   // The searches build the same long run more than once before anything else changes: the week built
   // for each, until the work, the reps, the finish or the strides change.
@@ -541,10 +582,10 @@ export function sizeWeek(
       : longestHeldM(fromM, fromSlackM);
   };
 
-  if (targetM <= fixedM) return [];
+  if (targetM <= fixedM) return { sessions: [], fillDates: [] };
   let longM = longFor(targetM);
   for (;;) {
-    const { placed, sessions, actualM, finishM, stridesAt } = build(longM);
+    const { placed, sessions, actualM, finishM, stridesAt, fillDates } = build(longM);
     const longSlackM = longFor(actualM) - longM;
     if (hasLong && longSlackM < 0) {
       longM = longestHeldM(longM, longSlackM);
@@ -582,7 +623,7 @@ export function sizeWeek(
         continue;
       }
     }
-    return sessions;
+    return { sessions, fillDates };
   }
 }
 
@@ -608,15 +649,18 @@ export function longRunDayCapM(
 /**
  * What a week holds its runs to: 110% of the recent longest and, in a race plan, its long run's cap
  * by days to the race (longRunDayCapM). Where that cap is under 20 min the week runs no long run,
- * which would be shorter than its easy runs, and the cap holds none of its other runs either.
+ * which would be shorter than its easy runs, and its other runs hold to 20 min instead: no run
+ * passes what the long run would have been allowed by more than the 20 min minimum.
  */
 export function weekRunCaps(
   ctx: PlanContext,
   { runCapM, ...dayCap }: WeekRunCapsInput,
 ): { maxRunM: number; longRun: boolean } {
   const dayCapM = longRunDayCapM(ctx, dayCap);
-  if (dayCapM !== null && dayCapM < ctx.minRunM) return { maxRunM: runCapM, longRun: false };
-  return { maxRunM: Math.min(runCapM, dayCapM ?? Infinity), longRun: true };
+  return {
+    maxRunM: Math.min(runCapM, Math.max(dayCapM ?? Infinity, ctx.minRunM)),
+    longRun: dayCapM === null || dayCapM >= ctx.minRunM,
+  };
 }
 
 /** The long run's day as an easy day, the last in fill order: a week that runs no long run. */

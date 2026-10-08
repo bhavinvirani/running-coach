@@ -1,7 +1,6 @@
 import {
   COOLDOWN_MAX_S,
   COOLDOWN_S,
-  EASY_RUN_FLOOR_S,
   FLOAT_TOLERANCE,
   MIN_RUN_S,
   WARMUP_MAX_S,
@@ -62,15 +61,13 @@ function padMaxM(baseS: number, maxS: number, easyPaceSPerKm: number): number {
  * The easy runs that hold the rest of the week, then what they cannot hold. Easy runs take their
  * shares (easy-split.ts), each at least 20 min and at most 85% of the long run, in whole 500 m with
  * the remainder on the longest (run-rounding.ts). Fewer runs than days when the rest holds only
- * that many 20 min runs; where 20 min runs would leave a gap (runs at the cap would not hold it,
- * one more would be under 20 min), equal shorter runs, never under 15 min or half the cap,
- * whichever is more (the cap itself where that is less): a week that can only hold shorter runs
- * runs fewer days at that. A week before the taper keeps every day while half the cap fits on each,
- * as a down week at the 20 min floor needs. Easy runs fill to their caps first; what passes them,
- * and a rest under one such run, goes to the quality sessions in equal shares, 60% to the warm-up
- * and 40% to the cool-down, each step at most 25 min and never past the long run. What still does
- * not fit is not run: the week builder then shortens the long run to its share of the week as
- * built.
+ * that many 20 min runs (as many runs at the cap where it is under 20 min), never shorter ones: a
+ * taper week runs fewer, longer runs. A week before the taper keeps every day while half the cap
+ * fits on each, in equal runs under 20 min where 20 min runs would drop a day, as a down week at
+ * the 20 min floor needs. Easy runs fill to their caps first; what passes them, and a rest under
+ * one such run, goes to the quality sessions in equal shares, 60% to the warm-up and 40% to the
+ * cool-down, each step at most 25 min and never past the long run. What still does not fit is not
+ * run: the week builder then shortens the long run to its share of the week as built.
  */
 export function fillWeek({
   restM,
@@ -86,25 +83,16 @@ export function fillWeek({
   const capM = easyRunCapM({ longM, minRunM });
   const easyM = Math.min(restM - sum(qualityM), easyDays.length * capM);
   const halfCapM = Math.min(minRunM, Math.floor(capM / 2));
-  // The shortest easy run where 20 min runs would leave a gap: 15 min or half the cap, whichever is
-  // more, though never over 20 min or the cap.
-  const fewestM = Math.min(
-    minRunM,
-    capM,
-    Math.max(halfCapM, Math.ceil((EASY_RUN_FLOOR_S * 1000) / easyPaceSPerKm)),
-  );
+  // The shortest easy run: 20 min, or the cap where a long run under 20 min holds it lower.
+  const fewestM = Math.min(minRunM, capM);
   // No easy meters, no runs; else every day before the taper while half the cap fits on each, else
-  // enough runs to hold the meters, each at least 20 min where they can be, never under fewestM.
+  // as many runs as hold the shortest easy run each.
   const runs =
     easyM <= 0
       ? 0
       : keepDays && easyM >= easyDays.length * halfCapM
         ? easyDays.length
-        : Math.min(
-            easyDays.length,
-            Math.floor(easyM / fewestM),
-            Math.max(Math.floor(easyM / minRunM), Math.ceil(easyM / capM)),
-          );
+        : Math.min(easyDays.length, Math.floor(easyM / fewestM));
   // Runs at the cap hold less than the rest when fewer of them run.
   const placedM = Math.min(easyM, runs * capM);
   let easyRunsM: number[] = [];

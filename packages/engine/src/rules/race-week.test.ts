@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 import { addDays, daysBetween, mondayOf } from "../dates";
 import { hardShareHolds, hardTimeS } from "./easy-share";
 import { workCapM } from "./quality";
-import { raceWeekDays, raceWeekSessions, type RaceWeekDay } from "./race-week";
+import {
+  practiceReps,
+  raceWeekDays,
+  raceWeekSessions,
+  raceWeekShortestM,
+  type RaceWeekDay,
+} from "./race-week";
 import { isRaceBandWeek } from "./taper-share";
 import { bandMidpointSPerKm } from "./session-target";
 import { pacesFromVdot } from "./vdot";
@@ -542,6 +548,66 @@ describe("race week sessions", () => {
     ]);
   });
 
+  it("caps the extra easy runs of a race-band week at its own run cap, as runs of a week whose long run is dropped: 4000 m, 3750 m at 20 min", () => {
+    // A Wednesday race's week before runs no long run: its runs hold to the larger of the long run's
+    // cap by days and 20 min (weekRunCaps), the race week's own days to 110% of the recent longest.
+    const wednesday = "2026-10-14";
+    const days = [
+      day(wednesday, 4, "practice"),
+      day(wednesday, 2, "primer"),
+      day(wednesday, 5, "easy"),
+      day(wednesday, 7, "extra"),
+      day(wednesday, 9, "extra"),
+    ];
+    expect(brief(sized(days, { extraMaxRunM: 4000 }))).toEqual([
+      ["2026-10-05", "easy", 4000],
+      ["2026-10-07", "easy", 4000],
+      ["2026-10-09", "easy", 6500],
+      ["2026-10-10", "race_practice", practiceM(3, 1000)],
+      ["2026-10-12", "easy", 4866],
+    ]);
+    expect(
+      brief(sized(days, { extraMaxRunM: 3750 }))
+        .filter(([date]) => date === "2026-10-05" || date === "2026-10-07")
+        .map(([, , m]) => m),
+    ).toEqual([3750, 3750]);
+  });
+
+  it("runs the primer as a plain 20 min run when its strides pass a cap, and rests it only when 20 min does: 4866 m, 3750 m, none", () => {
+    // On 3 days the practice (8813 m) passes each cap here, so the primer comes first; 35 min 5 days
+    // out at 20 min (3750 m) does not fit beside it.
+    const primerAlone = (windowCapM: number) => onDays(3, { windowCapM });
+    expect(brief(primerAlone(4866))).toEqual([["2026-10-09", "easy", 4866]]);
+    expect(hasStridesOn(primerAlone(4866)[0]!)).toBe(true);
+    expect(brief(primerAlone(4865))).toEqual([["2026-10-09", "easy", 3750]]);
+    expect(primerAlone(4865)[0]!.steps).toEqual(plain(3750));
+    expect(brief(primerAlone(3750))).toEqual([["2026-10-09", "easy", 3750]]);
+    expect(brief(primerAlone(3749))).toEqual([]);
+    // The race week's own cap holds it alike.
+    expect(brief(onDays(3, { weekCapsM: { "2026-10-05": 4000 } }))).toEqual([
+      ["2026-10-09", "easy", 3750],
+    ]);
+  });
+
+  it("runs no more race-pace reps than an earlier sizing ran: a half's 3 x 1 km practice at most 1 x 1 km, and counts them", () => {
+    expect(practiceReps(onDays(4))).toBe(3);
+    const sessions = onDays(4, { maxReps: 1 });
+    expect(practiceReps(sessions)).toBe(1);
+    expect(sessions.find((s) => s.type === "race_practice")!.target.distanceM).toBe(
+      practiceM(1, 1000),
+    );
+    expect(practiceReps(onDays(4, { maxReps: 5 }))).toBe(3);
+    expect(practiceReps(onDays(4, { distanceKey: "marathon" }))).toBe(2);
+    expect(practiceReps(onDays(4, { maxRunM: 4000 }))).toBeNull();
+  });
+
+  it("measures the race week's days at their shortest: easy days at 20 min, race practice and the primer's strides as they are, a day under 20 min as it is", () => {
+    expect(raceWeekShortestM(onDays(6), 3750)).toBe(3 * 3750 + practiceM(3, 1000) + 4866);
+    // Under a 3 km cap every day runs 3000 m, the primer plain.
+    expect(raceWeekShortestM(onDays(4, { maxRunM: 3000 }), 3750)).toBe(9000);
+    expect(raceWeekShortestM([], 3750)).toBe(0);
+  });
+
   it("keeps every run within 110% of the recent longest: a 6 km cap shortens the easy days and the practice, a 4 km one rests it", () => {
     expect(brief(onDays(4, { maxRunM: 6000 }))).toEqual([
       ["2026-10-06", "easy", 6000],
@@ -574,11 +640,14 @@ describe("race week sessions", () => {
           distanceKey: fc.constantFrom(...raceDistanceKeySchema.options),
           vdot: fc.double({ min: 30, max: 70, noNaN: true }),
           maxRunM: fc.integer({ min: 2000, max: 40_000 }),
+          extraMaxRunM: fc.option(fc.integer({ min: 2000, max: 40_000 }), { nil: undefined }),
+          maxReps: fc.option(fc.integer({ min: 1, max: 4 }), { nil: undefined }),
           windowCapM: fc.integer({ min: 0, max: 40_000 }),
           weekCapM: fc.integer({ min: 0, max: 40_000 }),
         }),
         (drawn) => {
-          const { daysPerWeek, distanceKey, maxRunM, windowCapM, weekCapM } = drawn;
+          const { daysPerWeek, distanceKey, maxRunM, extraMaxRunM, maxReps, windowCapM, weekCapM } =
+            drawn;
           const raceDate = addDays("2026-10-05", drawn.raceWeekday);
           const startDate = addDays("2026-10-05", -7 * drawn.startWeeksBack);
           const laidOutDates = laidOutOf(raceDate, startDate, daysPerWeek, drawn.laidOutDaysOut);
@@ -602,6 +671,8 @@ describe("race week sessions", () => {
             distanceKey,
             paces,
             maxRunM,
+            ...(extraMaxRunM === undefined ? {} : { extraMaxRunM }),
+            ...(maxReps === undefined ? {} : { maxReps }),
             windowCapM,
             weekCapsM: { [firstWeek]: weekCapM },
           };
@@ -626,11 +697,15 @@ describe("race week sessions", () => {
           for (const s of sessions)
             expect(runsIn(mondayOf(s.date))).toBeLessThanOrEqual(daysPerWeek);
           expect(sessions.filter((s) => s.type === "race_practice").length).toBeLessThanOrEqual(1);
+          expect(practiceReps(sessions) ?? 0).toBeLessThanOrEqual(maxReps ?? 4);
           expect(sumM(window)).toBeLessThanOrEqual(windowCapM);
           expect(sumM(sessions.filter((s) => mondayOf(s.date) === firstWeek))).toBeLessThanOrEqual(
             weekCapM,
           );
           for (const s of sessions) expect(s.target.distanceM).toBeLessThanOrEqual(maxRunM);
+          for (const s of extras) {
+            expect(s.target.distanceM).toBeLessThanOrEqual(extraMaxRunM ?? maxRunM);
+          }
           expect(
             hardShareHolds({
               hardS: window.reduce((sum, s) => sum + hardTimeS(s.steps, paces), 0),
@@ -659,7 +734,11 @@ describe("race week sessions", () => {
             const full =
               (d.kind === "extra" ? extras.length === 2 : window.length === daysPerWeek - 1) ||
               runsIn(mondayOf(d.date)) === daysPerWeek;
-            const ownM = Math.min(minRunM, maxRunM);
+            const ownM = Math.min(
+              minRunM,
+              maxRunM,
+              d.kind === "extra" ? (extraMaxRunM ?? maxRunM) : maxRunM,
+            );
             const passesWeek =
               mondayOf(d.date) === firstWeek &&
               sessions
@@ -671,6 +750,21 @@ describe("race week sessions", () => {
               d.kind === "easy" &&
               window.reduce((sum, s) => sum + shortestM(s), 0) + ownM > windowCapM;
             expect(full || passesWeek || passesWindow, `${d.daysOut} days out rests`).toBe(true);
+          }
+          // The primer, picked right after the practice, rests only when its week runs every day
+          // asked for or even a plain 20 min run beside the practice passes a cap.
+          for (const d of days.filter((d) => d.kind === "primer")) {
+            if (sessions.some((s) => s.date === d.date)) continue;
+            const practice = sessions.filter((s) => s.type === "race_practice");
+            const plainM = Math.min(minRunM, maxRunM);
+            const weekStart = mondayOf(d.date);
+            const inWeek = practice.filter((s) => mondayOf(s.date) === weekStart);
+            const full =
+              takenDates.filter((date) => mondayOf(date) === weekStart).length + inWeek.length >=
+              daysPerWeek;
+            const passesWeek = weekStart === firstWeek && sumM(inWeek) + plainM > weekCapM;
+            const passesWindow = sumM(practice) + plainM > windowCapM;
+            expect(full || passesWeek || passesWindow, "the primer rests").toBe(true);
           }
           const raceM = { "5k": 5000, "10k": 10_000, half: 21_098, marathon: 42_195 }[distanceKey];
           for (const practice of sessions.filter((s) => s.type === "race_practice")) {

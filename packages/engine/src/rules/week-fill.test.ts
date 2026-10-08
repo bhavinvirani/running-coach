@@ -7,9 +7,8 @@ const sum = (values: readonly number[]) => values.reduce((total, value) => total
 const MON = 0;
 const WED = 2;
 const FRI = 4;
-// At the 320 s/km easy midpoint: 20 min is 3750 m, the 15 min warm-up 2813 m (the shortest easy run
-// where 20 min ones would leave a gap too) and the 10 min cool-down 1875 m; 25 min is 4687 m, so a
-// warm-up takes 1874 m more at most and a cool-down 2812 m.
+// At the 320 s/km easy midpoint: 20 min is 3750 m, the 15 min warm-up 2813 m and the 10 min
+// cool-down 1875 m; 25 min is 4687 m, so a warm-up takes 1874 m more at most and a cool-down 2812 m.
 const PACE = 320;
 const WARMUP_PAD_MAX_M = 1874;
 const COOLDOWN_PAD_MAX_M = 2812;
@@ -105,25 +104,33 @@ describe("week fill", () => {
     });
   });
 
-  it("runs equal runs between half the cap and 20 min when 20 min runs would pass the cap", () => {
-    // A 4000 m long run caps easy runs at 20 min (85% of it is under), so 9000 m is 3 runs of 3000 m.
+  it("runs under 20 min in taper weeks: none, fewer 20 min easy runs instead where 20 min runs would leave a gap, while a week before the taper keeps every day", () => {
+    // A 4000 m long run caps easy runs at 20 min (85% of it is under). 9000 m holds two 3750 m runs in
+    // a taper week, the rest not run (the quality session is already past the long run, so no pad);
+    // a week before the taper runs all 3 days at 3000 m.
     expect(fill({ restM: 17_000, longM: 4000 })).toEqual({
+      easyRunsM: [3750, 3750],
+      qualityPadM: [noPad],
+    });
+    expect(fill({ restM: 17_000, longM: 4000, keepDays: true })).toEqual({
       easyRunsM: [3000, 3000, 3000],
       qualityPadM: [noPad],
     });
+    // 20 min each fits 3 times from 11 250 m, not from 1 m less.
+    expect(fill({ restM: 8000 + 11_250, longM: 4000 }).easyRunsM).toEqual([3750, 3750, 3750]);
+    expect(fill({ restM: 8000 + 11_249, longM: 4000 }).easyRunsM).toEqual([3750, 3750]);
   });
 
-  it("runs fewer easy days of at least 15 min instead of shorter ones where half the cap is under 15 min: one 3000 m run, not two of 2500 m", () => {
-    // A 3000 m long run caps the easy runs at 3000 m, half of it 1500 m. 5000 m would be 2 runs of
-    // 2500 m (13 min); one run at the cap holds 3000 m and the rest is not run.
-    expect(fill({ restM: 5000, longM: 3000, qualityM: [] })).toEqual({
+  it("runs at the cap where it is under 20 min, as many as fit and none shorter: one 3000 m run from 5999 m, two from 6000 m", () => {
+    // A 3000 m long run caps the easy runs at 3000 m: 5999 m would be 2 runs of 2999 m or less, so one
+    // runs at the cap and the rest is not run.
+    expect(fill({ restM: 5999, longM: 3000, qualityM: [] })).toEqual({
       easyRunsM: [3000],
       qualityPadM: [],
     });
-    // 15 min each still fits twice in 5626 m: 2 runs of 2813 m.
-    expect(fill({ restM: 5626, longM: 3000, qualityM: [] }).easyRunsM).toEqual([2813, 2813]);
-    // Under 15 min nothing runs.
-    expect(fill({ restM: 2812, longM: 3000, qualityM: [] }).easyRunsM).toEqual([]);
+    expect(fill({ restM: 6000, longM: 3000, qualityM: [] }).easyRunsM).toEqual([3000, 3000]);
+    // Under the cap nothing runs.
+    expect(fill({ restM: 2999, longM: 3000, qualityM: [] }).easyRunsM).toEqual([]);
   });
 
   it("runs at the cap where the cap is under 15 min, and fewer days of it", () => {
@@ -132,8 +139,8 @@ describe("week fill", () => {
   });
 
   it("keeps every easy day before the taper: equal runs of at least half the cap where 20 min runs would drop one", () => {
-    // A 6-day down week at the 20 min floor: 18 475 m holds four 4625 m runs at most, so a taper week
-    // would run 4 of its 5 easy days; a week before the taper runs all 5 at 3695 m.
+    // A 6-day down week at the 20 min floor: 18 475 m holds three 4625 m runs, a fourth 25 m short, so
+    // a taper week runs 3 of its 5 easy days at 20 min; a week before the taper runs all 5 at 3695 m.
     const downWeek = (keepDays: boolean) =>
       fill({
         restM: 18_475,
@@ -143,17 +150,17 @@ describe("week fill", () => {
         minRunM: 4625,
         keepDays,
       }).easyRunsM;
-    expect(downWeek(false)).toEqual([4619, 4619, 4619, 4618]);
+    expect(downWeek(false)).toEqual([4625, 4625, 4625]);
     expect(downWeek(true)).toEqual([3695, 3695, 3695, 3695, 3695]);
   });
 
-  it("drops an easy day before the taper only when even half the cap would not fit on each", () => {
-    // Half of the 3750 m cap is 1875 m: 5 days need 9375 m.
+  it("drops an easy day before the taper only when even half the cap would not fit on each, then runs 20 min runs", () => {
+    // Half of the 3750 m cap is 1875 m: 5 days need 9375 m; 1 m less holds two 20 min runs.
     const shortWeek = (restM: number) =>
       fill({ restM, longM: 3750, qualityM: [], easyDays: [WED, FRI, MON, 1, 3], keepDays: true })
         .easyRunsM;
     expect(shortWeek(9375)).toEqual([1875, 1875, 1875, 1875, 1875]);
-    expect(shortWeek(9374)).toEqual([3125, 3125, 3124]);
+    expect(shortWeek(9374)).toEqual([3750, 3750]);
   });
 
   it("gives a rest under one short run to the quality sessions instead", () => {
@@ -243,14 +250,13 @@ describe("week fill", () => {
           }
           expect(sum(pads)).toBeLessThanOrEqual(Math.max(0, overflowM));
           // Easy runs take everything they can hold first; meters go elsewhere only past their
-          // caps, or where one more run would be under the shortest easy run: 15 min, or half the
-          // cap when that is more, never over 20 min or the cap. Before the taper every easy day
-          // runs while half the cap fits on each.
+          // caps, or where one more run would be under the shortest easy run: 20 min, or the cap
+          // where that is less. Before the taper every easy day runs while half the cap fits on
+          // each.
           const easyM = restM - sum(qualityM);
           const heldM = Math.min(easyM, easyDays.length * capM);
           const halfCapM = Math.min(minRunM, Math.floor(capM / 2));
-          const floorM = Math.ceil((900 * 1000) / easyPaceSPerKm);
-          const fewestM = Math.min(minRunM, capM, Math.max(halfCapM, floorM));
+          const fewestM = Math.min(minRunM, capM);
           const keepsAll = keepDays && easyM > 0 && easyM >= easyDays.length * halfCapM;
           if (keepsAll) {
             expect(easyRunsM).toHaveLength(easyDays.length);

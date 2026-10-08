@@ -3,7 +3,12 @@ import { HARD_SESSION_TYPES, RACE_WEEK_DAYS } from "../constants";
 import { addDays, daysBetween } from "../dates";
 import { longestInWindowM, maxRunM } from "../rules/long-run";
 import { qualityCount, taperKeepsWork } from "../rules/quality";
-import { raceWeekDays, raceWeekSessions } from "../rules/race-week";
+import {
+  practiceReps,
+  raceWeekDays,
+  raceWeekSessions,
+  raceWeekShortestM,
+} from "../rules/race-week";
 import { taperPeakM } from "../rules/taper";
 import { longRunKeepsDay } from "../rules/taper-long-run";
 import { isRaceBandWeek, taperCeilingM } from "../rules/taper-share";
@@ -39,15 +44,19 @@ const nonRace = (sessions: readonly GeneratedSession[]) =>
  * holds at most its share of the taper peak (taper-share.ts) and never more than the week before as
  * built, the race excluded. The 6 days before the race belong to the race week's template
  * (race-week.ts), wherever they fall: a Thursday to Saturday race's begin in its 70% week, a Monday to
- * Wednesday race's in its 40% week, which also runs up to 2 easy runs 7 to 9 days out and nothing else.
+ * Wednesday race's in its 40% week, which also runs up to 2 easy runs 7 to 9 days out and nothing else,
+ * each within that week's own run cap (weekRunCaps), as in any week that runs no long run.
  * Every other taper day keeps its week's layout: the long run on its day while 6 or more days out,
  * within its cap by days to the race (none where that is under 20 min: its day runs easy); race
  * practice and, from 4 days a week, tempo, which runs easy under 10 days out; a week holding the
  * template's race practice keeps its quality count with it. A week the template's days leave under
  * 20 min runs no long run beside them (sizeWeek).
- * The template is sized first, its days in the week before the race week fixed there; when the race
- * week would then hold more than the week before as built, its cap comes down to that and it is sized
- * again, so every cap holds by construction.
+ * The template is sized first, its days in the week before the race week fixed there. When they leave
+ * that week nothing of its own though its ceiling holds them at 20 min and one 20 min run more, they
+ * get its ceiling less 20 min and are sized again: their easy days shorten before its own days give
+ * way. When the race week would then hold more than the week before as built, its cap comes down to
+ * that and it is sized again, with no more race-pace reps than it ran (a practice back at full reps
+ * would rest under the lower cap), so every cap holds by construction.
  */
 export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): GeneratedWeek[] {
   const { phases, startDate, startVolumeM, seedM, preTaper } = input;
@@ -175,6 +184,12 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
 
   const windowCapM = shareCapM(raceIndex);
   let raceWeekCapM = spansTwoWeeks ? windowCapM : ceilingM(raceIndex);
+  // What the template's days may take of the week before: its ceiling, less 20 min once they would
+  // leave it no run of its own.
+  const beforeCeilingM = spansTwoWeeks ? ceilingM(before) : 0;
+  let beforeCapM = beforeCeilingM;
+  // Sized again, the race week runs no more race-pace reps than it did.
+  let maxReps: number | undefined;
   for (;;) {
     const template = raceWeekSessions({
       days,
@@ -183,12 +198,16 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
       distanceKey,
       paces: ctx.paces,
       maxRunM: Math.min(runCapM(raceIndex), ...(spansTwoWeeks ? [runCapM(before)] : [])),
+      // The extra days fall in the week before, a race-band week that runs no long run.
+      ...(spansTwoWeeks ? { extraMaxRunM: weekCaps(before).maxRunM } : {}),
       windowCapM,
       weekCapsM: {
-        ...(spansTwoWeeks ? { [weekStarts[before]!]: ceilingM(before) } : {}),
+        ...(spansTwoWeeks ? { [weekStarts[before]!]: beforeCapM } : {}),
         [weekStarts[raceIndex]!]: raceWeekCapM,
       },
+      ...(maxReps === undefined ? {} : { maxReps }),
     });
+    maxReps = practiceReps(template) ?? maxReps;
     const inRaceWeek = template.filter((s) => weekOf(s.date) === raceIndex);
     if (!spansTwoWeeks) {
       byWeek[raceIndex]!.push(...inRaceWeek);
@@ -196,6 +215,17 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
     }
     const inBefore = template.filter((s) => weekOf(s.date) === before);
     const own = ownBefore === null ? [] : sizeOwn(before, ownBefore, inBefore);
+    // Once only: the template's days shorten so the week before keeps a 20 min run of its own.
+    if (
+      own.length === 0 &&
+      ownBefore !== null &&
+      slotDates(ownBefore).length > 0 &&
+      beforeCapM === beforeCeilingM &&
+      beforeCeilingM - raceWeekShortestM(inBefore, ctx.minRunM) >= ctx.minRunM
+    ) {
+      beforeCapM = beforeCeilingM - ctx.minRunM;
+      continue;
+    }
     const beforeM = sumM(own) + sumM(inBefore);
     if (sumM(inRaceWeek) <= beforeM) {
       byWeek[before]!.push(...own, ...inBefore);
