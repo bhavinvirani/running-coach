@@ -4,6 +4,9 @@ import {
   RECENT_RUNS_CHECKED,
   garminHistoryRequestSchema,
   garminHistoryResponseSchema,
+  garminLoginCodeRequestSchema,
+  garminLoginRequestSchema,
+  garminLoginResponseSchema,
   garminProblemSchema,
   garminSyncRequestSchema,
   garminSyncResponseSchema,
@@ -21,6 +24,38 @@ const rateLimited = {
   retryAfterSeconds: 3600,
 };
 const rotated = '{"di_token":"t","di_refresh_token":"r2","di_client_id":"c"}';
+
+describe("garminLoginRequestSchema", () => {
+  it("names the pending login with the user id and carries the credentials", () => {
+    const login = { loginId: "user-1", email: "runner@example.com", password: "secret" };
+    expect(garminLoginRequestSchema.parse(login)).toEqual(login);
+    expect(garminLoginRequestSchema.safeParse({ ...login, loginId: "" }).success).toBe(false);
+  });
+});
+
+describe("garminLoginResponseSchema", () => {
+  it("answers code_needed with no bundle, or the bundle once connected", () => {
+    expect(garminLoginResponseSchema.parse({ status: "code_needed" })).toEqual({
+      status: "code_needed",
+    });
+    expect(garminLoginResponseSchema.parse({ status: "connected", tokenBundle: rotated })).toEqual({
+      status: "connected",
+      tokenBundle: rotated,
+    });
+    expect(garminLoginResponseSchema.safeParse({ status: "connected" }).success).toBe(false);
+  });
+});
+
+describe("garminLoginCodeRequestSchema", () => {
+  it("rejects a code with anything but digits", () => {
+    expect(
+      garminLoginCodeRequestSchema.safeParse({ loginId: "user-1", mfaCode: "123456" }).success,
+    ).toBe(true);
+    expect(
+      garminLoginCodeRequestSchema.safeParse({ loginId: "user-1", mfaCode: "12-456" }).success,
+    ).toBe(false);
+  });
+});
 
 describe("garminProblemSchema", () => {
   it("accepts a service problem that carries a rotated bundle", () => {

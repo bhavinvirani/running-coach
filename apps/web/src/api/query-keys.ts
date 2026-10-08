@@ -14,7 +14,8 @@ export type Resource =
   | "insights"
   | "reviews"
   | "pause"
-  | "hr-zones";
+  | "hr-zones"
+  | "shoes";
 
 type Id = string | number;
 
@@ -32,9 +33,10 @@ export function detailKey<R extends Resource, Ids extends Id[]>(resource: R, ...
 
 /**
  * Mutations that a screen reads from the mutation cache rather than from its own useMutation, because the
- * screen may unmount and remount while one runs, are keyed `[action]`.
+ * screen may unmount and remount while one runs, are keyed `[action]`; an action made of two requests (the
+ * Garmin login's start and code) keys each `[action, step]`, which a filter on `[action]` matches together.
  */
-export type Action = "sync";
+export type Action = "sync" | "garmin-login" | "garmin-disconnect";
 
 export function actionKey<A extends Action>(action: A) {
   return [action] as const;

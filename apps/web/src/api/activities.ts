@@ -68,7 +68,7 @@ export function useActivityWeeks() {
 }
 
 /** The API takes only uuids; anything else in the address is a run that cannot exist. */
-function activityPath(id: string, rest = ""): string {
+export function activityPath(id: string, rest = ""): string {
   if (!activityParamsSchema.safeParse({ id }).success) {
     throw new ApiError({ status: 404, code: ErrorCode.notFound });
   }

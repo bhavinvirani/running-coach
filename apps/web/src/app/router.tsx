@@ -208,6 +208,34 @@ export function appRoutes(queryClient: QueryClient): RouteObject[] {
                 ),
               },
             },
+            {
+              path: "settings/shoes",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/shoes/shoes-screen")).ShoesScreen,
+                ),
+              },
+            },
+            {
+              // One screen adds a pair and edits one; "new" outranks ":id" in React Router's matching.
+              path: "settings/shoes/new",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/shoe/shoe-screen")).ShoeScreen,
+                ),
+              },
+            },
+            {
+              path: "settings/shoes/:id",
+              ErrorBoundary: ScreenErrorBoundary,
+              lazy: {
+                Component: lazyScreen(
+                  async () => (await import("@/screens/shoe/shoe-screen")).ShoeScreen,
+                ),
+              },
+            },
           ],
         },
         { path: "*", loader: () => redirect("/") },

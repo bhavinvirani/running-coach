@@ -1,4 +1,4 @@
-import { otherGarminWorkoutSchema } from "@running-coach/shared";
+import { errorCodeSchema, otherGarminWorkoutSchema } from "@running-coach/shared";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
@@ -174,5 +174,37 @@ describe("garmin_connection after 0012", () => {
           .where(eq(garminConnection.userId, userId)),
       ),
     ).toBe("23514");
+  });
+});
+
+// 0018_widen_push_error_codes: the CHECK lists every shared code again, the password login's included,
+// since a push stores whatever code stopped it.
+describe("garmin_connection after 0018", () => {
+  it("accepts every code in the shared list as the push error", async () => {
+    const userId = await createUser();
+    await connectGarmin(userId);
+
+    for (const code of errorCodeSchema.options) {
+      expect(
+        await postgresErrorCode(
+          db
+            .update(garminConnection)
+            .set({ workoutsPushError: code })
+            .where(eq(garminConnection.userId, userId)),
+        ),
+      ).toBeUndefined();
+      const [row] = await db
+        .select({ error: garminConnection.workoutsPushError })
+        .from(garminConnection)
+        .where(eq(garminConnection.userId, userId));
+      expect(row?.error).toBe(code);
+    }
+    expect(errorCodeSchema.options).toEqual(
+      expect.arrayContaining([
+        "garmin_credentials_rejected",
+        "garmin_mfa_rejected",
+        "garmin_login_lost",
+      ]),
+    );
   });
 });

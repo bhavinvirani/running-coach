@@ -96,6 +96,24 @@ export function formatDistance(distanceInUnit: number | null | undefined, unit: 
   return value === MISSING ? MISSING : `${value} ${unit}`;
 }
 
+/**
+ * A distance goal already converted to the user's unit, in whole units with thousands grouped, for a figure
+ * that draws the unit itself: 650 → "650", 403.9 → "404", 3106.9 → "3,107".
+ */
+export function formatWholeDistanceValue(distanceInUnit: number | null | undefined): string {
+  if (!isFiniteNumber(distanceInUnit) || distanceInUnit < 0) return MISSING;
+  return COUNT.format(Math.round(distanceInUnit));
+}
+
+/** A distance goal already converted to the user's unit, in whole units: 403.9, "mi" → "404 mi". */
+export function formatWholeDistance(
+  distanceInUnit: number | null | undefined,
+  unit: Units,
+): string {
+  const value = formatWholeDistanceValue(distanceInUnit);
+  return value === MISSING ? MISSING : `${value} ${unit}`;
+}
+
 /** Under this many units a lap is a short one (the end of a run): its distance gets two decimals. */
 export const SHORT_LAP_IN_UNITS = 0.95;
 

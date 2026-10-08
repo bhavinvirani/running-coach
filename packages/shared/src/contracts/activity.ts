@@ -126,6 +126,11 @@ export const activityResponseSchema = z
      * were computed (the same runs GET /api/personal-bests leaves out).
      */
     bestEfforts: z.array(runBestEffortSchema),
+    /**
+     * The pair the run wore (GET /api/shoes names it), null for none. The sync puts the active pair on a
+     * new run once; PUT /api/activities/:id/shoe changes it.
+     */
+    shoeId: z.uuid().nullable(),
   })
   .strict();
 export type ActivityResponse = z.infer<typeof activityResponseSchema>;

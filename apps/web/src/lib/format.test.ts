@@ -37,6 +37,8 @@ import {
   formatTime,
   formatTwoDigits,
   formatWeekRange,
+  formatWholeDistance,
+  formatWholeDistanceValue,
   recordSeconds,
 } from "./format";
 
@@ -370,6 +372,29 @@ describe("formatWeekRange", () => {
   it("shows the missing mark for null and malformed dates", () => {
     expect(formatWeekRange(null)).toBe(MISSING);
     expect(formatWeekRange("2026-02-30")).toBe(MISSING);
+  });
+});
+
+describe("formatWholeDistanceValue", () => {
+  it("rounds a goal to whole units and groups thousands", () => {
+    expect(formatWholeDistanceValue(650)).toBe("650");
+    expect(formatWholeDistanceValue(403.89)).toBe("404");
+    expect(formatWholeDistanceValue(3106.86)).toBe("3,107");
+    expect(formatWholeDistanceValue(0)).toBe("0");
+  });
+
+  it("shows the missing mark for negative and non-finite distances", () => {
+    expect(formatWholeDistanceValue(-1)).toBe(MISSING);
+    expect(formatWholeDistanceValue(null)).toBe(MISSING);
+    expect(formatWholeDistanceValue(Number.NaN)).toBe(MISSING);
+  });
+});
+
+describe("formatWholeDistance", () => {
+  it("adds the unit, or shows the missing mark alone (unit conversion)", () => {
+    expect(formatWholeDistance(650, "km")).toBe("650 km");
+    expect(formatWholeDistance(403.89, "mi")).toBe("404 mi");
+    expect(formatWholeDistance(undefined, "mi")).toBe(MISSING);
   });
 });
 

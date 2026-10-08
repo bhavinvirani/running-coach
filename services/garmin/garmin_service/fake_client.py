@@ -48,6 +48,14 @@ every schedule with a 503, so a create uploads and stops halfway. Writes fail th
 client.post and client.delete raise, with no retries and no wrapper.
 Anything else succeeds with the bundle unchanged. Failures are raised the way garminconnect raises
 them, causes chained, so errors.py runs exactly as in production.
+
+FakePasswordLogin stands in for Garmin(email, password, return_on_mfa=True) behind /connect and
+/connect/mfa: any email with FIXTURE_PASSWORD ("fixture-password") asks for a code, and
+FIXTURE_MFA_CODE ("123456") finishes the login with the base bundle above, so /profile and /sync
+work with it afterwards. FIXTURE_NO_CODE_EMAIL ("no-code@example.com") connects without a code;
+FIXTURE_RATE_LIMITED_EMAIL ("rate-limited@example.com") answers Garmin's 429 to any password. A
+wrong password and a wrong code raise what the library raises; a wrong code leaves the login waiting
+for another, as the library's MFA session does.
 """
 
 from __future__ import annotations
@@ -95,6 +103,20 @@ FAKE_DELETED_ACTIVITY_ID = 10_000_000_007
 # No activity of the account has these ids: Garmin down for these runs alone.
 FAKE_UNAVAILABLE_ACTIVITY_ID = 9_000_000_503
 FAKE_UNAVAILABLE_ACTIVITY_IDS = frozenset({FAKE_UNAVAILABLE_ACTIVITY_ID, 9_000_000_504})
+
+# The password login's fixture account (FakePasswordLogin).
+FIXTURE_PASSWORD = "fixture-password"  # noqa: S105 - the fixture's public test password
+FIXTURE_MFA_CODE = "123456"
+FIXTURE_NO_CODE_EMAIL = "no-code@example.com"
+FIXTURE_RATE_LIMITED_EMAIL = "rate-limited@example.com"
+FIXTURE_BUNDLE = json.dumps(
+    {
+        "di_token": "fixture-token",
+        "di_refresh_token": "fixture-refresh",
+        "di_client_id": "fixture-client",
+    },
+    separators=(",", ":"),
+)
 
 # What garminconnect's _run_request raises underneath login() for each simulated failure.
 _LOGIN_FAILURES = {
@@ -386,3 +408,49 @@ class FakeGarmin:
 
     def _read(self, name: str) -> Any:
         return json.loads((self._fixtures_dir / name).read_text(encoding="utf-8"))
+
+
+class FakePasswordLogin:
+    """Garmin(email, password, return_on_mfa=True) for fixture mode (see the module docstring)."""
+
+    def __init__(self, email: str, password: str) -> None:
+        self.username = email
+        self.password: str | None = password
+        self._tokens = FakeTokenStore()
+        self._tokens.bundle = json.dumps(
+            {"di_token": None, "di_refresh_token": None, "di_client_id": None}
+        )
+        self._mfa_pending = False
+
+    @property
+    def client(self) -> FakeTokenStore:
+        return self._tokens
+
+    def login(self) -> tuple[str | None, Any]:
+        if self._mfa_pending:
+            raise GarminConnectAuthenticationError(
+                "MFA login already in progress; complete it with resume_login() "
+                "or call logout() first"
+            )
+        if self.username.lower() == FIXTURE_RATE_LIMITED_EMAIL:
+            raise GarminConnectTooManyRequestsError("All login strategies rate limited (429).")
+        if self.password != FIXTURE_PASSWORD:
+            raise GarminConnectAuthenticationError(
+                "401 Unauthorized (Invalid Username or Password)"
+            )
+        if self.username.lower() == FIXTURE_NO_CODE_EMAIL:
+            self._tokens.bundle = FIXTURE_BUNDLE
+            return None, None
+        self._mfa_pending = True
+        return "needs_mfa", None
+
+    def resume_login(self, client_state: dict[str, Any], mfa_code: str) -> tuple[Any, Any]:
+        # The library posts the code to two verify endpoints and lists each one's answer.
+        if not self._mfa_pending or mfa_code != FIXTURE_MFA_CODE:
+            raise GarminConnectAuthenticationError(
+                "MFA verification failed: ['mobile/api/mfa/verifyCode: INVALID_MFA_CODE', "
+                "'portal/api/mfa/verifyCode: INVALID_MFA_CODE']"
+            )
+        self._mfa_pending = False
+        self._tokens.bundle = FIXTURE_BUNDLE
+        return None, None

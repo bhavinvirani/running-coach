@@ -18,6 +18,11 @@ export const errorMessages: Record<ErrorCode, string> = {
   garmin_rate_limited: "Garmin is limiting requests. Wait an hour, then try again.",
   garmin_unavailable: "Garmin is not responding. Try again later.",
   garmin_mfa_required: "Garmin asked for a two-factor code. Reconnect in Settings.",
+  garmin_credentials_rejected:
+    "Garmin did not accept this email and password. Check them and try again.",
+  garmin_mfa_rejected: "Garmin did not accept this code. Type the newest code Garmin sent.",
+  garmin_login_lost:
+    "This Garmin sign-in is no longer open. Start again with your email and password.",
   claude_key_missing: "No Claude API key is set. Add one in Settings.",
   // Shown on Settings, where the key is saved; a run's card for a rejected key links to Settings itself.
   claude_key_invalid:
@@ -74,6 +79,29 @@ export function errorCodeMessage(code: ErrorCode | null | undefined): string {
 export function logInErrorMessage(error: unknown): string {
   if (isApiError(error) && !error.network && error.code === "unauthorized") {
     return "Email or password is wrong. Check both and try again.";
+  }
+  return errorMessage(error);
+}
+
+/**
+ * Why a Garmin sign-in on the Garmin screen failed. Garmin's 429 on a password sign-in from the hosted app
+ * is a block on the server (every sign-in strategy answered 429 from Render, #13), which waiting does not
+ * lift; the laptop CLI is the way round it.
+ */
+export function garminSignInErrorMessage(error: unknown): string {
+  if (isApiError(error) && !error.network && error.code === "garmin_rate_limited") {
+    return "Garmin turned this sign-in away, as it often does for sign-ins from a server. Connect from your laptop instead, with pnpm garmin:connect.";
+  }
+  return errorMessage(error);
+}
+
+/**
+ * Why a disconnect that also removes the app's workouts from Garmin failed. Garmin turning the removal down
+ * means the login expired, which leaves disconnecting without the removal, or reconnecting first.
+ */
+export function garminRemovalErrorMessage(error: unknown): string {
+  if (isApiError(error) && !error.network && error.code === "garmin_auth_expired") {
+    return "Removing workouts needs a working Garmin login, and this one has expired. Disconnect without removing them, or reconnect first.";
   }
   return errorMessage(error);
 }

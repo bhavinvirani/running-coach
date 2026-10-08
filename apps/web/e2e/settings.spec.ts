@@ -1,6 +1,7 @@
 import { ErrorCode, meResponseSchema, type Problem } from "@running-coach/shared";
 import type { Locator, Page, Response } from "@playwright/test";
 import { errorMessages } from "../src/lib/errors";
+import { garminCopy } from "../src/screens/garmin/garmin-copy";
 import { seedExpiredGarminLogin } from "./fixtures/seed";
 import { expect, test } from "./fixtures/login";
 
@@ -52,8 +53,12 @@ test("lists each setting with what it holds now, in My stuff and My preferences,
 }) => {
   await openSettings(page);
 
-  // Every test starts with Garmin not connected, no Claude key, kilometers and standard detail.
-  await expectRows(card(page, "My stuff"), ["Garmin, Not connected", "Claude, No key"]);
+  // Every test starts with Garmin not connected, no Claude key, no shoes, kilometers and standard detail.
+  await expectRows(card(page, "My stuff"), [
+    "Garmin, Not connected",
+    "Claude, No key",
+    "Shoes, None",
+  ]);
   await expectRows(card(page, "My preferences"), [
     "Units, Kilometers",
     "Coach detail, Standard",
@@ -73,13 +78,24 @@ test("each row opens its own screen inside the Settings tab, and Back returns to
       row: "Garmin, Not connected",
       title: "Garmin",
       path: "/settings/garmin",
-      shows: () => expect(card(page, "Garmin")).toContainText("Not connected."),
+      // Not connected is the form that connects.
+      shows: () =>
+        expect(
+          page.getByRole("button", { name: garminCopy.connect.idle, exact: true }),
+        ).toBeVisible(),
     },
     {
       row: "Claude, No key",
       title: "Claude",
       path: "/settings/claude",
       shows: () => expect(card(page, "Claude").getByLabel("Claude API key")).toBeVisible(),
+    },
+    {
+      row: "Shoes, None",
+      title: "Shoes",
+      path: "/settings/shoes",
+      // No pair yet: one sentence and Add shoes.
+      shows: () => expect(page.getByRole("link", { name: "Add shoes", exact: true })).toBeVisible(),
     },
     {
       row: "Units, Kilometers",
@@ -186,7 +202,7 @@ test("a unit that does not save says so and goes back to Kilometers", async ({ p
   expect((await getSettings(page)).units).toBe("km");
 });
 
-test("an expired Garmin login shows on its row, and its screen says how to reconnect", async ({
+test("an expired Garmin login shows on its row, and its screen offers to reconnect", async ({
   page,
 }) => {
   await seedExpiredGarminLogin();
@@ -194,9 +210,12 @@ test("an expired Garmin login shows on its row, and its screen says how to recon
 
   await page.getByRole("link", { name: "Garmin, Login expired" }).click();
   await expect(heading(page, "Garmin")).toBeVisible();
-  await expect(card(page, "Garmin")).toContainText(
-    "To reconnect, run pnpm garmin:connect with this app's address on your laptop.",
-  );
+  await expect(
+    card(page, garminCopy.signIn).getByText(garminCopy.reconnectIntro, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: garminCopy.reconnect.idle, exact: true }),
+  ).toBeVisible();
 });
 
 test("says what failed and recovers with Retry when settings do not load", async ({

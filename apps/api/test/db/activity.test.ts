@@ -35,13 +35,14 @@ async function rows(userId: string) {
 }
 
 describe("activity", () => {
-  it("is created by the migrations with its unique key and list index", async () => {
+  it("is created by the migrations with its unique key, list index and pair index", async () => {
     const result = await db.execute<{ indexname: string }>(
       sql`select indexname from pg_indexes where tablename = 'activity' order by indexname`,
     );
 
     expect(result.rows.map((row) => row.indexname)).toEqual([
       "activity_pkey",
+      "activity_shoe_id_idx",
       "activity_user_id_garmin_activity_id_idx",
       "activity_user_id_start_utc_idx",
     ]);

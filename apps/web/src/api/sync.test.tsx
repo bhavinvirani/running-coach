@@ -12,6 +12,7 @@ import { planKey } from "./plan";
 import { latestReviewKey, reviewListKey } from "./reviews";
 import { actionKey, detailKey, listKey } from "./query-keys";
 import { sessionKey } from "./sessions";
+import { shoesKey } from "./shoes";
 import { useForgetSyncOutcomeOnReconnect, useLatestSync, useSyncNow } from "./sync";
 import { settle } from "@/test/lifecycle";
 
@@ -86,8 +87,8 @@ describe("useSyncNow", () => {
 
 describe("useSyncNow refreshes", () => {
   /**
-   * What the screens hold before the sync: the plan, the calendar, one session, the latest run, the bests
-   * and the weekly reviews, all fresh.
+   * What the screens hold before the sync: the plan, the calendar, one session, the latest run, the bests,
+   * the weekly reviews and the shoes, all fresh.
    */
   function cachedViews() {
     const queryClient = testQueryClient();
@@ -99,6 +100,7 @@ describe("useSyncNow refreshes", () => {
       bests: listKey("personal-bests"),
       latestReview: latestReviewKey,
       reviews: reviewListKey,
+      shoes: shoesKey,
     };
     for (const key of Object.values(views)) queryClient.setQueryData(key, {});
     const invalidated = () =>
@@ -130,6 +132,7 @@ describe("useSyncNow refreshes", () => {
     bests: true,
     latestReview: true,
     reviews: true,
+    shoes: true,
   };
 
   it("the plan, the calendar and each session as well as the runs and bests after a sync that removed runs deleted on Garmin (deleted activity)", async () => {
@@ -147,6 +150,16 @@ describe("useSyncNow refreshes", () => {
   it("the weekly reviews after a sync, which queues the review of a week that has ended (weekly review queued)", async () => {
     expect(await syncWith(synced(0))).toMatchObject({ latestReview: true, reviews: true });
   });
+
+  it.each([
+    { outcome: "brought a run in", answer: () => synced(1) },
+    { outcome: "failed partway", answer: () => problem(502, ErrorCode.garminUnavailable) },
+  ])(
+    "the shoes after a sync that $outcome, whose new runs wear the active pair (active pair's totals)",
+    async ({ answer }) => {
+      expect(await syncWith(answer())).toMatchObject({ shoes: true });
+    },
+  );
 });
 
 function meWithStatus(status: MeResponse["garmin"]["status"]): MeResponse {

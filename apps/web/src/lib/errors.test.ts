@@ -6,6 +6,8 @@ import {
   errorCodeMessage,
   errorMessage,
   errorMessages,
+  garminRemovalErrorMessage,
+  garminSignInErrorMessage,
   logInErrorMessage,
   isVersionMismatch,
   networkErrorMessage,
@@ -113,5 +115,37 @@ describe("logInErrorMessage", () => {
   it("uses the shared message for anything else", () => {
     const error = new ApiError({ status: 429, code: ErrorCode.rateLimited });
     expect(logInErrorMessage(error)).toBe(errorMessages.rate_limited);
+  });
+});
+
+describe("garminSignInErrorMessage", () => {
+  it("points to the laptop when Garmin turns a sign-in away (Garmin 429)", () => {
+    const error = new ApiError({ status: 429, code: ErrorCode.garminRateLimited });
+    expect(garminSignInErrorMessage(error)).toBe(
+      "Garmin turned this sign-in away, as it often does for sign-ins from a server. Connect from your laptop instead, with pnpm garmin:connect.",
+    );
+  });
+
+  it("uses the shared message for anything else, the app's own limit included", () => {
+    const limited = new ApiError({ status: 429, code: ErrorCode.rateLimited });
+    expect(garminSignInErrorMessage(limited)).toBe(errorMessages.rate_limited);
+    const rejected = new ApiError({ status: 422, code: ErrorCode.garminCredentialsRejected });
+    expect(garminSignInErrorMessage(rejected)).toBe(errorMessages.garmin_credentials_rejected);
+    const offline = new ApiError({ status: 0, code: ErrorCode.internal, network: true });
+    expect(garminSignInErrorMessage(offline)).toBe(networkErrorMessage);
+  });
+});
+
+describe("garminRemovalErrorMessage", () => {
+  it("says removing needs a working login, and how to go on, when Garmin turns the removal down (token expiry during disconnect)", () => {
+    const error = new ApiError({ status: 409, code: ErrorCode.garminAuthExpired });
+    expect(garminRemovalErrorMessage(error)).toBe(
+      "Removing workouts needs a working Garmin login, and this one has expired. Disconnect without removing them, or reconnect first.",
+    );
+  });
+
+  it("uses the shared message for anything else", () => {
+    const error = new ApiError({ status: 502, code: ErrorCode.garminUnavailable });
+    expect(garminRemovalErrorMessage(error)).toBe(errorMessages.garmin_unavailable);
   });
 });

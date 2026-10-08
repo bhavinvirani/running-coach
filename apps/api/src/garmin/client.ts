@@ -9,6 +9,14 @@ import {
   garminHistoryRequestSchema,
   type GarminHistoryResponse,
   garminHistoryResponseSchema,
+  type GarminLoginCodeRequest,
+  garminLoginCodeRequestSchema,
+  type GarminLoginCodeResponse,
+  garminLoginCodeResponseSchema,
+  type GarminLoginRequest,
+  garminLoginRequestSchema,
+  type GarminLoginResponse,
+  garminLoginResponseSchema,
   type GarminProblem,
   garminProblemSchema,
   type GarminProfileRequest,
@@ -40,7 +48,7 @@ import { type FailedResponse, FetchFailure, type FetchJsonResult, fetchJson } fr
 // restarts). Any answer, a 5xx included, comes back at once: the service already retried Garmin inside one
 // session, and every new request here is another Garmin login. A 429 throws garmin_rate_limited and only a
 // job reschedules itself; slower retries belong to the job too. 409 rather than 401 for an expired Garmin
-// login: the web app reads 401 as "signed out".
+// login: the web app reads 401 as "signed out". The password login (login, loginCode) is never retried.
 //
 // Token rotation: login can refresh the tokens, and the old refresh token then stops working. Every bundle
 // the service hands back that differs from the one sent, with an answer or with an error, goes to the
@@ -57,6 +65,16 @@ const DEFAULT_TIMEOUT_MS = 20_000;
  * answer this side gave up on loses the ids Garmin made, and the job's retry would upload them again.
  */
 export const WORKOUT_SYNC_TIMEOUT_MS = 180_000;
+/**
+ * A password login (POST /connect) has no overall deadline in garminconnect: it tries its sign-in
+ * strategies in turn, 30 s per request, waiting 3 to 8 s or 10 to 20 s between them. It answers in a few
+ * seconds, 10 to 20 s when it falls back to the widget, and about 2.5 min when Garmin answers fast but
+ * blocks every strategy. 180 s covers all of that; only every request hanging to its own timeout (330 s)
+ * runs past it, and that pending login is replaced by the runner's next start. A code (POST /connect/mfa)
+ * takes a few seconds and shares the bound: its answer is a login that cannot be asked for again without
+ * another password and code.
+ */
+export const LOGIN_TIMEOUT_MS = 180_000;
 /** Garmin blocks last about an hour; the service sends 3600 when Garmin gives no delay. */
 export const DEFAULT_RETRY_AFTER_S = 3600;
 
@@ -108,6 +126,18 @@ export interface GarminClient {
     request: GarminWorkoutSyncRequest,
     options: GarminCallOptions,
   ): Promise<GarminWorkoutSyncResponse>;
+  /**
+   * A password login for the web app's connect: code_needed while the service keeps the login under
+   * loginId for its code, or connected with the new bundle when Garmin asked for none. Throws
+   * garmin_credentials_rejected (422) for a wrong email or password. Never retried.
+   */
+  login(request: GarminLoginRequest): Promise<GarminLoginResponse>;
+  /**
+   * The code for the login pending under loginId: the new bundle. Throws garmin_mfa_rejected (422) for a
+   * wrong code, after which the same login takes another, and garmin_login_lost (409) when the service no
+   * longer holds the login. Never retried.
+   */
+  loginCode(request: GarminLoginCodeRequest): Promise<GarminLoginCodeResponse>;
 }
 
 // Read before the full response schema, so a 2xx body that breaks the contract still hands its bundle over.
@@ -138,10 +168,28 @@ const unavailable = () =>
   new DomainError(ErrorCode.garminUnavailable, 502, "Garmin is not answering. Try again later.");
 // Garmin answered that the item is gone (deleted on Garmin Connect); the caller words it for its item.
 const notFound = () => new DomainError(ErrorCode.notFound, 404, "Garmin Connect has no such item.");
+// The password login's answers about what the runner typed: 422, since the request was well formed.
+const credentialsRejected = () =>
+  new DomainError(
+    ErrorCode.garminCredentialsRejected,
+    422,
+    "Garmin did not accept this email and password.",
+  );
+const mfaRejected = () =>
+  new DomainError(ErrorCode.garminMfaRejected, 422, "Garmin did not accept this code.");
+const loginLost = () =>
+  new DomainError(
+    ErrorCode.garminLoginLost,
+    409,
+    "This Garmin sign-in is no longer open. Start again with your email and password.",
+  );
 
 function toError(path: string, failed: FailedResponse<GarminProblem>): Error {
   const code = failed.problem?.code;
   if (code === ErrorCode.garminAuthExpired) return authExpired();
+  if (code === ErrorCode.garminCredentialsRejected) return credentialsRejected();
+  if (code === ErrorCode.garminMfaRejected) return mfaRejected();
+  if (code === ErrorCode.garminLoginLost) return loginLost();
   if (code === ErrorCode.garminRateLimited || failed.status === 429) {
     return rateLimited(retryAfterSeconds(failed));
   }
@@ -231,6 +279,38 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
     return parsed.data;
   }
 
+  /**
+   * The password login's two calls, which make a bundle instead of carrying one, so nothing is written
+   * back. Never retried, not even when the service gave no answer: a request it may have received can
+   * have started a login, and sending it again is another password login (what Garmin limits hardest)
+   * and another code by email, or a code tried on a login the first attempt finished or dropped.
+   */
+  async function postLogin<Req extends z.ZodType, Res extends z.ZodType>(
+    path: string,
+    requestSchema: Req,
+    request: z.input<Req>,
+    responseSchema: Res,
+  ): Promise<z.output<Res>> {
+    const body: unknown = requestSchema.parse(request);
+    let result: FetchJsonResult<z.output<Res>, GarminProblem>;
+    try {
+      result = await fetchJson(`${options.baseUrl}${path}`, {
+        method: "POST",
+        headers: { "x-garmin-secret": options.secret },
+        body,
+        schema: responseSchema,
+        problemSchema: garminProblemSchema,
+        timeoutMs: LOGIN_TIMEOUT_MS,
+        retries: 0,
+      });
+    } catch (error) {
+      if (error instanceof FetchFailure) throw noAnswer(error);
+      throw error;
+    }
+    if (!result.ok) throw toError(path, result);
+    return result.data;
+  }
+
   return {
     profile: (request, callOptions) =>
       post(
@@ -287,6 +367,15 @@ export function createGarminClient(options: GarminClientOptions): GarminClient {
         garminWorkoutSyncResponseSchema,
         WORKOUT_SYNC_TIMEOUT_MS,
         callOptions,
+      ),
+    login: (request) =>
+      postLogin("/connect", garminLoginRequestSchema, request, garminLoginResponseSchema),
+    loginCode: (request) =>
+      postLogin(
+        "/connect/mfa",
+        garminLoginCodeRequestSchema,
+        request,
+        garminLoginCodeResponseSchema,
       ),
   };
 }

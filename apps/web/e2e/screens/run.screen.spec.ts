@@ -12,6 +12,7 @@ import {
   seedRunDetail,
   seedTreadmillRun,
 } from "../fixtures/seed";
+import { pairs, seedPair, wearPair } from "../fixtures/seed-shoes";
 
 /** Opens the one seeded run by its address: the screen under test is the run, not the way there. */
 async function openSeededRun(page: Page): Promise<void> {
@@ -24,6 +25,19 @@ async function openSeededRun(page: Page): Promise<void> {
 
 function section(page: Page, title: string): Locator {
   return page.getByRole("region", { name: title, exact: true });
+}
+
+/**
+ * The Shoes section once the pairs have loaded beside the run: the pair the run wears with Change, or with
+ * no pair stored, the sentence and Add shoes.
+ */
+async function expectShoesLoaded(page: Page, pair: string | null): Promise<void> {
+  const shoes = section(page, "Shoes");
+  if (pair === null) {
+    await expect(shoes.getByRole("link", { name: "Add shoes", exact: true })).toBeVisible();
+  } else {
+    await expect(shoes.getByRole("button", { name: "Change" })).toHaveAccessibleDescription(pair);
+  }
 }
 
 /** The pace bars' rows, one per lap shown: the first 12 until Show all. */
@@ -46,7 +60,7 @@ async function fitViewportToPage(page: Page): Promise<void> {
 // Nothing on the run screen depends on the clock: the day and time are the run's own start, fixed by the
 // seed, and the laps, samples, route and zones are synthetic and deterministic (seedRunDetail).
 
-test("run shows the seeded long run as a race with its best efforts, route, split bars, zones, cadence and elevation", async ({
+test("run shows the seeded long run as a race with its pair, best efforts, route, split bars, zones, cadence and elevation", async ({
   page,
 }) => {
   await seedLongRun({ race: true });
@@ -55,8 +69,11 @@ test("run shows the seeded long run as a race with its best efforts, route, spli
   // both kinds of tile. The race starts earlier, so the newest run is still the long run.
   await seedRaceDayRun();
   await seedBestEfforts(longRunBestEfforts);
+  // The pair it was run in, under the stats.
+  await wearPair(fixtureRunIds.longRun, await seedPair(pairs.glide, { active: true }));
 
   await openSeededRun(page);
+  await expectShoesLoaded(page, "Northpace Glide 4");
   // The last section on the screen: once its line is drawn, every section above it has rendered.
   await expect(
     section(page, "Elevation")
@@ -83,6 +100,7 @@ test("run shows a treadmill run without route or elevation", async ({ page }) =>
   await seedRunDetail(fixtureRunIds.treadmill, "treadmill");
 
   await openSeededRun(page);
+  await expectShoesLoaded(page, null);
   // The last section on the screen, a note indoors; the cadence line above it is the last chart drawn.
   await expect(section(page, "Elevation")).toContainText("No elevation recorded.");
   await expect(
@@ -107,6 +125,7 @@ test("run shows the coach's review of the long run under its stats, rated helpfu
   await seedInsight(fixtureRunIds.longRun, longRunInsight, { feedback: "up" });
 
   await openSeededRun(page);
+  await expectShoesLoaded(page, null);
   const coach = section(page, "Coach");
   await expect(coach.getByText(longRunInsight.headline, { exact: true })).toBeVisible();
   await expect(coach.getByRole("button", { name: "Helpful", exact: true })).toHaveAttribute(

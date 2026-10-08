@@ -14,7 +14,7 @@ Status: the bootstrap is done (#21): every skill points at a tested reference im
 | `apps/api/src/db`    | Drizzle schema and committed SQL migrations                                                                                                         | `migrations.md`     |
 | `apps/api/src/coach` | Claude client, versioned prompt files, output schemas, fallbacks                                                                                    | `coach-prompts.md`  |
 | `apps/coach`         | Coach service: runs a prompt the API sends on the owner's Claude plan through the Claude Agent SDK; shared-secret header; second Render service     | `coach-service.md`  |
-| `services/garmin`    | FastAPI over `garminconnect`, stateless, shared-secret header, bound to 127.0.0.1                                                                   | `garmin-service.md` |
+| `services/garmin`    | FastAPI over `garminconnect`, stateless but a pending 2FA login, shared-secret header, bound to 127.0.0.1                                           | `garmin-service.md` |
 | `packages/engine`    | Training rules: pure TypeScript, no I/O, test-first                                                                                                 | `engine.md`         |
 | `packages/shared`    | zod contracts, error codes, units: the only source of types                                                                                         | `contracts.md`      |
 
@@ -32,7 +32,7 @@ Rules live in `.claude/rules/` and load by path. Each `.claude/skills/*/SKILL.md
 | `pnpm seed:owner`                                   | creates the owner from `OWNER_*`, or resets its name and password and signs it out everywhere                                                                                                     |
 | `pnpm db:generate` / `pnpm db:migrate`              | SQL from the Drizzle schema; apply locally                                                                                                                                                        |
 | `pnpm py:check`                                     | ruff, mypy, pytest for `services/garmin` through uv                                                                                                                                               |
-| `pnpm garmin:connect <app-url>`                     | laptop CLI: signs in to the app, logs in to Garmin with 2FA in the terminal, uploads the token bundle, which the API proves with one call and stores encrypted                                    |
+| `pnpm garmin:connect <app-url>`                     | fallback to Settings' Connect Garmin: laptop CLI that signs in to the app, logs in to Garmin with 2FA, uploads the token bundle, which the API proves and stores encrypted                        |
 | `pnpm coach:dev`                                    | the coach service on 127.0.0.1:8777 for the owner's Claude plan, on this laptop's Claude Code login (needs `COACH_SERVICE_SECRET`)                                                                |
 | `pnpm worktree:add <lane>`                          | a sibling worktree `../running-coach-<lane>` at `origin/main` for one parallel session: installs, links `reference`, writes its e2e slot, never copies `.env`                                     |
 

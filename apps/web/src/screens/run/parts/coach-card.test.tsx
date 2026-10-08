@@ -15,6 +15,7 @@ import {
   meFixture,
 } from "@/test/fixtures";
 import { planChangeFixture } from "@/test/fixtures-adaptation";
+import { shoesResponseFixture } from "@/test/fixtures-shoes";
 import { holdPolls } from "@/test/held-polls";
 import { renderScreen } from "@/test/render";
 import { RunScreen } from "../run-screen";
@@ -88,6 +89,7 @@ function fakeCoachApi({
     if (method === "GET" && path === `/api/activities/${run.id}`) {
       return json(activityResponseFixture({ detail: activityDetailFixture() }));
     }
+    if (method === "GET" && path === "/api/shoes") return json(shoesResponseFixture());
     return notFound();
   });
 }
@@ -109,7 +111,7 @@ describe("CoachCard", () => {
     );
   });
 
-  it("sits right under the run's stats, above the detail", async () => {
+  it("sits under the run's stats and shoes, above the detail", async () => {
     fakeCoachApi({ reads: [insightReadyFixture()] });
     renderRun();
     await screen.findByRole("region", { name: "Route" });
@@ -117,7 +119,7 @@ describe("CoachCard", () => {
     const sections = screen
       .getAllByRole("region")
       .map((region) => region.getAttribute("aria-label"));
-    expect(sections.slice(0, 3)).toEqual(["Summary", "Coach", "Route"]);
+    expect(sections.slice(0, 4)).toEqual(["Summary", "Shoes", "Coach", "Route"]);
     expect(within(coach()).getByRole("heading", { name: "Coach" })).toHaveClass("text-body");
   });
 

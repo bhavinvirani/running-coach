@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "code_needed"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "connected"
+        },
+        "tokenBundle": {
+          "type": "string",
+          "minLength": 2
+        }
+      },
+      "required": [
+        "status",
+        "tokenBundle"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

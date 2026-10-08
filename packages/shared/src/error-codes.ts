@@ -15,6 +15,15 @@ export const ErrorCode = {
   garminRateLimited: "garmin_rate_limited",
   garminUnavailable: "garmin_unavailable",
   garminMfaRequired: "garmin_mfa_required",
+  /** A login from the web app: Garmin turned down the email and password. */
+  garminCredentialsRejected: "garmin_credentials_rejected",
+  /** Garmin turned down a two-factor code; the same pending login takes another one. */
+  garminMfaRejected: "garmin_mfa_rejected",
+  /**
+   * The Garmin service no longer holds the login a code was for: 5 min passed, it restarted or deployed,
+   * or too many wrong codes. The runner starts again with email and password.
+   */
+  garminLoginLost: "garmin_login_lost",
   claudeKeyMissing: "claude_key_missing",
   claudeKeyInvalid: "claude_key_invalid",
   claudeUnavailable: "claude_unavailable",

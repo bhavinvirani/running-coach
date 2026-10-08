@@ -16,7 +16,6 @@ import contextlib
 import http.client
 import json
 import logging
-import os
 import ssl
 import sys
 import traceback
@@ -27,14 +26,20 @@ from dataclasses import dataclass
 from email.message import Message
 from getpass import getpass
 from http.cookiejar import CookieJar
-from typing import IO, Any, Protocol
+from typing import IO, Any
 from urllib.parse import urlsplit
 
 import certifi
-from garminconnect import Garmin
 
 from garmin_service.errors import from_login_exception
 from garmin_service.models.problem import ErrorCode
+from garmin_service.password_login import (
+    GarminFactory,
+    PasswordLogin,
+    code_refused,
+    has_tokens,
+    real_garmin,
+)
 
 USAGE = "Usage: pnpm garmin:connect https://<name>.onrender.com"
 # Render's free service sleeps when idle and holds the first request for up to a minute.
@@ -215,41 +220,6 @@ class AppClient:
             raise AppUnreachableError(type(error).__name__) from error
 
 
-class TokenDump(Protocol):
-    def dumps(self) -> str: ...
-
-
-class PasswordLogin(Protocol):
-    """The part of garminconnect.Garmin a password login uses. Tests pass a fake."""
-
-    @property
-    def client(self) -> TokenDump: ...
-
-    def login(self) -> tuple[str | None, Any]: ...
-
-    def resume_login(self, client_state: dict[str, Any], mfa_code: str) -> tuple[Any, Any]: ...
-
-
-GarminFactory = Callable[[str, str], PasswordLogin]
-
-
-def real_garmin(email: str, password: str) -> PasswordLogin:
-    # login() without a tokenstore reads GARMINTOKENS and would reuse that file instead of logging
-    # in; this command always makes a fresh login and never touches a token file.
-    os.environ.pop("GARMINTOKENS", None)
-    return Garmin(email, password, return_on_mfa=True)
-
-
-def _has_tokens(bundle: str) -> bool:
-    try:
-        tokens = json.loads(bundle)
-    except ValueError:
-        return False
-    return isinstance(tokens, dict) and all(
-        isinstance(tokens.get(key), str) and tokens[key] for key in ("di_token", "di_refresh_token")
-    )
-
-
 def _garmin_failure(exc: Exception) -> StepError | None:
     """The runner's sentence for a failed Garmin login, by errors.py's cause-chain mapping."""
     error = from_login_exception(exc)
@@ -257,19 +227,9 @@ def _garmin_failure(exc: Exception) -> StepError | None:
         return None
     if error.code is ErrorCode.GARMIN_RATE_LIMITED:
         return StepError(GARMIN_LIMITED)
-    if error.code is ErrorCode.GARMIN_AUTH_EXPIRED:
+    if error.code is ErrorCode.GARMIN_CREDENTIALS_REJECTED:
         return StepError(GARMIN_REJECTED)
     return StepError(GARMIN_DOWN)
-
-
-def _code_rejected(garmin: PasswordLogin, exc: Exception) -> bool:
-    """Garmin refused the code itself, so the pending MFA session can take another one."""
-    error = from_login_exception(exc)
-    if error is None or error.code is not ErrorCode.GARMIN_AUTH_EXPIRED:
-        return False
-    # Garmin.resume_login loads the profile after the code is accepted and the MFA session is
-    # cleared; an auth error there comes with the tokens in place, and another code cannot work.
-    return not _has_tokens(garmin.client.dumps())
 
 
 def _verify_code(garmin: PasswordLogin, ask: Callable[[str], str]) -> None:
@@ -284,7 +244,7 @@ def _verify_code(garmin: PasswordLogin, ask: Callable[[str], str]) -> None:
         try:
             garmin.resume_login({}, code)
         except Exception as exc:
-            if attempt == MFA_ATTEMPTS or not _code_rejected(garmin, exc):
+            if attempt == MFA_ATTEMPTS or not code_refused(garmin, exc):
                 raise
             print(CODE_REJECTED)
         else:
@@ -310,7 +270,7 @@ def garmin_bundle(
             raise
         raise failure from exc
     # A login whose DI token exchange failed falls back to a web cookie and dumps null tokens.
-    if not _has_tokens(bundle):
+    if not has_tokens(bundle):
         raise StepError(NO_REUSABLE_LOGIN)
     return bundle
 

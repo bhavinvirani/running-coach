@@ -19,6 +19,9 @@ class ErrorCode(StrEnum):
     GARMIN_RATE_LIMITED = "garmin_rate_limited"
     GARMIN_UNAVAILABLE = "garmin_unavailable"
     GARMIN_MFA_REQUIRED = "garmin_mfa_required"
+    GARMIN_CREDENTIALS_REJECTED = "garmin_credentials_rejected"
+    GARMIN_MFA_REJECTED = "garmin_mfa_rejected"
+    GARMIN_LOGIN_LOST = "garmin_login_lost"
 
 
 class Issue(ResponseModel):

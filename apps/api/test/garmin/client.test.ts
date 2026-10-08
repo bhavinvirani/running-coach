@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -14,6 +15,7 @@ import {
   createGarminClient,
   type GarminCallOptions,
   garminClient,
+  LOGIN_TIMEOUT_MS,
   WORKOUT_SYNC_TIMEOUT_MS,
   workoutStopError,
 } from "../../src/garmin/client";
@@ -21,6 +23,7 @@ import { config } from "../../src/lib/config";
 import { DomainError } from "../../src/lib/errors";
 import { withRequestId } from "../../src/lib/logger";
 import { EASY_STEPS, fixtureOf, fixturesSentTo, garminBundle, PACES } from "../seed";
+import { FIXTURE_LOGIN } from "../seed-garmin-login";
 
 // Against the real Garmin service in fixture mode (global-setup.ts); the bundle picks the behaviour.
 
@@ -709,6 +712,133 @@ describe("garminClient", () => {
       const bug = workoutStopError({ code: ErrorCode.internal });
       expect(bug).not.toBeInstanceOf(DomainError);
       expect(bug.message).toContain("internal");
+    });
+  });
+
+  // The fixture's password login (FIXTURE_LOGIN); each test its own loginId, as each runner has one.
+  describe("login and loginCode", () => {
+    const start = (
+      email: string = FIXTURE_LOGIN.email,
+      password: string = FIXTURE_LOGIN.password,
+    ) => {
+      const loginId = randomUUID();
+      return { loginId, answer: garminClient.login({ loginId, email, password }) };
+    };
+
+    it("answers code_needed, then the base bundle for the right code on the same loginId (2FA)", async () => {
+      const { loginId, answer } = start();
+
+      expect(await answer).toEqual({ status: "code_needed" });
+      expect(await garminClient.loginCode({ loginId, mfaCode: FIXTURE_LOGIN.code })).toEqual({
+        tokenBundle: garminBundle(),
+      });
+    });
+
+    it("answers connected with the bundle when Garmin asks for no code", async () => {
+      expect(await start(FIXTURE_LOGIN.noCodeEmail).answer).toEqual({
+        status: "connected",
+        tokenBundle: garminBundle(),
+      });
+    });
+
+    it("throws garmin_credentials_rejected (422) for a wrong password", async () => {
+      const error = await rejection(start(FIXTURE_LOGIN.email, "not-the-password").answer);
+
+      expect(error).toMatchObject({ code: ErrorCode.garminCredentialsRejected, status: 422 });
+    });
+
+    it("throws garmin_mfa_rejected (422) for a wrong code, and the same login then takes the right one (wrong code)", async () => {
+      const { loginId, answer } = start();
+      await answer;
+
+      const error = await rejection(
+        garminClient.loginCode({ loginId, mfaCode: FIXTURE_LOGIN.wrongCode }),
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.garminMfaRejected, status: 422 });
+      expect(await garminClient.loginCode({ loginId, mfaCode: FIXTURE_LOGIN.code })).toEqual({
+        tokenBundle: garminBundle(),
+      });
+    });
+
+    it("throws garmin_login_lost (409) for a code with no login pending (lost login)", async () => {
+      const error = await rejection(
+        garminClient.loginCode({ loginId: randomUUID(), mfaCode: FIXTURE_LOGIN.code }),
+      );
+
+      expect(error).toMatchObject({ code: ErrorCode.garminLoginLost, status: 409 });
+    });
+
+    it("throws garmin_rate_limited with retryAfterSeconds after one request, never retried (Garmin 429)", async () => {
+      const calls = countServiceCalls("/connect");
+
+      const error = await rejection(start(FIXTURE_LOGIN.rateLimitedEmail).answer);
+
+      expect(error).toMatchObject({
+        code: ErrorCode.garminRateLimited,
+        status: 429,
+        retryAfterSeconds: 3600,
+      });
+      expect(calls()).toBe(1);
+    });
+
+    it("waits LOGIN_TIMEOUT_MS, past a login that tries every strategy against a blocking Garmin", async () => {
+      const timeout = vi.spyOn(AbortSignal, "timeout");
+
+      await start().answer;
+
+      // services/garmin's report: about 2.5 min when Garmin answers fast but blocks every strategy.
+      expect(LOGIN_TIMEOUT_MS).toBeGreaterThanOrEqual(150_000);
+      expect(timeout.mock.calls).toEqual([[LOGIN_TIMEOUT_MS]]);
+    });
+
+    it("rejects a request that breaks the contract before calling the service", async () => {
+      const calls = countServiceCalls("/connect/mfa");
+
+      await expect(
+        garminClient.loginCode({ loginId: randomUUID(), mfaCode: "12ab56" }),
+      ).rejects.toThrow();
+      await expect(
+        garminClient.login({ loginId: randomUUID(), email: "not an email", password: "x" }),
+      ).rejects.toThrow();
+      expect(calls()).toBe(0);
+    });
+  });
+
+  describe("against a service that drops every connection", () => {
+    let server: Server;
+    let client: ReturnType<typeof createGarminClient>;
+    let requests = 0;
+
+    beforeAll(async () => {
+      server = createHttpServer((req) => {
+        requests += 1;
+        req.socket.destroy();
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address() as AddressInfo;
+      client = createGarminClient({ baseUrl: `http://127.0.0.1:${port}`, secret: "unused" });
+    });
+
+    afterAll(async () => {
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    it("never retries a password login or a code, even with no answer: another try is another login", async () => {
+      const login = await rejection(
+        client.login({
+          loginId: randomUUID(),
+          email: FIXTURE_LOGIN.email,
+          password: FIXTURE_LOGIN.password,
+        }),
+      );
+      const code = await rejection(
+        client.loginCode({ loginId: randomUUID(), mfaCode: FIXTURE_LOGIN.code }),
+      );
+
+      expect(login).toMatchObject({ code: ErrorCode.garminUnavailable, status: 502 });
+      expect(code).toMatchObject({ code: ErrorCode.garminUnavailable, status: 502 });
+      expect(requests).toBe(2);
     });
   });
 

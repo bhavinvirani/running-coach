@@ -34,6 +34,8 @@ vi.mock("@/screens/claude/claude-screen", gone);
 vi.mock("@/screens/units/units-screen", gone);
 vi.mock("@/screens/coach-detail/coach-detail-screen", gone);
 vi.mock("@/screens/hr-zones/hr-zones-screen", gone);
+vi.mock("@/screens/shoes/shoes-screen", gone);
+vi.mock("@/screens/shoe/shoe-screen", gone);
 
 /** Every lazy route inside the tabs, and an address that opens it. */
 const tabScreens = [
@@ -54,6 +56,9 @@ const tabScreens = [
   { route: "/settings/units", at: "/settings/units" },
   { route: "/settings/coach-detail", at: "/settings/coach-detail" },
   { route: "/settings/hr-zones", at: "/settings/hr-zones" },
+  { route: "/settings/shoes", at: "/settings/shoes" },
+  { route: "/settings/shoes/new", at: "/settings/shoes/new" },
+  { route: "/settings/shoes/:id", at: "/settings/shoes/abc" },
 ];
 
 /** A route's full pattern, from its parent's and its own path, as React Router nests them. */
