@@ -74,10 +74,10 @@ export interface ReviewDeltaContext {
 /**
  * What the engine reads to decide a review's changes, from the reads deltaContext makes for a run's: the
  * coming week's sessions with their phase (taper or race: no rise) and their earlier changes (by the coach
- * or a review, or eased by a re-entry); the reviewed week's planned distance, skipped and missed sessions
- * left out (none when the coming week is the plan's first, which has no week before it); the longest
- * measured run of 30 days; the goal's days a week; the open pause; and whether a pause held a day of the
- * reviewed week (afterPause: no rise).
+ * or a review, or eased by a re-entry); the plan's race (a long run near it: no rise); the reviewed week's
+ * planned distance, skipped and missed sessions left out (none when the coming week is the plan's first,
+ * which has no week before it); the longest measured run of 30 days; the goal's days a week; the open
+ * pause; and whether a pause held a day of the reviewed week (afterPause: no rise).
  */
 export async function reviewDeltaContext(
   executor: Executor,

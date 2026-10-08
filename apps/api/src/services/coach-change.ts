@@ -123,10 +123,10 @@ export async function sessionHistories(
 
 /**
  * What the engine reads around the session: its week and that week's phase (taper or race: no rise); the
- * plan's race (a long run near it: no rise); the week before's planned distance, skipped and missed sessions left out (none in the plan's first week,
- * which has no week before it); recent runs; the goal; the changes already made to it, by the coach after
- * a run or in a weekly review, or by a pause or gap re-entry (eased); and whether a pause held a day of the
- * week before (afterPause: no rise).
+ * plan's race (a long run near it: no rise); the week before's planned distance, skipped and missed
+ * sessions left out (none in the plan's first week, which has no week before it); recent runs; the goal;
+ * the changes already made to it, by the coach after a run or in a weekly review, or by a pause or gap
+ * re-entry (eased); and whether a pause held a day of the week before (afterPause: no rise).
  */
 async function deltaContext(
   executor: Executor,
