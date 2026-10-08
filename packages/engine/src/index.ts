@@ -105,8 +105,20 @@ export { stridesM, stridesRepeat, stridesRunIndex, withStrides } from "./rules/s
 export type { StridesRunInput, WithStridesInput } from "./rules/strides";
 export { taperPeakM } from "./rules/taper";
 export type { TaperPeakInput } from "./rules/taper";
-export { inTaperLongRunBands, longRunKeepsDay, taperLongRunCapM } from "./rules/taper-long-run";
-export type { TaperLongRunBandsInput, TaperLongRunInput } from "./rules/taper-long-run";
+export {
+  inTaperLongRunBands,
+  longRunDayCapM,
+  longRunKeepsDay,
+  taperLongRunCapM,
+  weekRunCaps,
+} from "./rules/taper-long-run";
+export type {
+  LongRunDayCapInput,
+  TaperLongRunBandsInput,
+  TaperLongRunInput,
+  WeekRunCaps,
+  WeekRunCapsInput,
+} from "./rules/taper-long-run";
 export {
   isRaceBandWeek,
   taperCeilingM,

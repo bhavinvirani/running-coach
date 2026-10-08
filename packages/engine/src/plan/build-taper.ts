@@ -10,7 +10,7 @@ import {
   raceWeekShortestM,
 } from "../rules/race-week";
 import { taperPeakM } from "../rules/taper";
-import { longRunKeepsDay } from "../rules/taper-long-run";
+import { longRunKeepsDay, weekRunCaps } from "../rules/taper-long-run";
 import { isRaceBandWeek, taperCeilingM } from "../rules/taper-share";
 import { weekTargetM } from "../rules/volume-curve";
 import {
@@ -18,7 +18,6 @@ import {
   raceSession,
   sizeWeek,
   sumM,
-  weekRunCaps,
   weekSlots,
   type BuiltWeek,
   type PlanContext,
@@ -98,13 +97,17 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
       }),
     );
   const weekCaps = (k: number) =>
-    weekRunCaps(ctx, {
-      runCapM: runCapM(k),
+    weekRunCaps({
+      distanceKey,
+      raceDate,
+      longRunDay: ctx.longRunDay,
       weekStart: weekStarts[k]!,
       longRunsBeforeM: sessionsBefore(k)
         .filter((s) => s.type === "long")
         .map((s) => s.target.distanceM),
       seedM,
+      runCapM: runCapM(k),
+      minRunM: ctx.minRunM,
     });
 
   // A taper week's own days: the race week's days and a long run under 6 days out go to the race
@@ -190,6 +193,11 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
   let beforeCapM = beforeCeilingM;
   // Sized again, the race week runs no more race-pace reps than it did.
   let maxReps: number | undefined;
+  // The loop ends. A race week inside one calendar week is sized once. Otherwise the template's days
+  // shorten at most once (beforeCapM then stays under beforeCeilingM), and every other pass that goes
+  // on lowers raceWeekCapM to beforeM, under what the race week ran, which raceWeekSessions holds
+  // within raceWeekCapM. So raceWeekCapM strictly decreases in whole meters (sums of sessions) and
+  // never passes under 0: a race week capped at 0 runs nothing, never more than the week before.
   for (;;) {
     const template = raceWeekSessions({
       days,
