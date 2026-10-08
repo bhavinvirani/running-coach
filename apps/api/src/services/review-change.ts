@@ -11,7 +11,13 @@ import type { DbTransaction } from "../db/client";
 import { planAdjustment, type PlanRow, planSession, type PlanSessionRow } from "../db/schema";
 import { addDays, mondayOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
-import { ACCEPTED, daysPerWeekOf, longestRecentRunM, sessionHistories } from "./coach-change";
+import {
+  ACCEPTED,
+  daysPerWeekOf,
+  longestRecentRunM,
+  planRaceOf,
+  sessionHistories,
+} from "./coach-change";
 import { activePlan, type Executor, openPause, pauseCovering, runnerToday } from "./runner-state";
 import { adjustedOf } from "./session-view";
 
@@ -67,10 +73,11 @@ export interface ReviewDeltaContext {
 
 /**
  * What the engine reads to decide a review's changes, from the reads deltaContext makes for a run's: the
- * coming week's sessions with their earlier changes (by the coach or a review, or eased by a re-entry); the
- * reviewed week's planned distance, skipped and missed sessions left out (none when the coming week is the
- * plan's first, which has no week before it); the longest measured run of 30 days; the goal's days a week;
- * the open pause; and whether a pause held a day of the reviewed week (afterPause: no rise).
+ * coming week's sessions with their phase (taper or race: no rise) and their earlier changes (by the coach
+ * or a review, or eased by a re-entry); the plan's race (a long run near it: no rise); the reviewed week's
+ * planned distance, skipped and missed sessions left out (none when the coming week is the plan's first,
+ * which has no week before it); the longest measured run of 30 days; the goal's days a week; the open
+ * pause; and whether a pause held a day of the reviewed week (afterPause: no rise).
  */
 export async function reviewDeltaContext(
   executor: Executor,
@@ -114,9 +121,12 @@ export async function reviewDeltaContext(
         id: session.id,
         date: session.date,
         source: session.planId === null ? "custom" : "plan",
+        // Null for a custom workout (the row's check); a taper or race-week session may only shrink.
+        phase: session.phase,
         coachAdjusted: histories.get(session.id)?.coachAdjusted ?? false,
         eased: histories.get(session.id)?.eased ?? false,
       })),
+      race: planRaceOf(active),
       previousWeekM,
       longestRecentM: await longestRecentRunM(executor, userId, today),
       daysPerWeek: await daysPerWeekOf(executor, active),

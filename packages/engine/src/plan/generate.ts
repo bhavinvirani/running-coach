@@ -10,7 +10,7 @@ import {
   type PlanWarning,
 } from "@running-coach/shared";
 import { ENGINE_VERSION, FITNESS_SHAPE_DISTANCE, PEAK_VOLUME_M } from "../constants";
-import { addDays, daysBetween } from "../dates";
+import { addDays } from "../dates";
 import { startVolume, type StartVolumeResult } from "../rules/baseline";
 import {
   longestInWindowM,
@@ -24,12 +24,13 @@ import { neededWeeklyM } from "../rules/needed-volume";
 import { planLength } from "../rules/plan-length";
 import { predictTimeS, racePace } from "../rules/prediction";
 import { bandMidpointSPerKm } from "../rules/session-target";
-import { taperStartDate } from "../rules/taper";
 import { pacesFromVdot, roundVdot, vdotFromPerformance } from "../rules/vdot";
+import { fastFinishWeeks } from "../rules/fast-finish";
 import { baseCurveM, isDownWeek, weekTargetM } from "../rules/volume-curve";
+import { weekRunCaps } from "../rules/taper-long-run";
 import { minRunDistanceM } from "../rules/week-fill";
-import { buildTrainingWeek, type PlanContext } from "./build-week";
-import { buildTaperWeeks, type PreTaperWeek } from "./build-taper";
+import { buildTrainingWeek, type BuiltWeek, type PlanContext } from "./build-week";
+import { buildTaperWeeks } from "./build-taper";
 
 const PRE_TAPER: readonly PlanPhase[] = ["base", "build", "peak"];
 
@@ -47,7 +48,13 @@ interface Setup {
   raceWarning: PlanWarning | null;
 }
 
-/** The base, build and peak weeks, each climbing at most 10% or recovering every 4th week. */
+/**
+ * The base, build and peak weeks, each climbing at most 10% or recovering: a race plan's down weeks
+ * counted back from its taper, a fitness plan's every 4th week. Every second build or peak week that is
+ * not a down week ends its long run at marathon pace. A long run close enough to the race (a Thursday
+ * race's last peak Sunday, 11 days out) keeps its cap by days to the race, a share of the largest long
+ * run before it; where that is under 20 min the week runs its day easy instead (weekRunCaps).
+ */
 function buildPreTaperWeeks(
   ctx: PlanContext,
   {
@@ -56,17 +63,21 @@ function buildPreTaperWeeks(
     startVolumeM,
     seedM,
   }: { phases: readonly PlanPhase[]; startDate: string; startVolumeM: number; seedM: number },
-): PreTaperWeek[] {
+): BuiltWeek[] {
   const curve = baseCurveM({
     startVolumeM,
     peakVolumeM: PEAK_VOLUME_M[ctx.distanceKey],
     weeks: phases.length,
   });
-  const built: PreTaperWeek[] = [];
+  // A race plan's taper starts the week after these; a fitness plan has none.
+  const firstTaperWeek = ctx.raceDate === null ? null : phases.length + 1;
+  const downs = phases.map((_, index) => isDownWeek({ weekNumber: index + 1, firstTaperWeek }));
+  const finishes = fastFinishWeeks(phases.map((phase, index) => ({ phase, down: downs[index]! })));
+  const built: BuiltWeek[] = [];
   let previousNonDownM: number | null = null;
   phases.forEach((phase, index) => {
     const number = index + 1;
-    const down = isDownWeek(number);
+    const down = downs[index]!;
     const targetM = down
       ? weekTargetM({
           kind: "down",
@@ -78,19 +89,31 @@ function buildPreTaperWeeks(
           curveM: curve[index]!,
           previousNonDownWeekM: previousNonDownM,
         });
-    const runCapM = maxRunM(
-      longestInWindowM({ longestByWeekM: built.map((w) => w.longestM), seedM }),
-    );
+    const weekStart = addDays(startDate, 7 * index);
+    const caps = weekRunCaps({
+      distanceKey: ctx.distanceKey,
+      raceDate: ctx.raceDate,
+      longRunDay: ctx.longRunDay,
+      weekStart,
+      longRunsBeforeM: built.flatMap((w) =>
+        w.week.sessions.filter((s) => s.type === "long").map((s) => s.target.distanceM),
+      ),
+      seedM,
+      runCapM: maxRunM(longestInWindowM({ longestByWeekM: built.map((w) => w.longestM), seedM })),
+      minRunM: ctx.minRunM,
+    });
     const week = buildTrainingWeek(ctx, {
       number,
       phase,
-      weekStart: addDays(startDate, 7 * index),
+      weekStart,
       targetM,
-      maxRunM: runCapM,
+      maxRunM: caps.maxRunM,
+      longRun: caps.longRun,
       lastHardDate: built.findLast((w) => w.lastHardDate !== null)?.lastHardDate ?? null,
+      fastFinish: finishes[index]!,
     });
     if (!down) previousNonDownM = week.week.distanceM;
-    built.push({ ...week, targetM, maxRunM: runCapM });
+    built.push(week);
   });
   return built;
 }
@@ -113,12 +136,14 @@ function setUp(
     fromTimeS: vdotSource.timeS,
     toDistanceM: DISTANCE_METERS[distanceKey],
   });
+  const training = pacesFromVdot(vdot);
   const race = racePace({
     distanceM: DISTANCE_METERS[distanceKey],
     predictedTimeS,
     targetTimeS: goal.targetTimeS,
+    easySlowSPerKm: training.easy.slowSPerKm,
   });
-  const paces: PlanPaces = { ...pacesFromVdot(vdot), race: race.band };
+  const paces: PlanPaces = { ...training, race: race.band };
   const easyPaceSPerKm = bandMidpointSPerKm(paces.easy);
   const ctx: PlanContext = {
     distanceKey,
@@ -197,17 +222,9 @@ export function generatePlan(input: PlanGenerationInput): PlanGenerationResult {
           preTaper,
         });
   // The peak long run is the longest before the taper; the taper's long runs are cut on purpose.
-  const taperStart =
-    ctx.raceDate === null
-      ? null
-      : taperStartDate({ distanceKey: ctx.distanceKey, raceDate: ctx.raceDate });
-  const preTaperLongRunsM = weeks
-    .flatMap((week) => week.sessions)
-    .filter(
-      (session) =>
-        session.type === "long" &&
-        (taperStart === null || daysBetween(session.date, taperStart) > 0),
-    )
+  const preTaperLongRunsM = preTaper
+    .flatMap((built) => built.week.sessions)
+    .filter((session) => session.type === "long")
     .map((session) => session.target.distanceM);
   const longRunShort =
     preTaperLongRunsM.length === 0

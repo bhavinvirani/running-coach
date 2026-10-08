@@ -40,7 +40,7 @@ describe("long run", () => {
     expect(longRunShare(6)).toBe(0.3);
   });
 
-  it("lets the long run of a taper block cut short to 2 runs take 60%, and a lone run all of it", () => {
+  it("lets the long run of a taper week of 2 runs take 60%, and a lone run all of it", () => {
     expect(longRunShare(2)).toBe(0.6);
     expect(longRunShare(1)).toBe(1.2);
   });

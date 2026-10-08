@@ -144,8 +144,10 @@ async function writeChange(db: pg.Client, change: SeededChange): Promise<StoredP
  * (source pause), so the first 7 days are walk-run and the weeks after run at 70% and build back up. In
  * week 3 the walk-run of Mon 19 was run (done, linked to its run); the coach's review of that run turned
  * Wed 21's eased tempo into an easy run of the same time (applyDelta, source coach); Wed 21 was then not
- * run (missed); Fri 23 and Sun 25 stay eased. Written directly, with the engine's numbers, so it holds
- * whatever the date; only week 3's past sessions carry what a sync would have matched.
+ * run (missed); Sun 25 stays eased, and Fri 23 stays as planned: week 3 is a down week, which the return's
+ * 10% ramp from week 2 cuts so little that its 20-minute easy run keeps its 20 minutes. Written directly,
+ * with the engine's numbers, so it holds whatever the date; only week 3's past sessions carry what a sync
+ * would have matched.
  */
 export async function seedAdjustedPlan(): Promise<void> {
   const { pausedOn, backOn, daysOff, doneOn, changedOn } = adjustedStory;

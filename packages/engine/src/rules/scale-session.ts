@@ -11,7 +11,7 @@ import {
   SCALE_DISTANCE_STEP_M,
   SCALE_DURATION_STEP_S,
 } from "../constants";
-import { bandMidpointSPerKm, flattenSteps } from "./session-target";
+import { bandMidpointSPerKm, flattenSteps, sessionTarget } from "./session-target";
 import { minRunDistanceM } from "./week-fill";
 
 export interface ScaleStepsInput {
@@ -34,6 +34,27 @@ function floorTo(value: number, step: number): number {
 
 function isQuality(steps: SessionSteps): boolean {
   return flattenSteps(steps).some(({ step }) => step.kind === "work");
+}
+
+/**
+ * An easy or long run with extras: an easy run step first and anything after it, such as strides or a
+ * marathon-pace finish. Read from the steps alone, so a quality session (any work step) has none.
+ */
+export function hasExtras(steps: SessionSteps): boolean {
+  const [first] = steps;
+  return (
+    steps.length > 1 &&
+    !("repeat" in first!) &&
+    first!.kind === "run" &&
+    first!.zone === "easy" &&
+    !isQuality(steps)
+  );
+}
+
+/** The session as one easy run of its whole distance, never past the longest step the contract allows. */
+export function plainRunSteps(steps: SessionSteps, paces: PlanPaces): SessionSteps {
+  const distanceM = Math.min(sessionTarget(steps, paces).distanceM, STEP_MAX_DISTANCE_M);
+  return [{ kind: "run", zone: "easy", distanceM, durationS: null }];
 }
 
 /** A work step cut to whole 100 m or 10 s, never to nothing: one step, or itself when shorter. */
@@ -110,17 +131,22 @@ function scaleRuns(steps: SessionSteps, factor: number, paces: PlanPaces): Scale
 
 /**
  * A session's steps at a share of their size: a quality session (any work step) loses reps or work, an
- * easy or long run shrinks or grows. Deterministic, and every result still parses with the contract's
- * steps schema. A factor that is not finite and positive is a programmer error: callers clamp first.
+ * easy or long run shrinks or grows. With extras, a cut first makes it one easy run of its whole
+ * distance, so the 20 min floor holds for the session and no fast running is left; a rise grows only
+ * the first run and the extras stay as planned. Deterministic, and every result still parses with the
+ * contract's steps schema. A factor that is not finite and positive is a programmer error: callers
+ * clamp first.
  */
 export function scaleSession({ steps, factor, paces }: ScaleStepsInput): ScaleSessionResult {
   if (!Number.isFinite(factor) || factor <= 0) {
     throw new RangeError(`factor must be finite and > 0, got ${factor}`);
   }
   if (factor === 1) return { steps, atMinimum: false };
-  return isQuality(steps)
-    ? { steps: scaleQuality(steps, factor), atMinimum: false }
-    : scaleRuns(steps, factor, paces);
+  if (isQuality(steps)) return { steps: scaleQuality(steps, factor), atMinimum: false };
+  if (!hasExtras(steps)) return scaleRuns(steps, factor, paces);
+  if (factor < 1) return scaleRuns(plainRunSteps(steps, paces), factor, paces);
+  const [first, ...extras] = steps;
+  return { steps: [...scaleRuns([first!], factor, paces).steps, ...extras], atMinimum: false };
 }
 
 /** The steps of scaleSession alone. */
