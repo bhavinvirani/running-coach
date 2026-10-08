@@ -1,9 +1,10 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   DEFAULT_SHOE_RETIRE_DISTANCE_M,
   type ShoeInput,
   shoeInputSchema,
 } from "@running-coach/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "../src/db/client";
 import { activity, type NewShoeRow, shoe } from "../src/db/schema";
 
@@ -61,4 +62,19 @@ export async function activePairs(userId: string): Promise<string[]> {
     .from(shoe)
     .where(eq(shoe.userId, userId));
   return rows.filter((row) => row.active).map((row) => row.id);
+}
+
+/**
+ * Resolves once a query in this database waits for a row lock another connection holds, so a test can
+ * commit that connection's transaction while the query is known to wait.
+ */
+export async function aQueryWaitsForARowLock(): Promise<void> {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
+    const result = await db.execute<{ count: string }>(
+      sql`select count(*) from pg_locks l join pg_stat_activity a on a.pid = l.pid where not l.granted and l.locktype <> 'advisory' and a.datname = current_database()`,
+    );
+    if (Number(result.rows[0]?.count) > 0) return;
+    await sleep(20);
+  }
+  throw new Error("no query waited for a row lock");
 }

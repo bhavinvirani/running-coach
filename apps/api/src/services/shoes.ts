@@ -13,9 +13,9 @@ import { advisoryLockKey } from "../lib/lock-key";
 import { logger } from "../lib/logger";
 import { runNotFound } from "./activity-detail";
 
-// The runner's pairs (slice 52). Database only, no Garmin: the sync puts the active pair on each new run
-// (writeActivities in garmin-sync.ts), and these change the pairs and a run's pair. Every change of a pair
-// answers the whole list, as GET /api/shoes does.
+// The runner's pairs (slice 52). Database only, no Garmin: the sync and the history import put the active
+// pair on new runs (WriteActivitiesOptions in garmin-sync.ts), and these change the pairs and a run's pair.
+// Every change of a pair answers the whole list, as GET /api/shoes does.
 
 const log = logger.child({ module: "shoes" });
 
@@ -135,10 +135,13 @@ export async function deleteShoe(userId: string, id: string): Promise<ShoesRespo
 export async function activateShoe(userId: string, id: string): Promise<ShoesResponse> {
   await db.transaction(async (tx) => {
     await lockActivePair(tx, userId);
+    // The row lock holds off a delete of the pair until commit, or waits for one in flight and then finds
+    // nothing: activating a pair being deleted answers 404 instead of leaving the runner without one.
     const [row] = await tx
       .select({ active: shoe.active })
       .from(shoe)
-      .where(and(eq(shoe.id, id), eq(shoe.userId, userId)));
+      .where(and(eq(shoe.id, id), eq(shoe.userId, userId)))
+      .for("update");
     if (!row) throw shoeNotFound();
     if (row.active) return;
     await deactivateOthers(tx, userId, id);
@@ -188,10 +191,13 @@ export async function setActivityShoe(
       if (!pair) throw shoeNotFound();
     }
     // updated_at stays: it records the last change Garmin made to the run (best-efforts.ts).
-    await tx
+    const updated = await tx
       .update(activity)
       .set({ shoeId, updatedAt: sql`${activity.updatedAt}` })
-      .where(eq(activity.id, activityId));
+      .where(eq(activity.id, activityId))
+      .returning({ id: activity.id });
+    // A sync removed the run (deleted on Garmin) since the check above.
+    if (updated.length === 0) throw runNotFound();
     return { shoeId };
   });
 }

@@ -2,22 +2,27 @@ import { ErrorCode, type GarminActivitySummary } from "@running-coach/shared";
 import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
-import { activity, garminConnection } from "../../src/db/schema";
+import { activity, garminConnection, shoe } from "../../src/db/schema";
 import { garminClient } from "../../src/garmin/client";
 import * as analyzeRunQueue from "../../src/jobs/analyze-run-queue";
 import * as bestEffortsQueue from "../../src/jobs/best-efforts-queue";
 import { startBoss, stopBoss } from "../../src/jobs/boss";
 import { DomainError } from "../../src/lib/errors";
-import { syncGarmin, writeActivities } from "../../src/services/garmin-sync";
+import {
+  syncGarmin,
+  type WrittenActivities,
+  writeActivities,
+} from "../../src/services/garmin-sync";
 import { importHistoryPage } from "../../src/services/history-import";
-import { activateShoe, listShoes, setActivityShoe } from "../../src/services/shoes";
+import { activateShoe, deleteShoe, listShoes, setActivityShoe } from "../../src/services/shoes";
 import { connectGarmin, createUser, seedImport } from "../seed";
-import { createPair, pairsOfRuns } from "../seed-shoes";
+import { aQueryWaitsForARowLock, createPair, pairsOfRuns } from "../seed-shoes";
 
-// Which pair a sync puts on a run (slice 52), on the real Postgres against the Garmin service in fixture
-// mode: the active pair goes on each run the sync inserts, once, and nothing reassigns it. The fixture's
-// seven runs start 2026-08-30 22:40 to 2026-09-27 06:00 UTC, one of them the treadmill of 09-24; from
-// CURSOR the sync reads all seven. pg-boss runs without workers, so a queued job stays queued.
+// Which pair a sync or the history import puts on a run (slice 52), on the real Postgres against the Garmin
+// service in fixture mode: the active pair goes on each run the sync inserts, once, and nothing reassigns
+// it. The fixture's seven runs start 2026-08-30 22:40 to 2026-09-27 06:00 UTC (local 2026-08-31 00:40 to
+// 2026-09-27 08:00), one of them the treadmill of 09-24; from CURSOR the sync reads all seven. The import
+// adds 39 older runs. pg-boss runs without workers, so a queued job stays queued.
 
 const NOW = new Date("2026-09-28T10:00:00Z");
 const CURSOR = new Date("2026-09-01T12:00:00Z");
@@ -73,6 +78,43 @@ async function runId(userId: string, garminActivityId: number): Promise<string> 
   return row.id;
 }
 
+/** A run as Garmin lists it, its local clock on UTC unless `values` say otherwise. */
+function summaryOf(
+  garminActivityId: number,
+  startLocal: string,
+  values: Partial<GarminActivitySummary> = {},
+): GarminActivitySummary {
+  return {
+    garminActivityId,
+    type: "running",
+    startUtc: `${startLocal}Z`,
+    startLocal,
+    tz: null,
+    distanceM: 5000,
+    durationS: 1500,
+    avgHr: null,
+    maxHr: null,
+    cadence: null,
+    calories: null,
+    elevationGainM: null,
+    isIndoor: false,
+    isManual: false,
+    eventType: null,
+    ...values,
+  };
+}
+
+/** Three new runs of 2026-09-21 to 09-23, Garmin ids 501 to 503. */
+const THREE_RUNS = [1, 2, 3].map((n) => summaryOf(500 + n, `2026-09-2${n}T08:00:00`));
+
+/** writeActivities in a chunk's own transaction, as the sync's chunk calls it from SINCE. */
+const SINCE = "2026-09-01";
+function writeChunk(userId: string, summaries = THREE_RUNS): Promise<WrittenActivities> {
+  return db.transaction((tx) =>
+    writeActivities(userId, summaries, tx, { wearActivePairFrom: SINCE }),
+  );
+}
+
 /** Stores another distance for the run, so the next sync, reading Garmin's, rewrites it (edited run). */
 async function editStored(userId: string, garminActivityId: number): Promise<void> {
   await db
@@ -122,7 +164,7 @@ describe("the active pair on synced runs", () => {
     expect(await pairsOfRuns(userId)).toEqual(allOn(null));
   });
 
-  it("never reassigns a run on a re-sync, also after the active pair changed (re-sync)", async () => {
+  it("never reassigns a run on a re-sync, also after the active pair changed (duplicate activities)", async () => {
     const userId = await connectedUser();
     const first = await createPair(userId, { active: true });
     const second = await createPair(userId);
@@ -201,7 +243,7 @@ describe("the active pair on synced runs", () => {
     });
   });
 
-  it("puts the pair on each run once when two syncs overlap, and a later pair changes none (overlapping syncs)", async () => {
+  it("joins a sync asked for while one runs, which puts the pair on each run once, and a later pair changes none", async () => {
     const userId = await connectedUser();
     const first = await createPair(userId, { active: true });
     const second = await createPair(userId);
@@ -219,45 +261,98 @@ describe("the active pair on synced runs", () => {
   it("assigns once when two writes of the same runs race in separate transactions (overlapping syncs)", async () => {
     const userId = await createUser();
     const first = await createPair(userId, { active: true });
-    const summaries: GarminActivitySummary[] = [1, 2, 3].map((n) => ({
-      garminActivityId: 500 + n,
-      type: "running",
-      startUtc: `2026-09-2${n}T06:00:00Z`,
-      startLocal: `2026-09-2${n}T08:00:00`,
-      tz: null,
-      distanceM: 5000,
-      durationS: 1500,
-      avgHr: null,
-      maxHr: null,
-      cadence: null,
-      calories: null,
-      elevationGainM: null,
-      isIndoor: false,
-      isManual: false,
-      eventType: null,
-    }));
-    const write = () =>
-      db.transaction((tx) => writeActivities(userId, summaries, tx, { wearActivePair: true }));
 
-    const [a, b] = await Promise.all([write(), write()]);
+    const [a, b] = await Promise.all([writeChunk(userId), writeChunk(userId)]);
     await activateShoe(userId, (await createPair(userId)).id);
-    const again = await write();
+    const again = await writeChunk(userId);
 
     expect(a.insertedIds.length + b.insertedIds.length).toBe(3);
     expect(again.insertedIds).toEqual([]);
     expect(await pairsOfRuns(userId)).toEqual(allOn(first.id, [501, 502, 503]));
   });
 
-  it("puts no pair on the history import's runs, which predate it (import)", async () => {
-    const userId = await connectedUser();
-    await createPair(userId, { active: true });
+  it("puts the pair on new runs from the given local date on, by the local start, not the UTC one (time zones)", async () => {
+    const userId = await createUser();
+    const pair = await createPair(userId, { active: true });
+    const runs = [
+      // Local 09-20 just after midnight, UTC still 09-19: inside.
+      summaryOf(601, "2026-09-20T00:30:00", { startUtc: "2026-09-19T22:30:00Z" }),
+      // Local 09-19 in the evening, UTC already 09-20: outside.
+      summaryOf(602, "2026-09-19T21:00:00", { startUtc: "2026-09-20T01:00:00Z" }),
+      summaryOf(603, "2026-09-18T08:00:00"),
+    ];
+
+    await db.transaction((tx) =>
+      writeActivities(userId, runs, tx, { wearActivePairFrom: "2026-09-20" }),
+    );
+
+    expect(await pairsOfRuns(userId)).toEqual({ 601: pair.id, 602: null, 603: null });
+  });
+
+  it("stores the new runs without a pair, and no error, when the active pair's delete is in flight as a chunk writes (pair deleted during a sync)", async () => {
+    const userId = await createUser();
+    const pair = await createPair(userId, { active: true });
+    let write: Promise<WrittenActivities> | undefined;
+
+    // The delete holds the pair's row until it commits, while the chunk reads the active pair.
+    await db.transaction(async (tx) => {
+      await tx.delete(shoe).where(eq(shoe.id, pair.id));
+      write = writeChunk(userId);
+      write.catch(() => undefined);
+      await aQueryWaitsForARowLock();
+    });
+
+    expect((await write)?.insertedIds).toHaveLength(3);
+    expect(await pairsOfRuns(userId)).toEqual(allOn(null, [501, 502, 503]));
+  });
+
+  it("makes a delete of the active pair wait for the chunk that put it on new runs, then clears it from them (pair deleted during a sync)", async () => {
+    const userId = await createUser();
+    const pair = await createPair(userId, { active: true });
+    let deletion: ReturnType<typeof deleteShoe> | undefined;
+
+    await db.transaction(async (tx) => {
+      await writeActivities(userId, THREE_RUNS, tx, { wearActivePairFrom: SINCE });
+      deletion = deleteShoe(userId, pair.id);
+      deletion.catch(() => undefined);
+      await aQueryWaitsForARowLock();
+    });
+
+    await expect(deletion).resolves.toEqual({ shoes: [] });
+    expect(await pairsOfRuns(userId)).toEqual(allOn(null, [501, 502, 503]));
+  });
+
+  it("puts the active pair on the import's runs inside the next sync's window and none on older ones (import)", async () => {
+    // The next sync reads from 2026-09-20: the runs of 09-20, 09-24 and 09-27.
+    const userId = await connectedUser(new Date("2026-09-21T12:00:00Z"));
+    const pair = await createPair(userId, { active: true });
     await seedImport(userId);
 
     const page = await importHistoryPage({ userId, pageSize: 50 });
 
     expect(page.status).toBe("done");
-    const runs = Object.values(await pairsOfRuns(userId));
-    expect(runs).toHaveLength(46);
-    expect(runs.every((shoeId) => shoeId === null)).toBe(true);
+    const runs = await pairsOfRuns(userId);
+    expect(Object.keys(runs)).toHaveLength(46);
+    expect(Object.entries(runs).filter(([, shoeId]) => shoeId !== null)).toEqual(
+      [10_000_000_005, TREADMILL, LONG_RUN].map((id) => [String(id), pair.id]),
+    );
+  });
+
+  it("keeps the pair the import put on a run through the next sync, as if the sync had stored it (import then sync)", async () => {
+    const userId = await connectedUser(new Date("2026-09-21T12:00:00Z"));
+    const first = await createPair(userId, { active: true });
+    const second = await createPair(userId);
+    await seedImport(userId);
+    await importHistoryPage({ userId, pageSize: 50 });
+    await activateShoe(userId, second.id);
+
+    const result = await syncGarmin({ userId, now: NOW });
+
+    expect(result.activitiesSeen).toBe(3);
+    expect(result.activitiesWritten).toBe(0);
+    const runs = await pairsOfRuns(userId);
+    expect(Object.entries(runs).filter(([, shoeId]) => shoeId !== null)).toEqual(
+      [10_000_000_005, TREADMILL, LONG_RUN].map((id) => [String(id), first.id]),
+    );
   });
 });

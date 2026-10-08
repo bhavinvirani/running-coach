@@ -7,12 +7,20 @@ import {
   shoesResponseSchema,
 } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
+import type request from "supertest";
 import { describe, expect, it } from "vitest";
-import { db } from "../../src/db/client";
+import { type DbTransaction, db } from "../../src/db/client";
 import { activity, shoe } from "../../src/db/schema";
 import { browserAgent, createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
 import { createRunOn, createUser } from "../seed";
-import { activePairs, createPair, pairOfRun, SHOE_INPUT, wearPair } from "../seed-shoes";
+import {
+  activePairs,
+  aQueryWaitsForARowLock,
+  createPair,
+  pairOfRun,
+  SHOE_INPUT,
+  wearPair,
+} from "../seed-shoes";
 
 // /api/shoes and PUT /api/activities/:id/shoe on the real Postgres (Settings > Shoes, slice 52). The pairs
 // live in the app only: no route calls Garmin. The sync's side is in test/services/shoe-sync.test.ts.
@@ -66,6 +74,25 @@ function unworn(id: string, values: Partial<Shoe> = {}): Shoe {
 }
 
 const ids = (shoes: Shoe[]) => shoes.map((pair) => pair.id);
+
+/**
+ * Sends the request now, inside a transaction that holds a row it needs, and answers it once that commits:
+ * supertest sends only when awaited.
+ */
+async function whileHeld(
+  hold: (tx: DbTransaction) => Promise<unknown>,
+  send: () => PromiseLike<request.Response>,
+): Promise<request.Response> {
+  let sent: Promise<request.Response> | undefined;
+  await db.transaction(async (tx) => {
+    await hold(tx);
+    sent = Promise.resolve(send());
+    sent.catch(() => undefined);
+    await aQueryWaitsForARowLock();
+  });
+  if (!sent) throw new Error("nothing was sent");
+  return sent;
+}
 
 describe("GET /api/shoes", () => {
   it("returns 401 without a session", async () => {
@@ -189,7 +216,7 @@ describe("POST /api/shoes", () => {
     );
   });
 
-  it("trims the text it is given and stores blank as null", async () => {
+  it("trims the text it is given and keeps a null nickname", async () => {
     const { agent } = await owner();
 
     const [pair] = shoesOf(
@@ -244,6 +271,7 @@ describe("POST /api/shoes", () => {
   it.each([
     ["without a brand", { brand: undefined }],
     ["with a blank model", { model: "   " }],
+    ["with a blank colour", { colour: "  " }],
     ["with a name over 40 characters", { nickname: "x".repeat(41) }],
     ["with a retire goal under 50 km", { retireDistanceM: MIN_SHOE_RETIRE_DISTANCE_M - 1 }],
     ["with a negative start distance", { startDistanceM: -1 }],
@@ -454,6 +482,20 @@ describe("POST /api/shoes/:id/active", () => {
     expectProblem(await agent.post(activePath("not-a-uuid")), 400, "validation");
   });
 
+  it("answers 404 and keeps the active pair when the pair's delete commits during the activation (delete during activate)", async () => {
+    const { agent, userId } = await owner();
+    const active = await createPair(userId, { active: true });
+    const deleted = await createPair(userId);
+
+    const response = await whileHeld(
+      (tx) => tx.delete(shoe).where(eq(shoe.id, deleted.id)),
+      () => agent.post(activePath(deleted.id)),
+    );
+
+    expectProblem(response, 404, "not_found");
+    expect(await activePairs(userId)).toEqual([active.id]);
+  });
+
   it("leaves exactly one active pair when activations of different pairs race (parallel activations)", async () => {
     const { agent, userId } = await owner();
     const pairs = await Promise.all([
@@ -608,6 +650,19 @@ describe("PUT /api/activities/:id/shoe", () => {
 
     expect(problem.detail).toBe("That run does not exist.");
     expect(await pairOfRun(theirs.id)).toBeNull();
+  });
+
+  it("answers 404 when a sync removes the run while its pair is set (run removed meanwhile)", async () => {
+    const { agent, userId } = await owner();
+    const pair = await createPair(userId);
+    const run = await createRunOn(userId, "2026-09-27");
+
+    const response = await whileHeld(
+      (tx) => tx.delete(activity).where(eq(activity.id, run.id)),
+      () => agent.put(runShoePath(run.id)).send({ shoeId: pair.id }),
+    );
+
+    expect(expectProblem(response, 404, "not_found").detail).toBe("That run does not exist.");
   });
 
   it("keeps the run's last-sync time, which records Garmin's changes", async () => {
