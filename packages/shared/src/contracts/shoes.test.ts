@@ -10,8 +10,8 @@ import {
 } from "./shoes";
 
 const input = {
-  brand: "Asics",
-  model: "Novablast 5",
+  brand: "Northpace",
+  model: "Glide 4",
   colour: null,
   nickname: null,
   retireDistanceM: DEFAULT_SHOE_RETIRE_DISTANCE_M,
@@ -20,8 +20,8 @@ const input = {
 
 describe("shoeInputSchema", () => {
   it("trims the text and keeps the optional fields null", () => {
-    const parsed = shoeInputSchema.parse({ ...input, brand: "  Asics ", nickname: " Daily " });
-    expect(parsed).toMatchObject({ brand: "Asics", nickname: "Daily", colour: null });
+    const parsed = shoeInputSchema.parse({ ...input, brand: "  Northpace ", nickname: " Daily " });
+    expect(parsed).toMatchObject({ brand: "Northpace", nickname: "Daily", colour: null });
   });
 
   it("refuses a blank brand or model, and an empty optional field instead of null", () => {
