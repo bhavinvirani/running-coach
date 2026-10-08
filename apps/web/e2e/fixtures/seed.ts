@@ -221,6 +221,7 @@ export async function resetRunner(request: APIRequestContext): Promise<MeRespons
     await db.query(`delete from goal where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from coach_message where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from activity where user_id = ${runnerId}`, [runner.email]);
+    await db.query(`delete from shoe where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from import_progress where user_id = ${runnerId}`, [runner.email]);
     await db.query(`delete from garmin_connection where user_id = ${runnerId}`, [runner.email]);
     await db.query(`update user_settings set claude_key_enc = null where user_id = ${runnerId}`, [

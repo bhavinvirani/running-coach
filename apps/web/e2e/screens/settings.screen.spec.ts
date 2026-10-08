@@ -9,6 +9,8 @@ test("settings shows the seeded runner's rows, grouped, with their values and th
 }) => {
   await page.goto("/settings");
   await expect(page.getByRole("link", { name: "Garmin, Not connected" })).toBeVisible();
+  // The pairs load beside /api/me: the row has its value once they have.
+  await expect(page.getByRole("link", { name: "Shoes, None", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Heart rate zones" })).toBeVisible();
   // The last row on the screen: once it shows, every card above it has rendered from /api/me.
   await expect(page.getByRole("region", { name: "Account" }).getByText(login.email)).toBeVisible();
