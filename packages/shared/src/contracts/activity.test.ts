@@ -139,9 +139,16 @@ describe("activityDetailSchema", () => {
 
 describe("activityResponseSchema", () => {
   it("accepts a run before and after its detail is fetched", () => {
-    const response = { activity: run, bestEfforts: [] };
+    const response = { activity: run, bestEfforts: [], shoeId: null };
     expect(activityResponseSchema.safeParse({ ...response, detail: null }).success).toBe(true);
     expect(activityResponseSchema.safeParse({ ...response, detail }).success).toBe(true);
+  });
+
+  it("carries the pair the run wore, and needs the field even without one", () => {
+    const response = { activity: run, detail: null, bestEfforts: [] };
+    const shoeId = "6f5c0c5e-4a0a-4e8f-9e4c-0f1e6c4a5b66";
+    expect(activityResponseSchema.safeParse({ ...response, shoeId }).success).toBe(true);
+    expect(activityResponseSchema.safeParse(response).success).toBe(false);
   });
 
   it("carries the run's best efforts and marks its personal bests", () => {
@@ -152,6 +159,7 @@ describe("activityResponseSchema", () => {
         { distanceKey: "5k", timeS: 1625.87, personalBest: true },
         { distanceKey: "10k", timeS: 3290.5, personalBest: false },
       ],
+      shoeId: null,
     });
     expect(parsed.success).toBe(true);
   });
@@ -161,6 +169,7 @@ describe("activityResponseSchema", () => {
       activity: run,
       detail: null,
       bestEfforts: [{ distanceKey: "5k", timeS: 1625.87 }],
+      shoeId: null,
     });
     expect(parsed.success).toBe(false);
   });
