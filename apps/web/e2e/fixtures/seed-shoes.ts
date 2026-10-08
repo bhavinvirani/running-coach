@@ -20,6 +20,8 @@ export const pairs = {
   ridge: { brand: "Northpace", model: "Ridge 2", colour: "Moss", nickname: null },
   /** "Race day": a nickname, so the line under it names the brand and model. */
   raceDay: { brand: "Northpace", model: "Tempo Elite", colour: null, nickname: "Race day" },
+  /** "Daily trainer": every name filled in, as on its Edit shoes form. */
+  daily: { brand: "Northpace", model: "Cruise 3", colour: "Sand", nickname: "Daily trainer" },
 } as const satisfies Record<string, SeededPair>;
 
 /** How a seeded pair stands; every field has the API's default for a new pair. */
@@ -145,4 +147,18 @@ export async function seedShoesList(): Promise<void> {
     { date: "2026-08-16", distanceM: 14_000, durationS: 4620 },
     { date: "2026-08-22", distanceM: 6500, durationS: 2280 },
   ]);
+}
+
+/**
+ * The Edit shoes capture: the active pair with every field set, a goal off the default and a start distance
+ * to a tenth, worn on one run so the pair has runs to its name. Returns the pair's id.
+ */
+export async function seedShoeEdit(): Promise<string> {
+  const daily = await seedPair(pairs.daily, {
+    active: true,
+    retireDistanceM: 700_000,
+    startDistanceM: 120_500,
+  });
+  await seedRunsInPair(daily, [{ date: "2026-09-24", distanceM: 9000, durationS: 2970 }]);
+  return daily;
 }
