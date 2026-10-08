@@ -1,3 +1,4 @@
+import { sessionTypeName } from "../../src/lib/session-type";
 import { planWeekCopy } from "../../src/screens/plan-week/plan-week-copy";
 import { expect, test } from "../fixtures/login";
 import { fitViewportToPage } from "../fixtures/screens";
@@ -38,20 +39,22 @@ test("plan week shows what the adaptation made of week 3: done, missed, changed 
   // Each session's link carries its state and change, so these wait for every row the capture is about.
   await expect(
     days.getByRole("link", {
-      name: /^Walk-run, Easy, Mon 19 Oct, Done, .*, Walk-run for your return, was Easy 4\.9 km$/,
+      name: /^Walk-run, Easy, Mon 19 Oct, Done, .*, Walk-run for your return, was Easy 2\.9 km$/,
     }),
   ).toBeVisible();
   await expect(
     days.getByRole("link", {
-      name: /^Easy, Wed 21 Oct, Missed, .*, Changed by the coach, was Tempo 6\.9 km$/,
+      name: /^Easy, Wed 21 Oct, Missed, .*, Changed by the coach, was Tempo 6\.1 km$/,
     }),
   ).toBeVisible();
+  // Week 3 is a down week: the return's 10% ramp from week 2 cuts it only a little, which leaves Friday's
+  // 20-minute easy run as planned, with no change line, and eases the long run.
   await expect(
-    days.getByRole("link", { name: /^Easy, Fri 23 Oct, .*, Eased for your return, was 4\.9 km$/ }),
+    days.getByRole("link", { name: "Easy, Fri 23 Oct, 2.9 km, 20:00", exact: true }),
   ).toBeVisible();
   await expect(
     days.getByRole("link", {
-      name: /^Long run, Sun 25 Oct, .*, Eased for your return, was 15\.0 km$/,
+      name: /^Long run, Sun 25 Oct, .*, Eased for your return, was 11\.2 km$/,
     }),
   ).toBeVisible();
   await expect(days.getByRole("listitem")).toHaveCount(7);
@@ -59,4 +62,31 @@ test("plan week shows what the adaptation made of week 3: done, missed, changed 
   await fitViewportToPage(page);
   // No mask: the week's dates, steps and changes are the seed's, made with the engine's own rules.
   await expect(page).toHaveScreenshot("plan-week-adjusted.png", { fullPage: true });
+});
+
+test("plan week shows race week: race practice 4 days out, a short run with strides 2 days out, rest the day before and the race", async ({
+  page,
+}) => {
+  const { weeks } = await seedPlan();
+  const raceWeek = weeks.at(-1);
+  if (raceWeek?.phase !== "race") throw new Error("The seeded plan does not end in race week");
+  // Pinned as on Plan's capture: every day of race week is ahead, so each offers Add.
+  await page.clock.setFixedTime(planWeekTwoAt);
+
+  await page.goto(`/plan/weeks/${raceWeek.number}`);
+  const days = page.getByRole("region", { name: planWeekCopy.days });
+  const rows = days.getByRole("listitem");
+  await expect(rows).toHaveCount(7);
+  await expect(days.getByRole("link", { name: /^Race practice, Wed 17 Feb, / })).toBeVisible();
+  await expect(days.getByRole("link", { name: /^Easy, Fri 19 Feb, / })).toContainText("4 x 20 s");
+  // The day before the race is rest: no session's link names it, only Add's.
+  await expect(rows.nth(5)).toContainText("Sat 20 Feb");
+  await expect(rows.nth(5)).toContainText(sessionTypeName("rest"));
+  await expect(days.getByRole("link", { name: /, Sat 20 Feb, / })).toHaveCount(0);
+  // The last row on the screen: once the race shows, the week's figure and every day above it have rendered.
+  await expect(days.getByRole("link", { name: /^Race, Sun 21 Feb, / })).toBeVisible();
+
+  await fitViewportToPage(page);
+  // No mask: the week's dates and steps are the seed's.
+  await expect(page).toHaveScreenshot("plan-week-race.png", { fullPage: true });
 });

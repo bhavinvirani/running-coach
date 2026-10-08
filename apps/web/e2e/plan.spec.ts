@@ -346,6 +346,26 @@ test("shows the plan's error state with Retry", async ({ page }) => {
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
+test("ends the seeded half with a taper week, then race week", async ({ page }) => {
+  const seeded = await seedPlan();
+  const taper = seeded.weeks.at(-2);
+  const raceWeek = seeded.weeks.at(-1);
+  if (!taper || !raceWeek) throw new Error("The seeded plan has fewer than two weeks");
+
+  await page.goto("/plan");
+  const weeks = page.getByRole("region", { name: planCopy.weeks }).getByRole("link");
+  await expect(weeks).toHaveCount(seeded.weeks.length);
+  // Each card's name says its phase and total, then its days: race week rests the day before the race.
+  await expect(weeks.nth(seeded.weeks.length - 2)).toHaveAccessibleName(
+    new RegExp(`^${weekTitle(taper.number)}, Taper, ${km(taper.distanceM)}, `),
+  );
+  await expect(weeks.last()).toHaveAccessibleName(
+    new RegExp(
+      `^${weekTitle(raceWeek.number)}, Race week, ${km(raceWeek.distanceM)}, .*, Sat Rest, Sun Race$`,
+    ),
+  );
+});
+
 test("shows the week view", async ({ page }) => {
   const seeded = await seedPlan();
   const [firstWeek] = seeded.weeks;
