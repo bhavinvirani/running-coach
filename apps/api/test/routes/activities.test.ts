@@ -573,6 +573,7 @@ describe("GET /api/activities/:id", () => {
       detail: null,
       // Not computed yet.
       bestEfforts: [],
+      shoeId: null,
     });
   });
 

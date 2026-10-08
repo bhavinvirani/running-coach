@@ -21,6 +21,7 @@ const TABLES = [
   "plan_adjustment",
   "plan_session",
   "session",
+  "shoe",
   "training_pause",
   "user",
   "user_settings",

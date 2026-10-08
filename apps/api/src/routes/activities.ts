@@ -1,6 +1,7 @@
 import {
   activityParamsSchema,
   activityResponseSchema,
+  activityShoeSchema,
   activityWeeksQuerySchema,
   activityWeeksResponseSchema,
   latestActivityResponseSchema,
@@ -10,6 +11,7 @@ import { parse, respond } from "../lib/http";
 import { createRateLimiter, garminRouteLimit, limitPerUser } from "../lib/rate-limit";
 import { getLatestActivity, listActivityWeeks } from "../services/activities";
 import { fetchActivityDetail, getActivity } from "../services/activity-detail";
+import { setActivityShoe } from "../services/shoes";
 
 export const activitiesRouter = Router();
 
@@ -39,3 +41,10 @@ activitiesRouter.post(
     respond(res, activityResponseSchema, await fetchActivityDetail(req.user.id, id));
   },
 );
+
+// The pair the run wore. No rate limit: it writes the database only.
+activitiesRouter.put("/activities/:id/shoe", async (req, res) => {
+  const { id } = parse(activityParamsSchema, req.params);
+  const { shoeId } = parse(activityShoeSchema, req.body);
+  respond(res, activityShoeSchema, await setActivityShoe(req.user.id, id, shoeId));
+});

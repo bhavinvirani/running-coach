@@ -7,7 +7,7 @@ import {
 } from "@running-coach/shared";
 import { type Column, and, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
-import { activity, garminConnection } from "../db/schema";
+import { activity, garminConnection, shoe } from "../db/schema";
 import { garminClient } from "../garmin/client";
 import { config } from "../lib/config";
 import { addDays, dateChunks, daysBetween, localDateOf, noonUtc } from "../lib/local-date";
@@ -110,13 +110,25 @@ export interface WrittenActivities {
   insertedIds: string[];
 }
 
+export interface WriteActivitiesOptions {
+  /** New rows wear the user's active pair, if any. Only the sync passes it. */
+  wearActivePair?: boolean;
+}
+
 /** upsertActivities, also telling the inserted rows from the changed ones. */
 export async function writeActivities(
   userId: string,
   summaries: GarminActivitySummary[],
   executor: Db | DbTransaction = db,
+  { wearActivePair = false }: WriteActivitiesOptions = {},
 ): Promise<WrittenActivities> {
   if (summaries.length === 0) return { written: 0, insertedIds: [] };
+  // In the INSERT values only, never in the DO UPDATE set below: a run takes the active pair once, when it
+  // is new, so a re-sync, an edited run, a partial sync or overlapping syncs never reassign it, and a pair
+  // the runner changed or cleared stays. The history import leaves it out: its runs predate the pair.
+  const shoeId = wearActivePair
+    ? sql`(select ${shoe.id} from ${shoe} where ${shoe.userId} = ${userId} and ${shoe.active})`
+    : undefined;
   const rows = await executor
     .insert(activity)
     .values(
@@ -137,6 +149,7 @@ export async function writeActivities(
         isIndoor: summary.isIndoor,
         isManual: summary.isManual,
         eventType: summary.eventType,
+        shoeId,
       })),
     )
     .onConflictDoUpdate({
@@ -244,8 +257,8 @@ export async function removeRunsDeletedOnGarmin(
 }
 
 /**
- * Saves one finished chunk: runs, then on the last chunk the removal of runs deleted on Garmin, then the
- * cursor, together.
+ * Saves one finished chunk: runs (a new one wears the active pair), then on the last chunk the removal of
+ * runs deleted on Garmin, then the cursor, together.
  */
 async function saveChunk(
   userId: string,
@@ -253,7 +266,9 @@ async function saveChunk(
   cursor: Date,
 ): Promise<WrittenActivities & { removed: number }> {
   return db.transaction(async (tx) => {
-    const { written, insertedIds } = await writeActivities(userId, response.activities, tx);
+    const { written, insertedIds } = await writeActivities(userId, response.activities, tx, {
+      wearActivePair: true,
+    });
     // Null when not asked for (an earlier chunk) or when Garmin would not list them: nothing is checked.
     const removed = response.recent
       ? await removeRunsDeletedOnGarmin(userId, response.recent, tx)
