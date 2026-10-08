@@ -1,19 +1,22 @@
-import type { MeResponse } from "@running-coach/shared";
+import type { MeResponse, ShoesResponse } from "@running-coach/shared";
 import { ErrorCode } from "@running-coach/shared";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { detailKey } from "@/api/query-keys";
+import { shoesKey } from "@/api/shoes";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
+import { racerShoeFixture, shoesResponseFixture } from "@/test/fixtures-shoes";
 import { renderScreen } from "@/test/render";
 import { SettingsScreen } from "./settings-screen";
 
-/** /api/me answering `me`, and sign-out. */
-function fakeMeApi(me: MeResponse = meFixture()) {
+/** /api/me answering `me`, the runner's pairs (the Shoes row's value), and sign-out. */
+function fakeMeApi(me: MeResponse = meFixture(), shoes: ShoesResponse = shoesResponseFixture()) {
   return stubFetch(({ method, path }) => {
     if (method === "GET" && path === "/api/me") return json(me);
+    if (method === "GET" && path === "/api/shoes") return json(shoes);
     if (method === "POST" && path === "/api/auth/sign-out") return json({ success: true });
     return notFound();
   });
@@ -45,7 +48,7 @@ describe("SettingsScreen", () => {
     expect(rest).toEqual([]);
     // A heading line above a surface-1 card of 48 px rows, like CardSection with its ListRows.
     for (const [skeleton, rows] of [
-      [stuff, 2],
+      [stuff, 3],
       [preferences, 3],
     ] as const) {
       const card = skeleton?.lastElementChild;
@@ -60,7 +63,8 @@ describe("SettingsScreen", () => {
 
   it("explains a failed load and loads again on Retry", async () => {
     let attempts = 0;
-    stubFetch(() => {
+    stubFetch(({ path }) => {
+      if (path === "/api/shoes") return json(shoesResponseFixture());
       attempts += 1;
       return attempts === 1 ? problem(500, ErrorCode.internal) : json(meFixture());
     });
@@ -77,7 +81,10 @@ describe("SettingsScreen", () => {
 
   it("keeps the rows and offers Retry when a background reload fails", async () => {
     let failing = false;
-    stubFetch(() => (failing ? problem(503, ErrorCode.internal) : json(meFixture())));
+    stubFetch(({ path }) => {
+      if (path === "/api/shoes") return json(shoesResponseFixture());
+      return failing ? problem(503, ErrorCode.internal) : json(meFixture());
+    });
     const { queryClient } = renderSettings();
     await screen.findByRole("link", { name: "Units, Kilometers" });
 
@@ -92,7 +99,7 @@ describe("SettingsScreen", () => {
     await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
 
-  it("groups Garmin and Claude under My stuff, and units, coach detail and zones under My preferences, above the account", async () => {
+  it("groups Garmin, Claude and shoes under My stuff, and units, coach detail and zones under My preferences, above the account", async () => {
     fakeMeApi();
     renderSettings();
 
@@ -102,7 +109,11 @@ describe("SettingsScreen", () => {
       .map((region) => region.getAttribute("aria-label"))
       .filter((name) => name !== null);
     expect(named).toEqual(["My stuff", "My preferences", "Account"]);
-    expect(rowNames("My stuff")).toEqual(["Garmin, Connected", "Claude, No key"]);
+    expect(rowNames("My stuff")).toEqual([
+      "Garmin, Connected",
+      "Claude, No key",
+      "Shoes, Daily trainer",
+    ]);
     expect(rowNames("My preferences")).toEqual([
       "Units, Kilometers",
       "Coach detail, Standard",
@@ -122,6 +133,7 @@ describe("SettingsScreen", () => {
     expect(hrefs).toEqual([
       "/settings/garmin",
       "/settings/claude",
+      "/settings/shoes",
       "/settings/units",
       "/settings/coach-detail",
       "/settings/hr-zones",
@@ -143,6 +155,7 @@ describe("SettingsScreen", () => {
     expect(icons).toEqual([
       "lucide-watch",
       "lucide-key-round",
+      "lucide-footprints",
       "lucide-ruler",
       "lucide-message-square-text",
       "lucide-heart-pulse",
@@ -183,6 +196,26 @@ describe("SettingsScreen", () => {
     renderSettings();
 
     expect(await screen.findByRole("link", { name: `Claude, ${value}` })).toBeInTheDocument();
+  });
+
+  it("says None on the Shoes row when no pair is active", async () => {
+    fakeMeApi(meFixture(), shoesResponseFixture([racerShoeFixture()]));
+    renderSettings();
+
+    expect(await screen.findByRole("link", { name: "Shoes, None" })).toBeInTheDocument();
+  });
+
+  it("leaves the Shoes row without a value while the pairs fail to load, which the Shoes screen explains", async () => {
+    stubFetch(({ method, path }) => {
+      if (method === "GET" && path === "/api/me") return json(meFixture());
+      return problem(503, ErrorCode.internal);
+    });
+    const { queryClient } = renderSettings();
+
+    // The row reads "Shoes" while the pairs load too, so the failure must have landed first.
+    await vi.waitFor(() => expect(queryClient.getQueryState(shoesKey)?.status).toBe("error"));
+    expect(screen.getByRole("link", { name: "Shoes" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("says Miles on the Units row and Detailed on the Coach detail row when chosen (unit conversion)", async () => {

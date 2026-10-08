@@ -14,7 +14,8 @@ export type Resource =
   | "insights"
   | "reviews"
   | "pause"
-  | "hr-zones";
+  | "hr-zones"
+  | "shoes";
 
 type Id = string | number;
 

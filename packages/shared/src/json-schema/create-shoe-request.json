@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "brand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "colour": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nickname": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retireDistanceM": {
+      "type": "integer",
+      "minimum": 50000,
+      "maximum": 5000000
+    },
+    "startDistanceM": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5000000
+    },
+    "active": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "brand",
+    "model",
+    "colour",
+    "nickname",
+    "retireDistanceM",
+    "startDistanceM",
+    "active"
+  ],
+  "additionalProperties": false
+}

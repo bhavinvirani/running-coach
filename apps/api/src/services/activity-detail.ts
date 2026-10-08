@@ -23,7 +23,7 @@ import { customHrZoneFloors } from "./hr-zones";
 
 const log = logger.child({ module: "activity-detail" });
 
-function runNotFound(): DomainError {
+export function runNotFound(): DomainError {
   return new DomainError(ErrorCode.notFound, 404, "That run does not exist.");
 }
 
@@ -83,12 +83,13 @@ async function hasDetail(activityId: string): Promise<boolean> {
 }
 
 /**
- * GET /api/activities/:id: one of the user's runs, its stored detail (null until fetched) and its best
- * efforts with their personal-best flags (empty until computed, and for runs the bests leave out).
+ * GET /api/activities/:id: one of the user's runs, its stored detail (null until fetched), its best
+ * efforts with their personal-best flags (empty until computed, and for runs the bests leave out) and the
+ * pair it wore.
  */
 export async function getActivity(userId: string, id: string): Promise<ActivityResponse> {
   const [row] = await db
-    .select(activityColumns)
+    .select({ ...activityColumns, shoeId: activity.shoeId })
     .from(activity)
     .where(and(eq(activity.id, id), eq(activity.userId, userId)));
   if (!row) throw runNotFound();
@@ -96,7 +97,8 @@ export async function getActivity(userId: string, id: string): Promise<ActivityR
     readDetail(userId, id),
     getRunBestEfforts(userId, id),
   ]);
-  return { activity: toActivity(row), detail, bestEfforts };
+  const { shoeId, ...run } = row;
+  return { activity: toActivity(run), detail, bestEfforts, shoeId };
 }
 
 /**

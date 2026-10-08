@@ -10,11 +10,12 @@ import { activity, type ImportProgressRow, importProgress } from "../db/schema";
 import { garminClient } from "../garmin/client";
 import { hasPendingJob } from "../jobs/boss";
 import * as importQueue from "../jobs/import-history-queue";
+import { localDateOf } from "../lib/local-date";
 import { withUserLock } from "../lib/locks";
 import { logger } from "../lib/logger";
 import { queueBestEfforts } from "./best-efforts";
 import { openGarminAccount, recordGarminSuccess, requireGarminConnection } from "./garmin-account";
-import { upsertActivities } from "./garmin-sync";
+import { syncStartDate, upsertActivities } from "./garmin-sync";
 
 // The full-history import (SPEC: History): Garmin's activity list newest first, one job per page by offset,
 // each page committing its runs and its cursor together, so a killed import resumes where it stopped. The
@@ -213,8 +214,16 @@ export async function importHistoryPage({
       return oldest === null || date < oldest ? date : oldest;
     }, null);
 
+    // The window the next sync would read (the cursor holds still under this lock): a new run in it wears
+    // the active pair as the sync would have put it on (WriteActivitiesOptions), an older one none.
+    const { lastSyncAt, timezone } = account.connection;
+    const wearActivePairFrom = syncStartDate(
+      lastSyncAt,
+      timezone,
+      localDateOf(new Date(), timezone),
+    );
     const written = await db.transaction(async (tx) => {
-      const rows = await upsertActivities(userId, page.activities, tx);
+      const rows = await upsertActivities(userId, page.activities, tx, { wearActivePairFrom });
       // Before the commit: a reader that sees the import done must also see the batch for its runs. The
       // batch waits on the user lock this page holds, so it reads the runs once they are committed; one
       // queued for a page that then rolls back finds nothing new and calls no one.

@@ -148,8 +148,8 @@ export function runBestEffortFixture(overrides: Partial<RunBestEffort> = {}): Ru
 }
 
 /**
- * GET /api/activities/:id for activityFixture: no detail fetched yet and no best efforts computed, with the
- * overrides for the run under test.
+ * GET /api/activities/:id for activityFixture: no detail fetched yet, no best efforts computed and no pair,
+ * with the overrides for the run under test.
  */
 export function activityResponseFixture(
   overrides: Partial<ActivityResponse> = {},
@@ -158,6 +158,7 @@ export function activityResponseFixture(
     activity: activityFixture(),
     detail: null,
     bestEfforts: [],
+    shoeId: null,
     ...overrides,
   });
 }

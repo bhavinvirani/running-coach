@@ -5,12 +5,14 @@ import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { json, notFound, stubFetch } from "@/test/fake-api";
 import { importProgressFixture, personalBestsFixture } from "@/test/fixtures";
+import { shoesResponseFixture } from "@/test/fixtures-shoes";
 import { holdPolls } from "@/test/held-polls";
 import { testQueryClient } from "@/test/render";
 import { useActivityWeeks } from "./activities";
 import { useImportProgress, useStartImport } from "./import";
 import { personalBestsKey } from "./personal-bests";
 import { detailKey } from "./query-keys";
+import { shoesKey } from "./shoes";
 
 const polls = holdPolls();
 
@@ -118,6 +120,20 @@ describe("useImportProgress", () => {
     expect(queryClient.getQueryState(detailKey("activities", "latest"))?.isInvalidated).toBe(true);
     // The page stored runs that now wait for their best efforts; the next read of the bests says so.
     expect(queryClient.getQueryState(personalBestsKey)?.isInvalidated).toBe(true);
+  });
+
+  it("refreshes the shoes' totals when a poll finds more runs stored, which may wear a pair (active pair's totals)", async () => {
+    const { api } = fakeImportApi(importAt("running", 10));
+    const { result, queryClient } = renderImportHooks();
+    queryClient.setQueryData(shoesKey, shoesResponseFixture());
+    await waitFor(() => expect(result.current.weeks.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.progress.isSuccess).toBe(true));
+    expect(queryClient.getQueryState(shoesKey)?.isInvalidated).toBe(false);
+
+    api.progress = importAt("running", 25);
+    act(() => polls.fire());
+
+    await waitFor(() => expect(queryClient.getQueryState(shoesKey)?.isInvalidated).toBe(true));
   });
 
   it("refreshes the runs when the import finishes, even when its last page stored none", async () => {

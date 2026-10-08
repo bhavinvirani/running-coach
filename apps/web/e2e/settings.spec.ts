@@ -53,8 +53,12 @@ test("lists each setting with what it holds now, in My stuff and My preferences,
 }) => {
   await openSettings(page);
 
-  // Every test starts with Garmin not connected, no Claude key, kilometers and standard detail.
-  await expectRows(card(page, "My stuff"), ["Garmin, Not connected", "Claude, No key"]);
+  // Every test starts with Garmin not connected, no Claude key, no shoes, kilometers and standard detail.
+  await expectRows(card(page, "My stuff"), [
+    "Garmin, Not connected",
+    "Claude, No key",
+    "Shoes, None",
+  ]);
   await expectRows(card(page, "My preferences"), [
     "Units, Kilometers",
     "Coach detail, Standard",
@@ -85,6 +89,13 @@ test("each row opens its own screen inside the Settings tab, and Back returns to
       title: "Claude",
       path: "/settings/claude",
       shows: () => expect(card(page, "Claude").getByLabel("Claude API key")).toBeVisible(),
+    },
+    {
+      row: "Shoes, None",
+      title: "Shoes",
+      path: "/settings/shoes",
+      // No pair yet: one sentence and Add shoes.
+      shows: () => expect(page.getByRole("link", { name: "Add shoes", exact: true })).toBeVisible(),
     },
     {
       row: "Units, Kilometers",

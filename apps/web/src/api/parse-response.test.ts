@@ -1,5 +1,6 @@
 import {
   activityResponseSchema,
+  activityShoeSchema,
   activityWeeksResponseSchema,
   calendarResponseSchema,
   endPauseResponseSchema,
@@ -16,6 +17,7 @@ import {
   problemSchema,
   saveGoalResponseSchema,
   sessionDetailResponseSchema,
+  shoesResponseSchema,
   signInResponseSchema,
   signOutResponseSchema,
   syncResponseSchema,
@@ -56,6 +58,7 @@ import {
   planChangeFixture,
 } from "@/test/fixtures-adaptation";
 import { hrZonesFixture } from "@/test/fixtures-hr-zones";
+import { DAILY_SHOE_ID, shoesResponseFixture } from "@/test/fixtures-shoes";
 import { parseResponse } from "./parse-response";
 
 type Json = Record<PropertyKey, unknown>;
@@ -71,8 +74,12 @@ const bodies: [name: string, schema: z.ZodType, body: unknown][] = [
     activityResponseFixture({
       detail: activityDetailFixture(),
       bestEfforts: [runBestEffortFixture()],
+      shoeId: DAILY_SHOE_ID,
     }),
   ],
+  ["shoes", shoesResponseSchema, shoesResponseFixture()],
+  ["run's pair", activityShoeSchema, { shoeId: DAILY_SHOE_ID }],
+  ["run without a pair", activityShoeSchema, { shoeId: null }],
   [
     "weeks",
     activityWeeksResponseSchema,

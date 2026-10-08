@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { id, timestamps } from "./columns";
+import { shoe } from "./shoe";
 
 // One row per Garmin run, upserted by the sync on (user_id, garmin_activity_id), so a run synced twice
 // or edited on Garmin stays one row. SI units; the UI converts with the user's settings.
@@ -57,6 +58,9 @@ export const activity = pgTable(
     bestEffortsFailedAt: timestamp("best_efforts_failed_at", { withTimezone: true }),
     garminUpdatedAt: timestamp("garmin_updated_at", { withTimezone: true }),
     summary: jsonb("summary"),
+    // The pair the run wore: the active pair when the sync inserted it, or the runner's pick. A deleted pair
+    // leaves the run without one.
+    shoeId: uuid("shoe_id").references(() => shoe.id, { onDelete: "set null" }),
     ...timestamps(),
   },
   (table) => [
@@ -64,6 +68,8 @@ export const activity = pgTable(
     uniqueIndex("activity_user_id_garmin_activity_id_idx").on(table.userId, table.garminActivityId),
     // The run list: a user's runs, newest first.
     index("activity_user_id_start_utc_idx").on(table.userId, table.startUtc.desc()),
+    // A pair's totals, and deleting a pair nulls its runs' link; without it both scan every run.
+    index("activity_shoe_id_idx").on(table.shoeId),
   ],
 );
 

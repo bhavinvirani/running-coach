@@ -9,6 +9,7 @@ import { BestEfforts } from "./parts/best-efforts";
 import { CoachCard } from "./parts/coach-card";
 import { currentBests } from "./parts/current-bests";
 import { RunDetail } from "./parts/run-detail";
+import { RunShoes } from "./parts/run-shoes";
 import { RunStats } from "./parts/run-stats";
 import { useRunScreen } from "./use-run";
 
@@ -56,6 +57,7 @@ function RunView({ id }: { id: string }) {
         <RetryAlert error={screen.refetchError} onRetry={() => void refetch()} />
       ) : null}
       <RunStats activity={activity} units={units} bests={currentBests(bestEfforts)} />
+      <RunShoes shoeId={data.shoeId} {...screen.shoes} />
       <CoachCard {...screen.coach} timeZone={timeZone} units={units} />
       <BestEfforts efforts={bestEfforts} units={units} />
       <RunDetail
@@ -94,7 +96,10 @@ function RunLayout({
   );
 }
 
-/** The time line and the seven stats at their loaded heights, then a card where the detail goes. */
+/**
+ * The time line and the seven stats at their loaded heights, the Shoes row, then a card where the detail
+ * goes.
+ */
 function RunSkeleton() {
   return (
     <RunLayout title={null} busy>
@@ -107,6 +112,10 @@ function RunSkeleton() {
               <div className="h-8.5 w-24 rounded-sm bg-surface-2" />
             </div>
           ))}
+        </div>
+        <div className="mt-2 flex flex-col gap-2">
+          <div className="h-5.5 w-12 rounded-sm bg-surface-2" />
+          <div className="h-15 rounded-md bg-surface-1" />
         </div>
         <div className="mt-2 flex flex-col gap-2">
           <div className="h-5.5 w-16 rounded-sm bg-surface-2" />

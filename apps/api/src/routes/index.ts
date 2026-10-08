@@ -16,6 +16,7 @@ import { personalBestsRouter } from "./personal-bests";
 import { planRouter } from "./plan";
 import { reviewsRouter } from "./reviews";
 import { sessionsRouter } from "./sessions";
+import { shoesRouter } from "./shoes";
 import { syncRouter } from "./sync";
 
 /**
@@ -31,6 +32,7 @@ export function registerRoutes(app: Express): void {
   api.use(requireUser);
   api.use(meRouter);
   api.use(hrZonesRouter);
+  api.use(shoesRouter);
   api.use(garminRouter);
   api.use(syncRouter);
   api.use(activitiesRouter);

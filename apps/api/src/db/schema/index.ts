@@ -1,5 +1,6 @@
 export * from "./auth";
 export * from "./user-settings";
+export * from "./shoe";
 export * from "./garmin-connection";
 export * from "./activity";
 export * from "./coach-message";

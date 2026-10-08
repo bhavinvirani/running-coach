@@ -7,7 +7,7 @@ import {
 } from "@running-coach/shared";
 import { type Column, and, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 import { type Db, type DbTransaction, db } from "../db/client";
-import { activity, garminConnection } from "../db/schema";
+import { activity, garminConnection, shoe } from "../db/schema";
 import { garminClient } from "../garmin/client";
 import { config } from "../lib/config";
 import { addDays, dateChunks, daysBetween, localDateOf, noonUtc } from "../lib/local-date";
@@ -99,8 +99,9 @@ export async function upsertActivities(
   userId: string,
   summaries: GarminActivitySummary[],
   executor: Db | DbTransaction = db,
+  options: WriteActivitiesOptions = {},
 ): Promise<number> {
-  return (await writeActivities(userId, summaries, executor)).written;
+  return (await writeActivities(userId, summaries, executor, options)).written;
 }
 
 export interface WrittenActivities {
@@ -110,13 +111,52 @@ export interface WrittenActivities {
   insertedIds: string[];
 }
 
+export interface WriteActivitiesOptions {
+  /**
+   * A local date (YYYY-MM-DD): new rows whose local start date is on or after it wear the user's active
+   * pair, if any. The sync passes its window's start and the history import the window the next sync
+   * would read, so a run gets the same pair whichever of them stores it first, and a run older than any
+   * sync would insert gets none.
+   */
+  wearActivePairFrom?: string;
+}
+
+/**
+ * The user's active pair, null for none, held with a key share lock until the executor's transaction
+ * commits: a concurrent delete of the pair waits for the commit, and its on-delete set null then clears
+ * the runs inserted here, instead of failing their foreign key. Both callers pass a transaction.
+ */
+async function lockedActivePair(
+  userId: string,
+  executor: Db | DbTransaction,
+): Promise<string | null> {
+  const [pair] = await executor
+    .select({ id: shoe.id })
+    .from(shoe)
+    .where(and(eq(shoe.userId, userId), eq(shoe.active, true)))
+    .for("key share");
+  return pair?.id ?? null;
+}
+
 /** upsertActivities, also telling the inserted rows from the changed ones. */
 export async function writeActivities(
   userId: string,
   summaries: GarminActivitySummary[],
   executor: Db | DbTransaction = db,
+  { wearActivePairFrom }: WriteActivitiesOptions = {},
 ): Promise<WrittenActivities> {
   if (summaries.length === 0) return { written: 0, insertedIds: [] };
+  const activePair =
+    wearActivePairFrom === undefined ? null : await lockedActivePair(userId, executor);
+  // In the INSERT values only, never in the DO UPDATE set below: a run takes the active pair once, when it
+  // is new, so a re-sync, an edited run, a partial sync or overlapping syncs never reassign it, and a pair
+  // the runner changed or cleared stays.
+  const shoeIdOf = (summary: GarminActivitySummary): string | null =>
+    activePair !== null &&
+    wearActivePairFrom !== undefined &&
+    summary.startLocal.slice(0, "YYYY-MM-DD".length) >= wearActivePairFrom
+      ? activePair
+      : null;
   const rows = await executor
     .insert(activity)
     .values(
@@ -137,6 +177,7 @@ export async function writeActivities(
         isIndoor: summary.isIndoor,
         isManual: summary.isManual,
         eventType: summary.eventType,
+        shoeId: shoeIdOf(summary),
       })),
     )
     .onConflictDoUpdate({
@@ -244,16 +285,20 @@ export async function removeRunsDeletedOnGarmin(
 }
 
 /**
- * Saves one finished chunk: runs, then on the last chunk the removal of runs deleted on Garmin, then the
- * cursor, together.
+ * Saves one finished chunk: runs (a new one wears the active pair, by the rule on
+ * WriteActivitiesOptions, from the sync's window start), then on the last chunk the removal of runs
+ * deleted on Garmin, then the cursor, together.
  */
 async function saveChunk(
   userId: string,
   response: { activities: GarminActivitySummary[]; recent: GarminRecentRuns | null },
   cursor: Date,
+  syncStart: string,
 ): Promise<WrittenActivities & { removed: number }> {
   return db.transaction(async (tx) => {
-    const { written, insertedIds } = await writeActivities(userId, response.activities, tx);
+    const { written, insertedIds } = await writeActivities(userId, response.activities, tx, {
+      wearActivePairFrom: syncStart,
+    });
     // Null when not asked for (an earlier chunk) or when Garmin would not list them: nothing is checked.
     const removed = response.recent
       ? await removeRunsDeletedOnGarmin(userId, response.recent, tx)
@@ -364,7 +409,7 @@ async function runSync({ userId, now, signal }: SyncGarminInput): Promise<SyncGa
       const cursor =
         isLast && localDateOf(finishedAt, timeZone) === today ? finishedAt : noonUtc(chunk.end);
       activitiesSeen += response.activities.length;
-      const saved = await saveChunk(userId, response, cursor);
+      const saved = await saveChunk(userId, response, cursor, startDate);
       activitiesWritten += saved.written;
       activitiesRemoved += saved.removed;
       insertedIds.push(...saved.insertedIds);
