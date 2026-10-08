@@ -1,5 +1,6 @@
 import {
   planPhaseSchema,
+  raceDistanceKeySchema,
   sessionStatusSchema,
   sessionStepsSchema,
   type PlanDelta,
@@ -86,6 +87,7 @@ function context(overrides: Partial<DeltaContext> = {}): DeltaContext {
     today: TODAY,
     session: session(),
     phase: null,
+    race: null,
     weekSessions: [],
     previousWeekM: null,
     longestRecentM: 20_000,
@@ -598,6 +600,68 @@ describe("validate delta", () => {
     });
   });
 
+  describe("a long run near the race, whatever its week's phase", () => {
+    // Room for a rise: 10 000 m planned, 40 000 m of other runs, 20 000 m longest; the run is
+    // tomorrow.
+    const nearRace = (
+      type: "easy" | "long",
+      daysOut: number,
+      distanceKey: "half" | "marathon" = "half",
+    ) =>
+      context({
+        phase: "peak",
+        race: { date: addDays(TOMORROW, daysOut), distanceKey },
+        session: session({ type, steps: easyRun(10_000) }),
+        weekSessions: [other(40_000)],
+      });
+
+    it("only shrinks a long run 13 days out: a rise by 1.1 clamps to 1 and changes nothing", () => {
+      expect(validateDelta(nearRace("long", 13), scale(1.1))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+      expect(validateDelta(nearRace("long", 6), scale(1.05))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+      expect(validateDelta(nearRace("long", 13), scale(0.9))).toMatchObject({
+        ok: true,
+        clamped: false,
+        session: { steps: easyRun(9000) },
+      });
+    });
+
+    it("grows a long run 14 days out by 1.1, outside the half's last band", () => {
+      expect(validateDelta(nearRace("long", 14), scale(1.1))).toMatchObject({
+        ok: true,
+        clamped: false,
+        session: { steps: easyRun(11_000) },
+      });
+    });
+
+    it("only shrinks a marathon long run 20 days out and grows one 21 days out", () => {
+      expect(validateDelta(nearRace("long", 20, "marathon"), scale(1.1))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+      expect(validateDelta(nearRace("long", 21, "marathon"), scale(1.1))).toMatchObject({
+        ok: true,
+        session: { steps: easyRun(11_000) },
+      });
+    });
+
+    it("leaves an easy run 13 days out free to grow, and a long run with no race", () => {
+      expect(validateDelta(nearRace("easy", 13), scale(1.1))).toMatchObject({
+        ok: true,
+        session: { steps: easyRun(11_000) },
+      });
+      expect(validateDelta({ ...nearRace("long", 13), race: null }, scale(1.1))).toMatchObject({
+        ok: true,
+        session: { steps: easyRun(11_000) },
+      });
+    });
+  });
+
   it.each([null, "base", "build", "peak"] as const)(
     "a rise by 1.1 in a %s phase grows the run as before",
     (phase) => {
@@ -698,6 +762,12 @@ describe("validate delta", () => {
     .record({
       session: sessionArb,
       phase: fc.constantFrom<PlanPhase | null>(null, ...planPhaseSchema.options),
+      race: fc.option(
+        fc.record({
+          daysOut: fc.integer({ min: 0, max: 30 }),
+          distanceKey: fc.constantFrom(...raceDistanceKeySchema.options),
+        }),
+      ),
       week: fc.array(
         fc.record({
           distanceM: fc.integer({ min: 1000, max: 30_000 }),
@@ -721,6 +791,10 @@ describe("validate delta", () => {
       context({
         session: c.session,
         phase: c.phase,
+        race:
+          c.race === null
+            ? null
+            : { date: addDays(TODAY, c.race.daysOut), distanceKey: c.race.distanceKey },
         weekSessions: c.week.map((w) => other(w.distanceM, w.status)),
         previousWeekM: c.previousWeekM,
         longestRecentM: c.longestRecentM,
@@ -809,6 +883,20 @@ describe("validate delta", () => {
           }
         },
       ),
+    );
+  });
+
+  it("never raises a long run inside its distance's taper bands by days to the race, whatever its week's phase", () => {
+    const lastBand = { "5k": 13, "10k": 13, half: 13, marathon: 20 } as const;
+    fc.assert(
+      fc.property(anyContextArb, riseArb, (ctx, delta) => {
+        const s = ctx.session!;
+        const result = validateDelta(ctx, delta);
+        if (!result.ok || s.type !== "long" || ctx.race === null) return;
+        if (daysBetween(s.date, ctx.race.date) > lastBand[ctx.race.distanceKey]) return;
+        expect(result.session.target.distanceM).toBeLessThanOrEqual(s.target.distanceM);
+        if (result.delta.kind === "scale") expect(result.delta.factor).toBeLessThanOrEqual(1);
+      }),
     );
   });
 

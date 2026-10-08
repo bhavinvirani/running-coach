@@ -15,7 +15,7 @@ import {
   WALK_RUN_WALK_S,
   WEEKLY_VOLUME_MAX_INCREASE,
 } from "../constants";
-import { addDays, daysBetween, weekdayIndex, weekdayOf } from "../dates";
+import { daysBetween, mondayOf } from "../dates";
 import { applyDelta, sameSession, type AdjustedSession } from "./apply-delta";
 import { QUALITY_SESSION_TYPES } from "./quality";
 import { reEntryFactor } from "./re-entry";
@@ -73,10 +73,6 @@ const RUN_TYPES: ReadonlySet<SessionType> = new Set([
   "tempo",
   "race_practice",
 ]);
-
-function mondayOf(date: string): string {
-  return addDays(date, -weekdayIndex(weekdayOf(date)));
-}
 
 /**
  * Each week's share of its plan from the return on: the first week with plan volume is held to the

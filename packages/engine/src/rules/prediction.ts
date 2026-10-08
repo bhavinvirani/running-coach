@@ -17,6 +17,8 @@ export interface RacePaceInput {
   distanceM: number;
   predictedTimeS: number;
   targetTimeS: number | null;
+  /** The easy band's slow end: a target slower than it is no target. */
+  easySlowSPerKm: number;
 }
 
 export interface RacePaceResult {
@@ -43,19 +45,24 @@ export function predictTimeS({ fromDistanceM, fromTimeS, toDistanceM }: Predicti
 
 /**
  * The race zone: the target's pace when it is within 5% of the prediction or slower, else the
- * prediction's pace and a warning. The band is that pace +-1.5%.
+ * prediction's pace and a warning. A target slower than the easy band's slow end is no target: race
+ * pace would be easy running, and race-pace work would count as hard time a week could never hold.
+ * The band is that pace +-1.5%.
  */
 export function racePace({
   distanceM,
   predictedTimeS,
   targetTimeS,
+  easySlowSPerKm,
 }: RacePaceInput): RacePaceResult {
   assertPositive("distanceM", distanceM);
   assertPositive("predictedTimeS", predictedTimeS);
   const ambitious =
     targetTimeS !== null &&
     predictedTimeS - targetTimeS > TARGET_TIME_AMBITIOUS_MARGIN * predictedTimeS;
-  const raceTimeS = targetTimeS === null || ambitious ? predictedTimeS : targetTimeS;
+  const slowerThanEasy = targetTimeS !== null && (targetTimeS * 1000) / distanceM > easySlowSPerKm;
+  const raceTimeS =
+    targetTimeS === null || ambitious || slowerThanEasy ? predictedTimeS : targetTimeS;
   const paceSPerKm = (raceTimeS * 1000) / distanceM;
   return {
     band: {

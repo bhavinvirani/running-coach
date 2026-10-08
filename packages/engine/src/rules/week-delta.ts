@@ -1,7 +1,7 @@
 import type { PlanDelta, PlanPaces, PlanPhase } from "@running-coach/shared";
 import { daysBetween } from "../dates";
 import type { DeltaSession } from "./apply-delta";
-import { validateDelta, type DeltaResult } from "./delta";
+import { validateDelta, type DeltaContext, type DeltaResult } from "./delta";
 
 /** A session of the coming week, with what the change rules read about its earlier changes. */
 export interface WeekDeltaSession extends DeltaSession {
@@ -14,12 +14,14 @@ export interface WeekDeltaSession extends DeltaSession {
   phase: PlanPhase | null;
 }
 
-/** previousWeekM, longestRecentM, daysPerWeek, paces, paused and afterPause as in DeltaContext. */
+/** race, previousWeekM, longestRecentM, daysPerWeek, paces, paused, afterPause as in DeltaContext. */
 export interface WeekDeltaContext {
   /** The runner's local today. */
   today: string;
   /** The coming Monday-to-Sunday week's sessions, plan and custom, any status. */
   sessions: readonly WeekDeltaSession[];
+  /** The plan's race; a custom workout is rejected before it could matter. */
+  race: DeltaContext["race"];
   previousWeekM: number | null;
   longestRecentM: number;
   daysPerWeek: number;
@@ -72,6 +74,7 @@ export function validateWeekDeltas(
         today: context.today,
         session: now,
         phase: now.phase,
+        race: context.race,
         weekSessions: [...current.values()].filter((other) => other.id !== session.id),
         previousWeekM: context.previousWeekM,
         longestRecentM: context.longestRecentM,

@@ -74,8 +74,13 @@ export interface WeekSlotsInput {
 
 export interface TrainingWeekInput extends WeekSlotsInput {
   targetM: number;
-  /** 110% of the longest run of the last 4 weeks. */
+  /**
+   * No run over this: 110% of the longest run of the last 4 weeks and, in a race plan, the long
+   * run's cap by days to the race (weekRunCaps).
+   */
   maxRunM: number;
+  /** False where the long run's cap by days to the race is under 20 min: its day runs easy. */
+  longRun?: boolean;
   /** The long run ends at marathon pace (fast-finish.ts fastFinishWeeks). */
   fastFinish: boolean;
 }
@@ -91,7 +96,10 @@ export interface SizeWeekInput {
   keepsBaselineLongest: boolean;
   /** The week's volume, the fixed sessions included. */
   targetM: number;
-  /** No run over this: 110% of the longest run of the last 4 weeks. */
+  /**
+   * No run over this: 110% of the longest run of the last 4 weeks and, in a race plan, the long
+   * run's cap by days to the race (weekRunCaps).
+   */
   maxRunM: number;
   /** The week's number: tempo blocks and the order of the easy shares follow it. */
   weekNumber: number;
@@ -105,6 +113,11 @@ export interface LongRunDayCapInput {
   longRunsBeforeM: readonly number[];
   /** The baseline's longest run, never under the 5 km floor. */
   seedM: number;
+}
+
+export interface WeekRunCapsInput extends LongRunDayCapInput {
+  /** 110% of the longest run of the last 4 weeks. */
+  runCapM: number;
 }
 
 export interface FinishedWeek {
@@ -257,23 +270,26 @@ export function weekSlots(ctx: PlanContext, input: WeekSlotsInput): Slots {
 }
 
 /**
- * The sessions on a week's slots, for its target volume. The long run and quality
- * sessions come first, then easy runs fill the volume. Base, build and peak long runs never drop under
- * the runner's own longest (longRunFloorM), but every day comes first: the long run gives way down to
- * 20 min (longRunGivingWayM), then the last quality session gives its day to an easy run, so a 20 min
- * run fits on every day the volume allows. The long run stays the longest run: a second quality session
- * it would be shorter than runs easy, a lone one loses reps. The long run and each session's work are
- * measured against the sessions as built: when they hold less than the target, the long run shortens
- * to the longest they hold, or the work is sized from what they hold and the long run again, and they
- * are built again. Easy runs take unequal shares of at most 85% of the long run (week-fill.ts); what
- * they cannot hold pads the quality sessions' warm-ups and cool-downs up to 25 min each, and the rest is
- * not run, so a week can hold less than its target. A finish week's long run ends at marathon pace, and
- * a week of at most 1 quality session carries strides on one easy run, both carved out of their runs.
- * While easy time is under 80%, the finish shortens 500 m at a time, then the strides go, then reps
- * come off the hardest session. Each pass shortens the long run, or shrinks the work, the finish or the
- * strides, which only shrink, so the loop ends. Slots with no long run still size one: the long run
- * their volume allows caps every other run. The long run's share follows the days that run
- * (longRunShare), so a taper week of fewer runs than the runner's days holds its volume.
+ * The sessions on a week's slots, for its target volume. The long run and quality sessions come
+ * first, then easy runs fill the volume. Base, build and peak long runs never drop under the
+ * runner's own longest (longRunFloorM), but every day comes first: the long run gives way down to
+ * 20 min (longRunGivingWayM), then the last quality session gives its day to an easy run, so a 20
+ * min run fits on every day the volume allows. The long run stays the longest run: a second quality
+ * session it would be shorter than runs easy, a lone one loses reps. The long run and each
+ * session's work are measured against the sessions as built: when they hold less than the target,
+ * the long run shortens to the longest they hold, or the work is sized from what they hold and the
+ * long run again, and they are built again. Easy runs take unequal shares of at most 85% of the
+ * long run (week-fill.ts); what they cannot hold pads the quality sessions' warm-ups and cool-downs
+ * up to 25 min each, and the rest is not run, so a week can hold less than its target. A finish
+ * week's long run ends at marathon pace, and a week of at most 1 quality session carries strides on
+ * one easy run, both carved out of their runs. While easy time is under 80%, the finish shortens
+ * 500 m at a time, then the strides go, then reps come off the hardest session. Each pass shortens
+ * the long run, or shrinks the work, the finish or the strides, which only shrink, so the loop
+ * ends. Slots with no long run still size one: the long run their volume allows caps every other
+ * run. The long run's share follows the days that run (longRunShare), so a taper week of fewer runs
+ * than the runner's days holds its volume. Beside fixed sessions the long run takes at most what
+ * the target leaves after them, and runs not at all where that is under 20 min, so the week stays
+ * under its target.
  */
 export function sizeWeek(
   ctx: PlanContext,
@@ -288,9 +304,12 @@ export function sizeWeek(
   }: SizeWeekInput,
 ): GeneratedSession[] {
   const zones = slots.quality.map((slot) => slot.zone);
-  const hasLong = slots.long !== null;
   const fixedM = sumM(fixed);
   const fixedLongM = fixed.find((session) => session.type === "long")?.target.distanceM ?? null;
+  // What the target leaves the slots once the fixed sessions are in: the long run's most, and no
+  // long run at all where that is under 20 min.
+  const leftM = fixed.length === 0 ? Infinity : targetM - fixedM + (fixedLongM ?? 0);
+  const hasLong = slots.long !== null && leftM >= ctx.minRunM;
   // Days that run here, the long run's included. Without a long run an easy day stands in for it, so
   // the room is measured alike; the other fixed sessions take their meters, not room.
   const days = Math.max(
@@ -345,7 +364,9 @@ export function sizeWeek(
             }),
           )
         : longRunM(sized);
-      const longM = fixedLongM ?? longRunGivingWayM({ longM: capM, roomM, minRunM: ctx.minRunM });
+      const longM =
+        fixedLongM ??
+        Math.min(longRunGivingWayM({ longM: capM, roomM, minRunM: ctx.minRunM }), leftM);
       const fits = roomM >= (fixedLongM ?? ctx.minRunM);
       const last = quality.findLastIndex((p) => p !== null);
       if (last === -1 || (fits && longRunHoldsQuality({ longM, qualityM }))) {
@@ -566,9 +587,10 @@ export function sizeWeek(
 }
 
 /**
- * The cap a race plan's week puts on its runs by its long run's days to the race (taperLongRunCapM): a
- * share of the largest long run before the week, else the baseline's longest; a week whose long-run day
- * is the race week's caps them as 6 days out would. Null with no race, or a long run further out.
+ * The cap a race plan's week puts on its runs by its long run's days to the race
+ * (taperLongRunCapM): a share of the largest long run before the week, else the baseline's longest.
+ * A week whose long-run day is 5 or fewer days out, the race week's, caps its runs as a long run 6
+ * days out would. Null with no race, or a long run further out.
  */
 export function longRunDayCapM(
   ctx: PlanContext,
@@ -583,9 +605,29 @@ export function longRunDayCapM(
   });
 }
 
+/**
+ * What a week holds its runs to: 110% of the recent longest and, in a race plan, its long run's cap
+ * by days to the race (longRunDayCapM). Where that cap is under 20 min the week runs no long run,
+ * which would be shorter than its easy runs, and the cap holds none of its other runs either.
+ */
+export function weekRunCaps(
+  ctx: PlanContext,
+  { runCapM, ...dayCap }: WeekRunCapsInput,
+): { maxRunM: number; longRun: boolean } {
+  const dayCapM = longRunDayCapM(ctx, dayCap);
+  if (dayCapM !== null && dayCapM < ctx.minRunM) return { maxRunM: runCapM, longRun: false };
+  return { maxRunM: Math.min(runCapM, dayCapM ?? Infinity), longRun: true };
+}
+
+/** The long run's day as an easy day, the last in fill order: a week that runs no long run. */
+function withoutLongRun(slots: Slots): Slots {
+  return slots.long === null ? slots : { ...slots, long: null, easy: [...slots.easy, slots.long] };
+}
+
 /** A base, build, peak or taper week from Monday to Sunday: its slots, sized for its target. */
 export function buildTrainingWeek(ctx: PlanContext, input: TrainingWeekInput): BuiltWeek {
-  const slots = weekSlots(ctx, input);
+  const laidOut = weekSlots(ctx, input);
+  const slots = input.longRun === false ? withoutLongRun(laidOut) : laidOut;
   const sessions = sizeWeek(ctx, {
     slots,
     keepsBaselineLongest: KEEPS_BASELINE_LONGEST.has(input.phase),

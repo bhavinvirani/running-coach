@@ -1,6 +1,7 @@
 import { raceDistanceKeySchema } from "@running-coach/shared";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import { RACE_BAND_MAX_DAYS_OUT, TAPER_SHARES } from "../constants";
 import { addDays, weekdayIndex, weekdayOf } from "../dates";
 import {
   isRaceBandWeek,
@@ -34,6 +35,16 @@ describe("taper share", () => {
     );
     expect(isRaceBandWeek({ raceDate: RACE_ON(2), weekStart: "2026-11-30" })).toBe(true);
     expect(isRaceBandWeek({ raceDate: RACE_ON(3), weekStart: "2026-11-30" })).toBe(false);
+  });
+
+  it("starts every distance's bands with the race band: 40% up to 6 days from the Thursday", () => {
+    expect(RACE_BAND_MAX_DAYS_OUT).toBe(6);
+    for (const distanceKey of raceDistanceKeySchema.options) {
+      expect(TAPER_SHARES[distanceKey][0]).toEqual({
+        maxDaysOut: RACE_BAND_MAX_DAYS_OUT,
+        share: 0.4,
+      });
+    }
   });
 
   it("holds a week whose Thursday is 13 days out at 70% (marathon 60%) and ends the taper at 14 days out", () => {

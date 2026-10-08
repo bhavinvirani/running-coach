@@ -7,8 +7,9 @@ const sum = (values: readonly number[]) => values.reduce((total, value) => total
 const MON = 0;
 const WED = 2;
 const FRI = 4;
-// At the 320 s/km easy midpoint: 20 min is 3750 m, the 15 min warm-up 2813 m and the 10 min
-// cool-down 1875 m; 25 min is 4687 m, so a warm-up takes 1874 m more at most and a cool-down 2812 m.
+// At the 320 s/km easy midpoint: 20 min is 3750 m, the 15 min warm-up 2813 m (the shortest easy run
+// where 20 min ones would leave a gap too) and the 10 min cool-down 1875 m; 25 min is 4687 m, so a
+// warm-up takes 1874 m more at most and a cool-down 2812 m.
 const PACE = 320;
 const WARMUP_PAD_MAX_M = 1874;
 const COOLDOWN_PAD_MAX_M = 2812;
@@ -112,6 +113,24 @@ describe("week fill", () => {
     });
   });
 
+  it("runs fewer easy days of at least 15 min instead of shorter ones where half the cap is under 15 min: one 3000 m run, not two of 2500 m", () => {
+    // A 3000 m long run caps the easy runs at 3000 m, half of it 1500 m. 5000 m would be 2 runs of
+    // 2500 m (13 min); one run at the cap holds 3000 m and the rest is not run.
+    expect(fill({ restM: 5000, longM: 3000, qualityM: [] })).toEqual({
+      easyRunsM: [3000],
+      qualityPadM: [],
+    });
+    // 15 min each still fits twice in 5626 m: 2 runs of 2813 m.
+    expect(fill({ restM: 5626, longM: 3000, qualityM: [] }).easyRunsM).toEqual([2813, 2813]);
+    // Under 15 min nothing runs.
+    expect(fill({ restM: 2812, longM: 3000, qualityM: [] }).easyRunsM).toEqual([]);
+  });
+
+  it("runs at the cap where the cap is under 15 min, and fewer days of it", () => {
+    // A 2000 m long run caps the easy runs at 2000 m: 5000 m is 2 runs at the cap, not 3 of 1667 m.
+    expect(fill({ restM: 5000, longM: 2000, qualityM: [] }).easyRunsM).toEqual([2000, 2000]);
+  });
+
   it("keeps every easy day before the taper: equal runs of at least half the cap where 20 min runs would drop one", () => {
     // A 6-day down week at the 20 min floor: 18 475 m holds four 4625 m runs at most, so a taper week
     // would run 4 of its 5 easy days; a week before the taper runs all 5 at 3695 m.
@@ -157,7 +176,7 @@ describe("week fill", () => {
     });
   });
 
-  it("never passes the rest, a cap or the easy days, and leaves meters unrun only once every easy run is at its cap", () => {
+  it("never passes the rest, a cap or the easy days, and leaves meters unrun only once every easy run is at its cap and another would be too short", () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: 150_000 }),
@@ -223,18 +242,29 @@ describe("week fill", () => {
             expect(sum(pads)).toBe(overflowM);
           }
           expect(sum(pads)).toBeLessThanOrEqual(Math.max(0, overflowM));
-          // Easy runs take everything they can hold first; meters go elsewhere only past their caps.
+          // Easy runs take everything they can hold first; meters go elsewhere only past their
+          // caps, or where one more run would be under the shortest easy run: 15 min, or half the
+          // cap when that is more, never over 20 min or the cap. Before the taper every easy day
+          // runs while half the cap fits on each.
           const easyM = restM - sum(qualityM);
-          if (easyM > 0 && easyM >= Math.min(minRunM, Math.floor(capM / 2))) {
-            expect(sum(easyRunsM)).toBe(Math.min(easyM, easyDays.length * capM));
-          }
-          if (sum(easyRunsM) < easyM && easyRunsM.length > 0) {
-            expect(easyRunsM).toEqual(easyDays.map(() => capM));
-          }
-          // Before the taper every easy day runs while half the cap fits on each.
-          const fewestM = Math.min(minRunM, Math.floor(capM / 2));
-          if (keepDays && easyM > 0 && easyM >= easyDays.length * fewestM) {
+          const heldM = Math.min(easyM, easyDays.length * capM);
+          const halfCapM = Math.min(minRunM, Math.floor(capM / 2));
+          const floorM = Math.ceil((900 * 1000) / easyPaceSPerKm);
+          const fewestM = Math.min(minRunM, capM, Math.max(halfCapM, floorM));
+          const keepsAll = keepDays && easyM > 0 && easyM >= easyDays.length * halfCapM;
+          if (keepsAll) {
             expect(easyRunsM).toHaveLength(easyDays.length);
+            expect(sum(easyRunsM)).toBe(heldM);
+          } else if (easyM > 0 && easyM >= fewestM) {
+            easyRunsM.forEach((m) => expect(m).toBeGreaterThanOrEqual(fewestM));
+            if (sum(easyRunsM) < heldM) {
+              expect(easyRunsM).toEqual(easyRunsM.map(() => capM));
+              expect((easyRunsM.length + 1) * fewestM).toBeGreaterThan(heldM);
+            } else {
+              expect(sum(easyRunsM)).toBe(heldM);
+            }
+          } else {
+            expect(easyRunsM).toEqual([]);
           }
         },
       ),

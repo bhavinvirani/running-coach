@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { addDays, daysBetween, nextMonday, weekdayIndex, weekdayOf } from "./dates";
+import { addDays, daysBetween, mondayOf, nextMonday, weekdayIndex, weekdayOf } from "./dates";
 
 const isoDate = fc.integer({ min: 0, max: 20_000 }).map((days) => addDays("2000-01-03", days));
 
@@ -32,6 +32,14 @@ describe("dates", () => {
     expect(nextMonday("2026-10-11")).toBe("2026-10-12");
   });
 
+  it("finds the Monday of a date's week, the same day on a Monday and 6 days back on a Sunday", () => {
+    expect(mondayOf("2026-10-05")).toBe("2026-10-05");
+    expect(mondayOf("2026-10-06")).toBe("2026-10-05");
+    expect(mondayOf("2026-10-11")).toBe("2026-10-05");
+    expect(mondayOf("2026-10-12")).toBe("2026-10-12");
+    expect(mondayOf("2027-01-01")).toBe("2026-12-28");
+  });
+
   it("rejects a string that is not a calendar date as a programmer error", () => {
     expect(() => addDays("2026-13-01", 1)).toThrow(RangeError);
     expect(() => weekdayOf("not a date")).toThrow(RangeError);
@@ -50,6 +58,17 @@ describe("dates", () => {
     fc.assert(
       fc.property(isoDate, isoDate, (from, to) => {
         expect(addDays(from, daysBetween(from, to))).toBe(to);
+      }),
+    );
+  });
+
+  it("puts every date's Monday on a Monday at most 6 days before it", () => {
+    fc.assert(
+      fc.property(isoDate, (date) => {
+        const monday = mondayOf(date);
+        expect(weekdayOf(monday)).toBe("mon");
+        expect(daysBetween(monday, date)).toBeGreaterThanOrEqual(0);
+        expect(daysBetween(monday, date)).toBeLessThanOrEqual(6);
       }),
     );
   });

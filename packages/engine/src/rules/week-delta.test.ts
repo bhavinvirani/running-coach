@@ -1,5 +1,6 @@
 import {
   planPhaseSchema,
+  raceDistanceKeySchema,
   sessionStatusSchema,
   sessionStepsSchema,
   type PlanDelta,
@@ -10,7 +11,7 @@ import {
 } from "@running-coach/shared";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { addDays } from "../dates";
+import { addDays, daysBetween } from "../dates";
 import { sessionTarget } from "./session-target";
 import {
   validateWeekDeltas,
@@ -77,6 +78,7 @@ function context(overrides: Partial<WeekDeltaContext> = {}): WeekDeltaContext {
   return {
     today: MONDAY,
     sessions: WEEK,
+    race: null,
     previousWeekM: null,
     longestRecentM: 20_000,
     daysPerWeek: 4,
@@ -321,6 +323,31 @@ describe("validate week deltas", () => {
     ]);
   });
 
+  it("only shrinks a peak week's long run 13 days before a half, and grows one 14 days before it", () => {
+    // 37 500 m of other runs hold a 10 000 m long run's rise to 11 000 m under 30% of the week.
+    const sessions = [
+      ...WEEK.slice(0, 2),
+      weekSession("s4", 5, 20_000, { phase: "peak" }),
+      weekSession("s3", 6, 10_000, { type: "long", phase: "peak" }),
+    ];
+    const reviewed = (daysOut: number) =>
+      validateWeekDeltas(
+        context({
+          sessions,
+          race: { date: addDays(MONDAY, 6 + daysOut), distanceKey: "half" },
+        }),
+        [propose("s3", scale(1.1)), propose("s4", scale(1.1))],
+      );
+    expect(reviewed(13)).toMatchObject([
+      { sessionId: "s3", result: { ok: false, reason: "no_change" } },
+      { sessionId: "s4", result: { ok: true, session: { steps: easyRun(22_000) } } },
+    ]);
+    expect(reviewed(14)).toMatchObject([
+      { sessionId: "s3", result: { ok: true, session: { steps: easyRun(11_000) } } },
+      { sessionId: "s4", result: { ok: true, session: { steps: easyRun(22_000) } } },
+    ]);
+  });
+
   it("clamps a rise of 1.3 to 1.1 and says so", () => {
     expect(validateWeekDeltas(context(), [propose("s1", scale(1.3))])).toMatchObject([
       {
@@ -428,6 +455,12 @@ describe("validate week deltas", () => {
       paused: oneIn(10),
       afterPause: oneIn(6),
       phase: fc.constantFrom<PlanPhase>(...planPhaseSchema.options),
+      race: fc.option(
+        fc.record({
+          daysOut: fc.integer({ min: 0, max: 30 }),
+          distanceKey: fc.constantFrom(...raceDistanceKeySchema.options),
+        }),
+      ),
       proposals: fc.array(
         fc.record({
           pick: fc.oneof(
@@ -475,6 +508,10 @@ describe("validate week deltas", () => {
         daysPerWeek: drawn.daysPerWeek,
         paused: drawn.paused,
         afterPause: drawn.afterPause,
+        race:
+          drawn.race === null
+            ? null
+            : { date: addDays(MONDAY, drawn.race.daysOut), distanceKey: drawn.race.distanceKey },
       });
       const proposals = drawn.proposals.map(({ pick, delta }) =>
         propose(pick === null ? null : pick < 0 ? "none" : `s${pick % sessions.length}`, delta),
@@ -482,7 +519,7 @@ describe("validate week deltas", () => {
       return { ctx, proposals };
     });
 
-  it("keeps the week within +10% of the week before over all accepted changes together, one outcome per proposal in their order, and never grows a taper or race-week session", () => {
+  it("keeps the week within +10% of the week before over all accepted changes together, one outcome per proposal in their order, and never grows a taper or race-week session or a long run inside the taper's bands", () => {
     fc.assert(
       fc.property(drawnArb, ({ ctx, proposals }) => {
         const outcomes = validateWeekDeltas(ctx, proposals);
@@ -517,7 +554,11 @@ describe("validate week deltas", () => {
             ctx.previousWeekM === 0 ||
             ctx.longestRecentM === 0 ||
             s.phase === "taper" ||
-            s.phase === "race";
+            s.phase === "race" ||
+            (s.type === "long" &&
+              ctx.race !== null &&
+              daysBetween(s.date, ctx.race.date) <=
+                (ctx.race.distanceKey === "marathon" ? 20 : 13));
           if (shrinkOnly) {
             expect(after.get(s.id)!.target.distanceM).toBeLessThanOrEqual(s.target.distanceM);
           }

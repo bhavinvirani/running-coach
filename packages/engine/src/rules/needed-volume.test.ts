@@ -42,7 +42,12 @@ function contextOf({
     fromTimeS: fiveKTimeS,
     toDistanceM: distanceM,
   });
-  const race = racePace({ distanceM, predictedTimeS, targetTimeS: null });
+  const race = racePace({
+    distanceM,
+    predictedTimeS,
+    targetTimeS: null,
+    easySlowSPerKm: training.easy.slowSPerKm,
+  });
   const easyPaceSPerKm = bandMidpointSPerKm(training.easy);
   return {
     distanceKey,
@@ -94,7 +99,7 @@ function holds(
  * Twice the largest week the search looks at (every run at its cap, or at 20 min if the cap is less):
  * the properties check past where the search stops that no larger week holds what it did not find.
  */
-const largestSearchedM = (ctx: PlanContext, week: NeededWeekInput) =>
+const pastSearchM = (ctx: PlanContext, week: NeededWeekInput) =>
   2 * ctx.daysPerWeek * Math.max(week.maxRunM, ctx.minRunM);
 
 const runner = (daysPerWeek: number): Runner => ({
@@ -176,6 +181,31 @@ describe("needed volume", () => {
     expect(holds(ctx, week, neededM - 1, true)).toBe(false);
   });
 
+  it("stops at the first week that holds the quality sessions even at a race pace as slow as easy running, the slowest a plan sets", () => {
+    // A 30 km longest gives the search 132 km of range on 4 days; at the easy band's slow end the
+    // race practice and tempo still fit a week well inside it, so the search never runs to its end.
+    for (const distanceKey of ["5k", "10k", "half", "marathon"] as const) {
+      const ctx = contextOf({ ...runner(4), distanceKey, baselineLongestM: 30_000 });
+      const slowEnd = ctx.paces.easy.slowSPerKm;
+      const slow: PlanContext = {
+        ...ctx,
+        paces: {
+          ...ctx.paces,
+          race: {
+            fastSPerKm: Math.round(slowEnd * 0.985),
+            slowSPerKm: Math.round(slowEnd * 1.015),
+          },
+        },
+      };
+      for (const phase of ["base", "build", "peak", "taper"] as const) {
+        const week = weekOneOf(phase, 30_000);
+        const neededM = neededWeeklyM(slow, week);
+        expect(holds(slow, week, neededM, true), `${distanceKey} ${phase}`).toBe(true);
+        expect(neededM, `${distanceKey} ${phase}`).toBeLessThan(pastSearchM(slow, week) / 4);
+      }
+    }
+  });
+
   it("is deterministic: the same context gives the same metres", () => {
     const ctx = contextOf(runner(4));
     const week = weekOneOf("peak", 10_000);
@@ -194,7 +224,7 @@ describe("needed volume", () => {
     });
     const week = weekOneOf("base", 0);
     const neededM = neededWeeklyM(ctx, week);
-    for (let volumeM = 4 * ctx.minRunM; volumeM <= largestSearchedM(ctx, week); volumeM += 100) {
+    for (let volumeM = 4 * ctx.minRunM; volumeM <= pastSearchM(ctx, week); volumeM += 100) {
       expect(holds(ctx, week, volumeM, true)).toBe(false);
     }
     expect(neededM).toBe(4 * ctx.minRunM);
@@ -231,7 +261,7 @@ describe("needed volume", () => {
         const withQuality = holds(ctx, week, neededM, true);
         expect(Number.isInteger(neededM)).toBe(true);
         // The days alone only when even the largest week searched cannot hold the quality sessions.
-        expect(withQuality || !holds(ctx, week, largestSearchedM(ctx, week), true)).toBe(true);
+        expect(withQuality || !holds(ctx, week, pastSearchM(ctx, week), true)).toBe(true);
         expect(holds(ctx, week, neededM, withQuality)).toBe(true);
         expect(holds(ctx, week, neededM - 1, withQuality)).toBe(false);
       }),
@@ -248,7 +278,7 @@ describe("needed volume", () => {
         const fewestM = ctx.daysPerWeek * ctx.minRunM;
         const belowM = fewestM + Math.floor(share * (neededM - fewestM));
         expect(belowM === neededM || !holds(ctx, week, belowM, withQuality)).toBe(true);
-        const anyM = fewestM + Math.floor(share * (largestSearchedM(ctx, week) - fewestM));
+        const anyM = fewestM + Math.floor(share * (pastSearchM(ctx, week) - fewestM));
         expect(withQuality || !holds(ctx, week, anyM, true)).toBe(true);
       }),
     );

@@ -1,6 +1,6 @@
 import type { RaceDistanceKey } from "@running-coach/shared";
-import { TAPER_ANCHOR_WEEKDAY, TAPER_SHARES } from "../constants";
-import { addDays, daysBetween, weekdayIndex, weekdayOf } from "../dates";
+import { RACE_BAND_MAX_DAYS_OUT, TAPER_ANCHOR_WEEKDAY, TAPER_SHARES } from "../constants";
+import { addDays, daysBetween, mondayOf } from "../dates";
 
 export interface TaperWeekInput {
   raceDate: string;
@@ -36,7 +36,7 @@ export function taperCeilingM(input: TaperShareInput & { peakM: number }): numbe
 
 /** The race band: the week whose Thursday is 6 or fewer days out, whatever the distance. */
 export function isRaceBandWeek(input: TaperWeekInput): boolean {
-  return thursdayDaysOut(input) <= TAPER_SHARES.half[0]!.maxDaysOut;
+  return thursdayDaysOut(input) <= RACE_BAND_MAX_DAYS_OUT;
 }
 
 /**
@@ -51,7 +51,7 @@ export function taperWeekCount({
   distanceKey: RaceDistanceKey;
   raceDate: string;
 }): number {
-  const raceWeekStart = addDays(raceDate, -weekdayIndex(weekdayOf(raceDate)));
+  const raceWeekStart = mondayOf(raceDate);
   let weeks = 0;
   while (
     taperShare({ distanceKey, raceDate, weekStart: addDays(raceWeekStart, -7 * weeks) }) !== null

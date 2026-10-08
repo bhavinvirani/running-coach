@@ -7,7 +7,7 @@ import {
 } from "@running-coach/shared";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { addDays, daysBetween, weekdayIndex, weekdayOf } from "../dates";
+import { addDays, daysBetween, mondayOf } from "../dates";
 import { validateDelta, type DeltaContext } from "../rules/delta";
 import { reEntryPlan, type ReEntryInput, type ReEntrySession } from "../rules/re-entry-plan";
 import { bandMidpointSPerKm, flattenSteps, sessionTarget } from "../rules/session-target";
@@ -40,7 +40,16 @@ const planArb: fc.Arbitrary<Drawn> = planInputArb
 
 const sessionsOf = (plan: GeneratedPlan) => plan.weeks.flatMap((week) => week.sessions);
 const SHRINK_ONLY_PHASES = new Set(["taper", "race"]);
-const mondayOf = (date: string) => addDays(date, -weekdayIndex(weekdayOf(date)));
+/** The plan's race as the change rules read it, null for a fitness plan. */
+const raceOf = (input: PlanGenerationInput) =>
+  input.goal.raceDate === null
+    ? null
+    : { date: input.goal.raceDate, distanceKey: input.goal.distanceKey! };
+/** A long run inside its distance's taper bands: 13 days out or closer, a marathon's 20. */
+const nearRace = (input: PlanGenerationInput, s: { type: string; date: string }) =>
+  s.type === "long" &&
+  input.goal.raceDate !== null &&
+  daysBetween(s.date, input.goal.raceDate) <= (input.goal.distanceKey === "marathon" ? 20 : 13);
 
 describe("adaptation over generated plans", () => {
   const deltaArb: fc.Arbitrary<PlanDelta> = fc.oneof(
@@ -52,7 +61,7 @@ describe("adaptation over generated plans", () => {
   );
 
   it(
-    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow a session a re-entry eased, one right after a paused week or one of a taper or race week",
+    "never lets a coach delta break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow a session a re-entry eased, one right after a paused week, one of a taper or race week or a long run inside the taper's bands",
     () => {
       fc.assert(
         fc.property(
@@ -71,6 +80,7 @@ describe("adaptation over generated plans", () => {
               today: addDays(picked.date, -daysBefore),
               session: { ...picked, status: "planned", source: "plan", title: null },
               phase: plan.weeks[weekIndex]!.phase,
+              race: raceOf(input),
               weekSessions: plan.weeks[weekIndex]!.sessions.filter((s) => s !== picked).map(
                 (s) => ({ ...s, status: "planned" as const }),
               ),
@@ -99,6 +109,7 @@ describe("adaptation over generated plans", () => {
             expect(eased).toBe(false);
             expect(afterPause).toBe(false);
             expect(SHRINK_ONLY_PHASES.has(ctx.phase!)).toBe(false);
+            expect(nearRace(input, picked)).toBe(false);
             expect(newM).toBeLessThanOrEqual(Math.floor(longestRecentM * 1.1));
             if (picked.type === "long") {
               const share = input.goal.daysPerWeek >= 4 ? 0.3 : 0.4;
@@ -117,7 +128,7 @@ describe("adaptation over generated plans", () => {
   );
 
   it(
-    "keeps a week within +10% of the week before over all of a weekly review's changes together, in any order, and never grows one right after a paused week or in a taper or race week",
+    "keeps a week within +10% of the week before over all of a weekly review's changes together, in any order, and never grows one right after a paused week, in a taper or race week or a long run inside the taper's bands",
     () => {
       fc.assert(
         fc.property(
@@ -163,6 +174,7 @@ describe("adaptation over generated plans", () => {
             const ctx = {
               today: week.startDate,
               sessions,
+              race: raceOf(input),
               previousWeekM: plan.weeks[weekIndex - 1]?.distanceM ?? null,
               longestRecentM: Math.round(
                 longestShare * Math.max(...sessions.map((s) => s.target.distanceM)),
@@ -201,7 +213,12 @@ describe("adaptation over generated plans", () => {
               expect(totalM).toBeLessThanOrEqual(plannedM);
             }
             for (const s of sessions) {
-              if (afterPause || SHRINK_ONLY_PHASES.has(week.phase) || QUALITY.has(s.type)) {
+              if (
+                afterPause ||
+                SHRINK_ONLY_PHASES.has(week.phase) ||
+                QUALITY.has(s.type) ||
+                nearRace(input, s)
+              ) {
                 expect(afterM.get(s.id)!).toBeLessThanOrEqual(s.target.distanceM);
               }
             }

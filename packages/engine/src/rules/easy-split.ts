@@ -36,7 +36,7 @@ export function easyRunCapM({ longM, minRunM }: { longM: number; minRunM: number
  * Each easy run's share of the week's easy meters, in percent (EASY_SPLIT): the run the day after the
  * long run takes the smallest, the others the larger shares largest first, in date order in odd weeks
  * and in reverse date order in even ones, so weeks of the same volume do not repeat. More runs than the
- * split covers is a programmer error: 6 days hold at most 5 easy runs.
+ * split covers is a programmer error: 6 days hold at most 6 easy runs.
  */
 export function easySharesPercent({ days, afterLongDay, weekNumber }: EasySharesInput): number[] {
   const split = EASY_SPLIT[days.length];

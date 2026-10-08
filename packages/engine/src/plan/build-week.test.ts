@@ -1,10 +1,10 @@
-import type { PlanGenerationInput } from "@running-coach/shared";
+import type { GeneratedSession, PlanGenerationInput, SessionSteps } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { addDays } from "../dates";
 import { longestRunSeedM, maxRunM } from "../rules/long-run";
-import { bandMidpointSPerKm } from "../rules/session-target";
+import { bandMidpointSPerKm, sessionTarget } from "../rules/session-target";
 import { minRunDistanceM } from "../rules/week-fill";
-import { buildTrainingWeek, type PlanContext } from "./build-week";
+import { buildTrainingWeek, sizeWeek, weekRunCaps, type PlanContext } from "./build-week";
 import { generatePlan } from "./generate";
 
 const START = "2026-10-05"; // a Monday
@@ -133,5 +133,44 @@ describe("build week", () => {
       minRunM,
       20_000 - intervalsM - 3 * minRunM,
     ]);
+  });
+
+  it("caps the long run at what the fixed sessions leave of the week, and runs none where that is under 20 min", () => {
+    // A taper week holding a 4500 m day of the race week's: a 20 min long run fits beside it only
+    // when the week holds 20 min more.
+    const ctx = contextOf(fiveK(4, 5000));
+    const steps: SessionSteps = [{ kind: "run", zone: "easy", distanceM: 4500, durationS: null }];
+    const fixed: GeneratedSession[] = [
+      { date: addDays(START, 5), type: "easy", target: sessionTarget(steps, ctx.paces), steps },
+    ];
+    const sized = (targetM: number) =>
+      sizeWeek(ctx, {
+        slots: { long: addDays(START, 2), quality: [], easy: [] },
+        fixed,
+        keepsBaselineLongest: false,
+        targetM,
+        maxRunM: 20_000,
+        weekNumber: 1,
+        fastFinish: false,
+      }).map((session) => [session.type, session.target.distanceM]);
+    expect(sized(4500 + ctx.minRunM - 1)).toEqual([]);
+    expect(sized(4500 + ctx.minRunM)).toEqual([["long", ctx.minRunM]]);
+  });
+
+  it("drops the long run where its cap by days to the race is under 20 min, and holds no run to that cap", () => {
+    // A Thursday 5K 11 days after the week's Sunday caps its long run at 70% of the 5 km seed, 3500
+    // m: a long run of 20 min fits it at 3500 m, not at 3501 m.
+    const ctx = contextOf(fiveK(4, 0));
+    const weekStart = addDays(START, 7);
+    const caps = (raceDate: string, minRunM: number) =>
+      weekRunCaps(
+        { ...ctx, raceDate, minRunM },
+        { weekStart, longRunsBeforeM: [], seedM: 5000, runCapM: 9000 },
+      );
+    const thursday = addDays(weekStart, 14 + 3);
+    expect(caps(thursday, 3500)).toEqual({ maxRunM: 3500, longRun: true });
+    expect(caps(thursday, 3501)).toEqual({ maxRunM: 9000, longRun: false });
+    // 14 days out a 5K's long run has no cap by days.
+    expect(caps(addDays(thursday, 3), 9000)).toEqual({ maxRunM: 9000, longRun: true });
   });
 });

@@ -1,7 +1,7 @@
 import { raceDistanceKeySchema } from "@running-coach/shared";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { longRunKeepsDay, taperLongRunCapM } from "./taper-long-run";
+import { inTaperLongRunBands, longRunKeepsDay, taperLongRunCapM } from "./taper-long-run";
 
 describe("taper long run", () => {
   it("keeps the long run on its day 6 days out and drops it 5 days out", () => {
@@ -36,6 +36,30 @@ describe("taper long run", () => {
     expect(
       taperLongRunCapM({ distanceKey: "marathon", daysOut: 21, peakLongRunM: 21_600 }),
     ).toBeNull();
+  });
+
+  it("puts a long run 13 days out inside the taper's bands and one 14 days out outside, a marathon's 20 and 21", () => {
+    for (const distanceKey of ["5k", "10k", "half"] as const) {
+      expect(inTaperLongRunBands({ distanceKey, daysOut: 13 })).toBe(true);
+      expect(inTaperLongRunBands({ distanceKey, daysOut: 14 })).toBe(false);
+    }
+    expect(inTaperLongRunBands({ distanceKey: "marathon", daysOut: 20 })).toBe(true);
+    expect(inTaperLongRunBands({ distanceKey: "marathon", daysOut: 21 })).toBe(false);
+    expect(inTaperLongRunBands({ distanceKey: "half", daysOut: 0 })).toBe(true);
+  });
+
+  it("puts a long run inside the taper's bands exactly when its days to the race give it a cap", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...raceDistanceKeySchema.options),
+        fc.integer({ min: 0, max: 40 }),
+        (distanceKey, daysOut) => {
+          expect(inTaperLongRunBands({ distanceKey, daysOut })).toBe(
+            taperLongRunCapM({ distanceKey, daysOut, peakLongRunM: 20_000 }) !== null,
+          );
+        },
+      ),
+    );
   });
 
   it("never caps above the peak long run, and never loosens closer to the race", () => {

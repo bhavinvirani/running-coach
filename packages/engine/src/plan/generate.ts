@@ -28,7 +28,7 @@ import { pacesFromVdot, roundVdot, vdotFromPerformance } from "../rules/vdot";
 import { fastFinishWeeks } from "../rules/fast-finish";
 import { baseCurveM, isDownWeek, weekTargetM } from "../rules/volume-curve";
 import { minRunDistanceM } from "../rules/week-fill";
-import { buildTrainingWeek, longRunDayCapM, type BuiltWeek, type PlanContext } from "./build-week";
+import { buildTrainingWeek, weekRunCaps, type BuiltWeek, type PlanContext } from "./build-week";
 import { buildTaperWeeks } from "./build-taper";
 
 const PRE_TAPER: readonly PlanPhase[] = ["base", "build", "peak"];
@@ -52,7 +52,7 @@ interface Setup {
  * counted back from its taper, a fitness plan's every 4th week. Every second build or peak week that is
  * not a down week ends its long run at marathon pace. A long run close enough to the race (a Thursday
  * race's last peak Sunday, 11 days out) keeps its cap by days to the race, a share of the largest long
- * run before it.
+ * run before it; where that is under 20 min the week runs its day easy instead (weekRunCaps).
  */
 function buildPreTaperWeeks(
   ctx: PlanContext,
@@ -89,24 +89,21 @@ function buildPreTaperWeeks(
           previousNonDownWeekM: previousNonDownM,
         });
     const weekStart = addDays(startDate, 7 * index);
-    const runCapM = maxRunM(
-      longestInWindowM({ longestByWeekM: built.map((w) => w.longestM), seedM }),
-    );
+    const caps = weekRunCaps(ctx, {
+      runCapM: maxRunM(longestInWindowM({ longestByWeekM: built.map((w) => w.longestM), seedM })),
+      weekStart,
+      longRunsBeforeM: built.flatMap((w) =>
+        w.week.sessions.filter((s) => s.type === "long").map((s) => s.target.distanceM),
+      ),
+      seedM,
+    });
     const week = buildTrainingWeek(ctx, {
       number,
       phase,
       weekStart,
       targetM,
-      maxRunM: Math.min(
-        runCapM,
-        longRunDayCapM(ctx, {
-          weekStart,
-          longRunsBeforeM: built.flatMap((w) =>
-            w.week.sessions.filter((s) => s.type === "long").map((s) => s.target.distanceM),
-          ),
-          seedM,
-        }) ?? Infinity,
-      ),
+      maxRunM: caps.maxRunM,
+      longRun: caps.longRun,
       lastHardDate: built.findLast((w) => w.lastHardDate !== null)?.lastHardDate ?? null,
       fastFinish: finishes[index]!,
     });
@@ -134,12 +131,14 @@ function setUp(
     fromTimeS: vdotSource.timeS,
     toDistanceM: DISTANCE_METERS[distanceKey],
   });
+  const training = pacesFromVdot(vdot);
   const race = racePace({
     distanceM: DISTANCE_METERS[distanceKey],
     predictedTimeS,
     targetTimeS: goal.targetTimeS,
+    easySlowSPerKm: training.easy.slowSPerKm,
   });
-  const paces: PlanPaces = { ...pacesFromVdot(vdot), race: race.band };
+  const paces: PlanPaces = { ...training, race: race.band };
   const easyPaceSPerKm = bandMidpointSPerKm(paces.easy);
   const ctx: PlanContext = {
     distanceKey,

@@ -18,7 +18,7 @@ import {
   RACE_WEEK_PRIMER_DAYS_OUT,
   RACE_WEEK_STRIDES,
 } from "../constants";
-import { addDays, daysBetween, weekdayIndex, weekdayOf } from "../dates";
+import { addDays, daysBetween, mondayOf } from "../dates";
 import { hardShareHolds, hardTimeS } from "./easy-share";
 import { isSpacedFromHardDay } from "./hard-days";
 import { qualitySteps, workCapM } from "./quality";
@@ -29,8 +29,8 @@ import { isRaceBandWeek } from "./taper-share";
 import { minRunDistanceM } from "./week-fill";
 
 /**
- * practice: race practice. primer: 20 min easy and strides 2 days out. easy: an easy day of the 6 before
- * the race. extra: an easy day 7 to 9 days out in a Monday to Wednesday race's week before.
+ * practice: race practice. primer: 20 min easy and strides 2 days out. easy: an easy day of the 6
+ * before the race. extra: an easy day 7 to 9 days out in a Monday to Wednesday race's week before.
  */
 export type RaceWeekDayKind = "practice" | "primer" | "easy" | "extra";
 
@@ -45,12 +45,14 @@ export interface RaceWeekDaysInput {
   raceDate: string;
   /** The plan's first day: nothing runs before it. */
   startDate: string;
+  /** Race practice moves off a week the race and the days laid out already fill. */
   daysPerWeek: number;
   /** The last hard day before the race week's days, as laid out; null with none. */
   lastHardDate: string | null;
   /**
-   * The days the weeks before the race band lay out for themselves near the race: each counts towards
-   * its calendar week's runs, and one in the 6 days before the race (a long run 6 days out) keeps its day.
+   * The days the weeks before the race band lay out for themselves near the race: each counts
+   * towards its calendar week's runs, and one in the 6 days before the race (a long run 6 days out)
+   * keeps its day.
    */
   laidOutDates: readonly string[];
 }
@@ -58,6 +60,13 @@ export interface RaceWeekDaysInput {
 export interface RaceWeekSessionsInput {
   /** From raceWeekDays, in pick order. */
   days: readonly RaceWeekDay[];
+  /** The days asked for: the 6 days before the race run one less, the race being a day. */
+  daysPerWeek: number;
+  /**
+   * The race and the days the weeks before the race band lay out for themselves: each counts
+   * towards its calendar week's runs.
+   */
+  takenDates: readonly string[];
   distanceKey: RaceDistanceKey;
   paces: PlanPaces;
   /** No run over this: 110% of the recent longest. */
@@ -68,15 +77,22 @@ export interface RaceWeekSessionsInput {
   weekCapsM: Readonly<Record<string, number>>;
 }
 
-const mondayOf = (date: string) => addDays(date, -weekdayIndex(weekdayOf(date)));
+/** Each calendar week's runs among `dates`, by the week's Monday. */
+function runsByWeek(dates: readonly string[]): Map<string, number> {
+  const runs = new Map<string, number>();
+  for (const date of dates) runs.set(mondayOf(date), (runs.get(mondayOf(date)) ?? 0) + 1);
+  return runs;
+}
 
 /**
- * The race week's days, anchored on the days to the race wherever they fall, in the order a runner's
- * days fill them. The day before the race is rest. Race practice runs 4 days out, or 3 when 4 is under
- * 48 h after the last hard day, before the plan or in a week already full; none when both fail. Then the primer 2 days out and
- * easy days 5, 3 and 6 days out, up to the days asked for less the race. Every calendar week stays at the
- * days asked for, the days its own weeks lay out and the race counted. A Monday to Wednesday race's week
- * before is in the race band: its days 7 to 9 out add up to 2 easy runs, nearest the race first.
+ * Every day the race week may run, anchored on the days to the race wherever they fall, in the
+ * order a runner's days fill them; raceWeekSessions keeps those the days asked for and the caps
+ * allow. The day before the race is rest, and no day runs before the plan's start or on a day the
+ * weeks before keep. Race practice runs 4 days out, or 3 when 4 is under 48 h after the last hard
+ * day, before the plan or in a week the race and the weeks before already fill; none when both
+ * fail. Then the primer 2 days out and easy days 5, 3 and 6 days out. A Monday to Wednesday race's
+ * week before is in the race band: its days 7, 9 and 8 out follow as extra easy days, nearest the
+ * race first.
  */
 export function raceWeekDays({
   raceDate,
@@ -86,50 +102,32 @@ export function raceWeekDays({
   laidOutDates,
 }: RaceWeekDaysInput): RaceWeekDay[] {
   const dateAt = (daysOut: number) => addDays(raceDate, -daysOut);
-  const runs = new Map<string, number>();
-  const count = (date: string) => runs.set(mondayOf(date), (runs.get(mondayOf(date)) ?? 0) + 1);
-  [...laidOutDates, raceDate].forEach(count);
-  // A day runs from the plan's start, on no day the weeks before keep, in a week with a day to spare.
+  const runs = runsByWeek([...laidOutDates, raceDate]);
+  // A day runs from the plan's start, on no day the weeks before keep.
   const open = (daysOut: number) =>
-    daysBetween(startDate, dateAt(daysOut)) >= 0 &&
-    !laidOutDates.includes(dateAt(daysOut)) &&
-    (runs.get(mondayOf(dateAt(daysOut))) ?? 0) < daysPerWeek;
+    daysBetween(startDate, dateAt(daysOut)) >= 0 && !laidOutDates.includes(dateAt(daysOut));
   const practiceAt =
     [RACE_PRACTICE_DAYS_BEFORE_RACE, RACE_PRACTICE_MIN_DAYS_BEFORE_RACE].find(
-      (daysOut) => open(daysOut) && isSpacedFromHardDay({ lastHardDate, date: dateAt(daysOut) }),
+      (daysOut) =>
+        open(daysOut) &&
+        (runs.get(mondayOf(dateAt(daysOut))) ?? 0) < daysPerWeek &&
+        isSpacedFromHardDay({ lastHardDate, date: dateAt(daysOut) }),
     ) ?? null;
-
-  const days: RaceWeekDay[] = [];
-  const take = (daysOut: number, kind: RaceWeekDayKind) => {
-    days.push({ date: dateAt(daysOut), daysOut, kind });
-    count(dateAt(daysOut));
-  };
-  const easyOrder = RACE_WEEK_DAY_ORDER.filter(
-    (daysOut) => daysOut in RACE_WEEK_EASY_S && daysOut !== practiceAt,
-  );
-  for (const daysOut of [...(practiceAt === null ? [] : [practiceAt]), ...easyOrder]) {
-    if (days.length === daysPerWeek - 1) break;
-    if (!open(daysOut)) continue;
-    const kind =
-      daysOut === practiceAt
-        ? "practice"
-        : daysOut === RACE_WEEK_PRIMER_DAYS_OUT
-          ? "primer"
-          : "easy";
-    take(daysOut, kind);
-  }
-  let extras = 0;
-  for (const daysOut of RACE_BAND_EXTRA_DAY_ORDER) {
-    if (
-      extras < RACE_BAND_EXTRA_RUNS &&
-      open(daysOut) &&
-      isRaceBandWeek({ raceDate, weekStart: mondayOf(dateAt(daysOut)) })
-    ) {
-      take(daysOut, "extra");
-      extras += 1;
-    }
-  }
-  return days;
+  const day = (daysOut: number, kind: RaceWeekDayKind): RaceWeekDay => ({
+    date: dateAt(daysOut),
+    daysOut,
+    kind,
+  });
+  return [
+    ...(practiceAt === null ? [] : [day(practiceAt, "practice")]),
+    ...RACE_WEEK_DAY_ORDER.filter(
+      (daysOut) => daysOut in RACE_WEEK_EASY_S && daysOut !== practiceAt && open(daysOut),
+    ).map((daysOut) => day(daysOut, daysOut === RACE_WEEK_PRIMER_DAYS_OUT ? "primer" : "easy")),
+    ...RACE_BAND_EXTRA_DAY_ORDER.filter(
+      (daysOut) =>
+        open(daysOut) && isRaceBandWeek({ raceDate, weekStart: mondayOf(dateAt(daysOut)) }),
+    ).map((daysOut) => day(daysOut, "extra")),
+  ];
 }
 
 /** Whole 500 m under `targetM`, never under 20 min; the exact meters when no 500 m step fits. */
@@ -143,19 +141,26 @@ interface Planned {
 }
 
 /**
- * The race week's sessions on its days. Easy days are set by time at the easy midpoint (35 min 5 days
- * out, 30 min 3 and 6 days out, 30 min for an extra day), in whole 500 m, never under 20 min. Race practice
- * is a 15 min warm-up, reps at race pace with 2 min jogs (5K 4 x 400 m, 10K and half 3 x 1 km, marathon
- * 2 x 2 km) and a 10 min cool-down; the primer is 20 min easy and 4 strides. Then, until every rule holds:
- * no run over 110% of the recent longest (the practice loses reps, the primer its strides); race-pace work
- * at most 10% of the race week's km with the race; at least 80% easy over the 6 days before the race, the
- * race excluded on both sides, first dropping the primer's strides, then practice reps; and the 6 days
- * under 40% of the taper peak and each calendar week under its cap, first shortening easy days toward
- * 20 min in reverse pick order, then dropping days in reverse pick order. Every step only shrinks the
- * week, so the loop ends. A practice that loses its last rep rests its day.
+ * The race week's sessions on its days. Easy days are set by time at the easy midpoint (35 min 5
+ * days out, 30 min 3 and 6 days out, 30 min for an extra day), in whole 500 m, never under 20 min.
+ * Race practice is a 15 min warm-up, reps at race pace with 2 min jogs (5K 4 x 400 m, 10K and half
+ * 3 x 1 km, marathon 2 x 2 km) and a 10 min cool-down; the primer is 20 min easy and 4 strides. No
+ * run passes 110% of the recent longest: the practice loses reps, the primer its strides. Then the
+ * days are added in pick order while the 6 days run at most the days asked for less the race, the
+ * extra days at most 2, each calendar week at most the days asked for (the race and the days the
+ * weeks before keep counted), the 6 days at most 40% of the taper peak and each calendar week its
+ * cap: a day that passes a cap first shortens the easy days toward 20 min, itself first, then the
+ * others in reverse pick order, and rests when that is not enough, the others keeping their length;
+ * the days after it are still tried. Race-pace work stays within 10% of the race week's km with the
+ * race, and the 6 days, the race excluded on both sides, stay 80% easy: while either fails, the
+ * primer's strides go first (for the 80% rule), then a practice rep, and the days are added again
+ * from the start, so a practice with no rep left rests its day before any other day gives way to
+ * it.
  */
 export function raceWeekSessions({
   days,
+  daysPerWeek,
+  takenDates,
   distanceKey,
   paces,
   maxRunM,
@@ -168,28 +173,26 @@ export function raceWeekSessions({
   const { repM } = RACE_WEEK_PRACTICE[distanceKey];
   const easyS = (day: RaceWeekDay) =>
     day.kind === "extra" ? RACE_BAND_EXTRA_S : RACE_WEEK_EASY_S[day.daysOut]!;
-  let kept: Planned[] = days.map((day) => ({
-    day,
-    lengthM:
-      day.kind === "practice"
-        ? 0
-        : Math.min(roundedDayM(distanceForDurationM(easyS(day), easyPaceSPerKm), minRunM), maxRunM),
-  }));
+  const easyDayM = (seconds: number) =>
+    Math.min(roundedDayM(distanceForDurationM(seconds, easyPaceSPerKm), minRunM), maxRunM);
+  const practiceSteps = (reps: number) =>
+    qualitySteps({
+      work: { zone: "race", repM, reps, recoveryS: RACE_PRACTICE_RECOVERY_S },
+      warmupPadM: 0,
+      cooldownPadM: 0,
+      paces,
+    });
+  const primerM = easyDayM(RACE_WEEK_EASY_S[RACE_WEEK_PRIMER_DAYS_OUT]!);
+
+  // The run cap holds whatever else runs: it sets the practice's reps and the primer's strides
+  // first.
   let reps = RACE_WEEK_PRACTICE[distanceKey].reps;
-  let strides = true;
-  const dropRep = () => {
-    reps -= 1;
-    if (reps === 0) kept = kept.filter((p) => p.day.kind !== "practice");
-  };
+  while (reps > 0 && sessionTarget(practiceSteps(reps), paces).distanceM > maxRunM) reps -= 1;
+  let strides = primerM + stridesM(RACE_WEEK_STRIDES, paces) <= maxRunM;
 
   const sessionOf = ({ day, lengthM }: Planned): GeneratedSession => {
     if (day.kind === "practice") {
-      const steps = qualitySteps({
-        work: { zone: "race", repM, reps, recoveryS: RACE_PRACTICE_RECOVERY_S },
-        warmupPadM: 0,
-        cooldownPadM: 0,
-        paces,
-      });
+      const steps = practiceSteps(reps);
       return { date: day.date, type: "race_practice", target: sessionTarget(steps, paces), steps };
     }
     const steps: SessionSteps =
@@ -202,65 +205,80 @@ export function raceWeekSessions({
         : [{ kind: "run", zone: "easy", distanceM: lengthM, durationS: null }];
     return { date: day.date, type: "easy", target: sessionTarget(steps, paces), steps };
   };
+  const meters = (planned: readonly Planned[]) =>
+    planned.reduce((sum, p) => sum + sessionOf(p).target.distanceM, 0);
+  const inWindow = (planned: readonly Planned[]) => planned.filter((p) => p.day.kind !== "extra");
+  // Each calendar week in date order, then the 6 days before the race.
+  const caps = (planned: readonly Planned[]) => [
+    ...Object.entries(weekCapsM)
+      .sort(([a], [b]) => daysBetween(b, a))
+      .map(([weekStart, capM]) => ({
+        capM,
+        of: planned.filter((p) => mondayOf(p.day.date) === weekStart),
+      })),
+    { capM: windowCapM, of: inWindow(planned) },
+  ];
+  // The days with one more, its easy days shortened toward 20 min until every cap holds, the new
+  // day first and then the others in reverse pick order; null when even 20 min on each passes a
+  // cap.
+  const withDay = (kept: readonly Planned[], day: RaceWeekDay): Planned[] | null => {
+    const planned = [
+      ...kept.map((p) => ({ ...p })),
+      { day, lengthM: day.kind === "practice" ? 0 : easyDayM(easyS(day)) },
+    ];
+    for (;;) {
+      const over = caps(planned).find(({ capM, of }) => meters(of) > capM);
+      if (over === undefined) return planned;
+      const shortenable = over.of
+        .filter((p) => (p.day.kind === "easy" || p.day.kind === "extra") && p.lengthM > minRunM)
+        .reverse();
+      if (shortenable.length === 0) return null;
+      let left = meters(over.of) - over.capM;
+      for (const p of shortenable) {
+        if (left <= 0) break;
+        const next = roundedDayM(p.lengthM - left, minRunM);
+        left -= p.lengthM - next;
+        p.lengthM = next;
+      }
+    }
+  };
+
+  const taken = runsByWeek(takenDates);
+  // Room for the day among the days asked for: the 6 days less the race, 2 extra days, and each
+  // calendar week with the race and the days the weeks before keep counted.
+  const hasRoom = (kept: readonly Planned[], day: RaceWeekDay) => {
+    const extra = day.kind === "extra";
+    const weekStart = mondayOf(day.date);
+    return (
+      kept.filter((p) => (p.day.kind === "extra") === extra).length <
+        (extra ? RACE_BAND_EXTRA_RUNS : daysPerWeek - 1) &&
+      (taken.get(weekStart) ?? 0) + kept.filter((p) => mondayOf(p.day.date) === weekStart).length <
+        daysPerWeek
+    );
+  };
 
   for (;;) {
-    const built = kept.map((planned) => ({ planned, session: sessionOf(planned) }));
-    const meters = (of: readonly { session: GeneratedSession }[]) =>
-      of.reduce((sum, { session }) => sum + session.target.distanceM, 0);
-    const practice = built.find(({ planned }) => planned.day.kind === "practice");
-    const primer = built.find(({ planned }) => planned.day.kind === "primer");
-    const window = built.filter(({ planned }) => planned.day.kind !== "extra");
-
-    if (practice !== undefined && practice.session.target.distanceM > maxRunM) {
-      dropRep();
-      continue;
+    let kept: Planned[] = [];
+    for (const day of days) {
+      if ((day.kind === "practice" && reps === 0) || !hasRoom(kept, day)) continue;
+      kept = withDay(kept, day) ?? kept;
     }
-    if (strides && primer !== undefined && primer.session.target.distanceM > maxRunM) {
-      strides = false;
-      continue;
-    }
-    if (practice !== undefined && reps * repM > workCapM("race", meters(window) + raceM)) {
-      dropRep();
+    const window = inWindow(kept).map(sessionOf);
+    const practice = kept.some((p) => p.day.kind === "practice");
+    if (practice && reps * repM > workCapM("race", meters(inWindow(kept)) + raceM)) {
+      reps -= 1;
       continue;
     }
     const holds = hardShareHolds({
-      hardS: window.reduce((sum, { session }) => sum + hardTimeS(session.steps, paces), 0),
-      totalS: window.reduce((sum, { session }) => sum + session.target.durationS, 0),
+      hardS: window.reduce((sum, session) => sum + hardTimeS(session.steps, paces), 0),
+      totalS: window.reduce((sum, session) => sum + session.target.durationS, 0),
     });
     if (!holds) {
       // Hard time comes only from the primer's strides and the practice's reps.
-      if (strides && primer !== undefined) strides = false;
-      else dropRep();
+      if (strides && kept.some((p) => p.day.kind === "primer")) strides = false;
+      else reps -= 1;
       continue;
     }
-
-    const over = [
-      ...Object.entries(weekCapsM)
-        .sort(([a], [b]) => daysBetween(b, a))
-        .map(([weekStart, capM]) => ({
-          capM,
-          of: built.filter(({ planned }) => mondayOf(planned.day.date) === weekStart),
-        })),
-      { capM: windowCapM, of: window },
-    ].find(({ capM, of }) => meters(of) > capM);
-    if (over === undefined) {
-      return built.map(({ session }) => session).sort((a, b) => daysBetween(b.date, a.date));
-    }
-    const shortenable = over.of
-      .map(({ planned }) => planned)
-      .filter((p) => (p.day.kind === "easy" || p.day.kind === "extra") && p.lengthM > minRunM)
-      .reverse();
-    if (shortenable.length === 0) {
-      const last = over.of.at(-1)!.planned;
-      kept = kept.filter((p) => p !== last);
-      continue;
-    }
-    let left = meters(over.of) - over.capM;
-    for (const p of shortenable) {
-      if (left <= 0) break;
-      const next = roundedDayM(p.lengthM - left, minRunM);
-      left -= p.lengthM - next;
-      p.lengthM = next;
-    }
+    return kept.map(sessionOf).sort((a, b) => daysBetween(b.date, a.date));
   }
 }

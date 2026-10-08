@@ -1,5 +1,5 @@
 export * from "./constants";
-export { addDays, daysBetween, nextMonday, weekdayIndex, weekdayOf } from "./dates";
+export { addDays, daysBetween, mondayOf, nextMonday, weekdayIndex, weekdayOf } from "./dates";
 export { generatePlan, planStartVolume } from "./plan/generate";
 export { applyDelta, sameSession } from "./rules/apply-delta";
 export type { AdjustedSession, DeltaSession } from "./rules/apply-delta";
@@ -84,7 +84,7 @@ export type {
   ReEntryResult,
   ReEntrySession,
 } from "./rules/re-entry-plan";
-export { scaleSession, scaleSteps } from "./rules/scale-session";
+export { hasExtras, plainRunSteps, scaleSession, scaleSteps } from "./rules/scale-session";
 export type { ScaleSessionResult, ScaleStepsInput } from "./rules/scale-session";
 export {
   bandMidpointSPerKm,
@@ -105,8 +105,8 @@ export { stridesM, stridesRepeat, stridesRunIndex, withStrides } from "./rules/s
 export type { StridesRunInput, WithStridesInput } from "./rules/strides";
 export { taperPeakM } from "./rules/taper";
 export type { TaperPeakInput } from "./rules/taper";
-export { longRunKeepsDay, taperLongRunCapM } from "./rules/taper-long-run";
-export type { TaperLongRunInput } from "./rules/taper-long-run";
+export { inTaperLongRunBands, longRunKeepsDay, taperLongRunCapM } from "./rules/taper-long-run";
+export type { TaperLongRunBandsInput, TaperLongRunInput } from "./rules/taper-long-run";
 export {
   isRaceBandWeek,
   taperCeilingM,

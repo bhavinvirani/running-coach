@@ -9,6 +9,12 @@ export interface TaperLongRunInput {
   peakLongRunM: number;
 }
 
+export interface TaperLongRunBandsInput {
+  distanceKey: RaceDistanceKey;
+  /** Days from the long run's date to the race. */
+  daysOut: number;
+}
+
 /** The long run keeps its day until 6 days before the race; in the last 5 days that day is the race week's. */
 export function longRunKeepsDay(daysOut: number): boolean {
   return daysOut >= LONG_RUN_MIN_DAYS_BEFORE_RACE;
@@ -28,4 +34,13 @@ export function taperLongRunCapM({
   if (!longRunKeepsDay(daysOut)) return 0;
   const band = TAPER_LONG_RUN_SHARES[distanceKey].find((b) => daysOut <= b.maxDaysOut);
   return band === undefined ? null : Math.floor(band.share * peakLongRunM);
+}
+
+/**
+ * Whether a long run this many days before the race is under its cap by days to the race: inside
+ * its distance's last band (13 days out, a marathon's 20) or closer, where taperLongRunCapM gives a
+ * cap.
+ */
+export function inTaperLongRunBands({ distanceKey, daysOut }: TaperLongRunBandsInput): boolean {
+  return daysOut <= Math.max(...TAPER_LONG_RUN_SHARES[distanceKey].map((band) => band.maxDaysOut));
 }

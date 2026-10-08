@@ -112,6 +112,13 @@ const MIN_DAYS: Readonly<Record<RaceDistanceKey, number>> = {
   marathon: 4,
 };
 
+// Weekly volumes of a runner with history: mostly 15 to 90 km, and as often as a quarter of the
+// time under 15 km, where a taper week's ceiling is close to the race week's days and 20 min runs.
+const weeklyVolumesArb = fc.oneof(
+  { weight: 3, arbitrary: fc.integer({ min: 15_000, max: 90_000 }) },
+  { weight: 1, arbitrary: fc.integer({ min: 0, max: 15_000 }) },
+);
+
 /**
  * A race plan from a runner with history, the race on any weekday `weeks` weeks into the plan, on days
  * the distance allows.
@@ -125,10 +132,11 @@ function raceInputArb(weeksArb: (distanceKey: RaceDistanceKey) => fc.Arbitrary<n
         raceWeekday: fc.integer({ min: 0, max: 6 }),
         daysPerWeek: fc.integer({ min: MIN_DAYS[distanceKey], max: 6 }),
         longRunDay: fc.constantFrom(...weekdaySchema.options),
-        weeklyVolumesM: fc.array(fc.integer({ min: 15_000, max: 90_000 }), {
-          minLength: 4,
-          maxLength: 4,
-        }),
+        weeklyVolumesM: fc.oneof(
+          fc.array(weeklyVolumesArb, { minLength: 4, maxLength: 4 }),
+          // A runner of small weeks only: every week under 15 km.
+          fc.array(fc.integer({ min: 0, max: 15_000 }), { minLength: 4, maxLength: 4 }),
+        ),
         longestRunM: fc.integer({ min: 0, max: 30_000 }),
         daysSinceLastRun: fc.integer({ min: 0, max: 20 }),
         source: sourceArb,
@@ -159,7 +167,10 @@ export const fullRaceInputArb: fc.Arbitrary<PlanGenerationInput> = raceInputArb(
   fc.integer({ min: MIN_WEEKS[distanceKey], max: MIN_WEEKS[distanceKey] + 10 }),
 );
 
-/** Races 1 to 5 weeks out on every weekday: plans that start in the taper or just before it. */
+/**
+ * Races 1 to 5 weeks out on every weekday: plans that start in the taper or just before it, small
+ * weekly volumes among them.
+ */
 export const closeRaceInputArb: fc.Arbitrary<PlanGenerationInput> = raceInputArb(() =>
   fc.integer({ min: 1, max: 5 }),
 );

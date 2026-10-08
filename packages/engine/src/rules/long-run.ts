@@ -18,7 +18,10 @@ export interface LongRunInput {
   daysPerWeek: number;
   /** The easy band's midpoint, the pace the long run is planned at. */
   easyPaceSPerKm: number;
-  /** 110% of the longest run of the last 4 weeks. */
+  /**
+   * No run over this: 110% of the longest run of the last 4 weeks and, in a race plan, the long
+   * run's cap by days to the race.
+   */
   maxRunM: number;
 }
 

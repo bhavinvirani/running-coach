@@ -10,10 +10,10 @@ import { isRaceBandWeek, taperCeilingM } from "../rules/taper-share";
 import { weekTargetM } from "../rules/volume-curve";
 import {
   finishWeek,
-  longRunDayCapM,
   raceSession,
   sizeWeek,
   sumM,
+  weekRunCaps,
   weekSlots,
   type BuiltWeek,
   type PlanContext,
@@ -41,8 +41,10 @@ const nonRace = (sessions: readonly GeneratedSession[]) =>
  * (race-week.ts), wherever they fall: a Thursday to Saturday race's begin in its 70% week, a Monday to
  * Wednesday race's in its 40% week, which also runs up to 2 easy runs 7 to 9 days out and nothing else.
  * Every other taper day keeps its week's layout: the long run on its day while 6 or more days out,
- * within its cap by days to the race; race practice and, from 4 days a week, tempo, which runs easy
- * under 10 days out; a week holding the template's race practice keeps its quality count with it.
+ * within its cap by days to the race (none where that is under 20 min: its day runs easy); race
+ * practice and, from 4 days a week, tempo, which runs easy under 10 days out; a week holding the
+ * template's race practice keeps its quality count with it. A week the template's days leave under
+ * 20 min runs no long run beside them (sizeWeek).
  * The template is sized first, its days in the week before the race week fixed there; when the race
  * week would then hold more than the week before as built, its cap comes down to that and it is sized
  * again, so every cap holds by construction.
@@ -86,19 +88,18 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
         seedM,
       }),
     );
-  const weekRunCapM = (k: number) =>
-    Math.min(
-      runCapM(k),
-      longRunDayCapM(ctx, {
-        weekStart: weekStarts[k]!,
-        longRunsBeforeM: sessionsBefore(k)
-          .filter((s) => s.type === "long")
-          .map((s) => s.target.distanceM),
-        seedM,
-      }) ?? Infinity,
-    );
+  const weekCaps = (k: number) =>
+    weekRunCaps(ctx, {
+      runCapM: runCapM(k),
+      weekStart: weekStarts[k]!,
+      longRunsBeforeM: sessionsBefore(k)
+        .filter((s) => s.type === "long")
+        .map((s) => s.target.distanceM),
+      seedM,
+    });
 
-  // A taper week's own days: the race week's days and a long run under 6 days out go to the race week.
+  // A taper week's own days: the race week's days and a long run under 6 days out go to the race
+  // week; a long run whose cap by days is under 20 min runs easy on a day of the week's own.
   const ownSlots = (k: number): Slots => {
     const slots = weekSlots(ctx, {
       number: k + 1,
@@ -110,14 +111,17 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
     const quality = slots.quality.filter(
       (slot) => own(slot.date) && taperKeepsWork({ zone: slot.zone, daysOut: daysOut(slot.date) }),
     );
+    const { longRun } = weekCaps(k);
     return {
-      long: slots.long !== null && longRunKeepsDay(daysOut(slots.long)) ? slots.long : null,
+      long:
+        longRun && slots.long !== null && longRunKeepsDay(daysOut(slots.long)) ? slots.long : null,
       quality,
       easy: [
         ...slots.easy.filter(own),
         ...slots.quality
           .filter((slot) => own(slot.date) && !quality.includes(slot))
           .map((slot) => slot.date),
+        ...(!longRun && slots.long !== null && own(slots.long) ? [slots.long] : []),
       ],
     };
   };
@@ -127,7 +131,7 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
       fixed,
       keepsBaselineLongest: false,
       targetM: ceilingM(k),
-      maxRunM: weekRunCapM(k),
+      maxRunM: weekCaps(k).maxRunM,
       weekNumber: k + 1,
       fastFinish: false,
     });
@@ -145,6 +149,7 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
     spansTwoWeeks && !isRaceBandWeek({ raceDate, weekStart: weekStarts[before]! })
       ? ownSlots(before)
       : null;
+  const laidOutDates = beforeSlots === null ? [] : slotDates(beforeSlots);
   const days = raceWeekDays({
     raceDate,
     startDate,
@@ -153,7 +158,7 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
     lastHardDate:
       (beforeSlots === null ? [] : hardDates(beforeSlots)).sort().at(-1) ??
       lastHardBefore(spansTwoWeeks ? before : raceIndex),
-    laidOutDates: beforeSlots === null ? [] : slotDates(beforeSlots),
+    laidOutDates,
   });
   // The week before keeps its quality count with the race week's practice in it.
   const room =
@@ -173,6 +178,8 @@ export function buildTaperWeeks(ctx: PlanContext, input: TaperWeeksInput): Gener
   for (;;) {
     const template = raceWeekSessions({
       days,
+      daysPerWeek: ctx.daysPerWeek,
+      takenDates: [...laidOutDates, raceDate],
       distanceKey,
       paces: ctx.paces,
       maxRunM: Math.min(runCapM(raceIndex), ...(spansTwoWeeks ? [runCapM(before)] : [])),

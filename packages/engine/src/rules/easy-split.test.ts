@@ -25,13 +25,23 @@ describe("easy split", () => {
     ).toEqual([28, 23, 19, 16, 14]);
   });
 
-  it("rejects no runs or more than 5 as a programmer error", () => {
+  it("extends to 6 runs, 6 days a week with no long run and every quality day run easy: 24, 20, 17, 14, 13 and 12%", () => {
+    expect(
+      easySharesPercent({
+        days: [MON, TUE, WED, THU, FRI, SAT],
+        afterLongDay: -1,
+        weekNumber: 1,
+      }),
+    ).toEqual([24, 20, 17, 14, 13, 12]);
+  });
+
+  it("rejects no runs or more than 6 as a programmer error", () => {
     expect(() => easySharesPercent({ days: [], afterLongDay: MON, weekNumber: 1 })).toThrow(
       RangeError,
     );
     expect(() =>
       easySharesPercent({
-        days: [MON, TUE, WED, THU, FRI, SAT],
+        days: [MON, TUE, WED, THU, FRI, SAT, 6],
         afterLongDay: MON,
         weekNumber: 1,
       }),
@@ -179,7 +189,7 @@ describe("easy split", () => {
   it("holds the total exactly in whole meters between the floor and the cap, the day after the long run never longer than another", () => {
     fc.assert(
       fc.property(
-        fc.uniqueArray(fc.integer({ min: 0, max: 6 }), { minLength: 1, maxLength: 5 }),
+        fc.uniqueArray(fc.integer({ min: 0, max: 6 }), { minLength: 1, maxLength: 6 }),
         fc.integer({ min: 0, max: 6 }),
         fc.integer({ min: 1, max: 40 }),
         fc.integer({ min: 1500, max: 5000 }),

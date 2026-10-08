@@ -73,29 +73,23 @@ export const MIN_PLAN_WEEKS: Readonly<Record<RaceDistanceKey, number>> = {
 // before it, so a week takes the band most of its days are in. Source: this app's own choice.
 export const TAPER_ANCHOR_WEEKDAY = 3;
 
-// Bosquet et al. 2007 meta-analysis (a 41-60% volume cut over about 2 weeks) and Pfitzinger's 3-week
-// marathon taper: each band is the most days from a week's Thursday to the race it covers and the share
-// of the taper peak the week may hold, the race excluded; a week past the last band is not tapering.
+// Bosquet et al. 2007 meta-analysis (a 41-60% volume cut over about 2 weeks): the last week before
+// the race runs 40% of the taper peak. It is the week whose Thursday is 6 or fewer days out, so
+// most of its days fall in the 6 days before the race (the race week, or the week before a Monday
+// to Wednesday race).
+export const RACE_BAND_MAX_DAYS_OUT = 6;
+const RACE_BAND = { maxDaysOut: RACE_BAND_MAX_DAYS_OUT, share: 0.4 } as const;
+
+// Bosquet et al. 2007 and Pfitzinger's 3-week marathon taper: each band is the most days from a
+// week's Thursday to the race it covers and the share of the taper peak the week may hold, the race
+// excluded; a week past the last band is not tapering.
 export const TAPER_SHARES: Readonly<
   Record<RaceDistanceKey, readonly { maxDaysOut: number; share: number }[]>
 > = {
-  "5k": [
-    { maxDaysOut: 6, share: 0.4 },
-    { maxDaysOut: 13, share: 0.7 },
-  ],
-  "10k": [
-    { maxDaysOut: 6, share: 0.4 },
-    { maxDaysOut: 13, share: 0.7 },
-  ],
-  half: [
-    { maxDaysOut: 6, share: 0.4 },
-    { maxDaysOut: 13, share: 0.7 },
-  ],
-  marathon: [
-    { maxDaysOut: 6, share: 0.4 },
-    { maxDaysOut: 13, share: 0.6 },
-    { maxDaysOut: 20, share: 0.8 },
-  ],
+  "5k": [RACE_BAND, { maxDaysOut: 13, share: 0.7 }],
+  "10k": [RACE_BAND, { maxDaysOut: 13, share: 0.7 }],
+  half: [RACE_BAND, { maxDaysOut: 13, share: 0.7 }],
+  marathon: [RACE_BAND, { maxDaysOut: 13, share: 0.6 }, { maxDaysOut: 20, share: 0.8 }],
 };
 
 // Pfitzinger: the last long run about a week out at 70% of the peak one (a marathon's 80% three weeks
@@ -271,6 +265,11 @@ export const MIN_RUN_S = 1200;
 // Source: this app's own choice: work jumps at whole 100 m of week (T in 100 m blocks, reps by shares).
 export const NEEDED_VOLUME_STEP_M = 100;
 
+// Where 20 min runs would leave a gap, shorter equal ones fill it, but never under 15 min: a week
+// that can only hold shorter runs runs fewer days instead. Source: this app's own choice (review of
+// #56), about the shortest easy runs Runna plans.
+export const EASY_RUN_FLOOR_S = 900;
+
 // SPEC "Plan engine": at least 80% of the week's time easy.
 export const HARD_TIME_MAX_SHARE = 0.2;
 
@@ -284,7 +283,9 @@ export const RACE_PRACTICE_MIN_DAYS_BEFORE_RACE = 3;
 export const RACE_WEEK_DAY_ORDER: readonly number[] = [4, 2, 5, 3, 6];
 // The race week's template owns the 6 days before the race, wherever they fall.
 export const RACE_WEEK_DAYS = Math.max(...RACE_WEEK_DAY_ORDER);
-// Each easy day's time by days to the race; the primer 2 days out runs 20 min before its strides.
+// Each easy day's time by days to the race, shorter nearer it: 35 min 5 days out, 30 min 3 and 6
+// days out, the primer's 20 min 2 days out before its strides. Source: this app's own choice after
+// Runna's race weeks (approved on #56).
 export const RACE_WEEK_EASY_S: Readonly<Record<number, number>> = {
   2: 1200,
   3: 1800,
@@ -316,7 +317,8 @@ export const STRIDE_RECOVERY_S = 60;
 export const RUN_ROUND_M = 500;
 
 // Easy runs in a week, in percent of their meters, the largest first: unequal days, as Pfitzinger's
-// medium-long and recovery runs. 5 runs is 6 days with the quality session run easy.
+// medium-long and recovery runs. 5 runs is 6 days with the quality session run easy, 6 runs 6 days
+// with no long run (its cap by days to the race under 20 min) and every quality day run easy.
 // Source: this app's own choice; the shares come from the coach design for slice #56.
 export const EASY_SPLIT: Readonly<Record<number, readonly number[]>> = {
   1: [100],
@@ -324,6 +326,7 @@ export const EASY_SPLIT: Readonly<Record<number, readonly number[]>> = {
   3: [42, 33, 25],
   4: [34, 27, 22, 17],
   5: [28, 23, 19, 16, 14],
+  6: [24, 20, 17, 14, 13, 12],
 };
 // SPEC "Plan engine": an easy run at most 85% of the week's long run, so the long run stands out.
 export const EASY_RUN_MAX_SHARE_OF_LONG = 0.85;

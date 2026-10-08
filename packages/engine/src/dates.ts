@@ -48,6 +48,11 @@ export function weekdayOf(date: string): Weekday {
   return WEEKDAYS[(new Date(utcMs(date)).getUTCDay() + 6) % 7]!;
 }
 
+/** The Monday of the date's Monday-to-Sunday week: the date itself on a Monday. */
+export function mondayOf(date: string): string {
+  return addDays(date, -weekdayIndex(weekdayOf(date)));
+}
+
 /** The date itself when it is a Monday, else the Monday after it. */
 export function nextMonday(date: string): string {
   return addDays(date, (7 - weekdayIndex(weekdayOf(date))) % 7);

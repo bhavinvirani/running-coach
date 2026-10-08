@@ -1,6 +1,7 @@
 import {
   COOLDOWN_MAX_S,
   COOLDOWN_S,
+  EASY_RUN_FLOOR_S,
   FLOAT_TOLERANCE,
   MIN_RUN_S,
   WARMUP_MAX_S,
@@ -59,15 +60,16 @@ function padMaxM(baseS: number, maxS: number, easyPaceSPerKm: number): number {
 
 /**
  * The easy runs that hold the rest of the week, then what they cannot hold. Easy runs take their
- * shares (easy-split.ts), each at least 20 min and at most 85% of the long run, in whole 500 m with the
- * remainder on the longest (run-rounding.ts). Fewer runs than days when the rest holds only that many
- * 20 min runs; where 20 min runs would leave a gap (runs at the cap would not hold it, one more would be
- * under 20 min), equal shorter runs of at least half the cap. A week before the taper keeps every day
- * that way while half the cap fits on each, as a down week at the 20 min floor needs. Easy runs fill to
- * their caps first; what
- * passes them, and a rest under one such run, goes to the quality sessions in equal shares, 60% to the
- * warm-up and 40% to the cool-down, each step at most 25 min and never past the long run. What still
- * does not fit is not run: the week builder then shortens the long run to its share of the week as
+ * shares (easy-split.ts), each at least 20 min and at most 85% of the long run, in whole 500 m with
+ * the remainder on the longest (run-rounding.ts). Fewer runs than days when the rest holds only
+ * that many 20 min runs; where 20 min runs would leave a gap (runs at the cap would not hold it,
+ * one more would be under 20 min), equal shorter runs, never under 15 min or half the cap,
+ * whichever is more (the cap itself where that is less): a week that can only hold shorter runs
+ * runs fewer days at that. A week before the taper keeps every day while half the cap fits on each,
+ * as a down week at the 20 min floor needs. Easy runs fill to their caps first; what passes them,
+ * and a rest under one such run, goes to the quality sessions in equal shares, 60% to the warm-up
+ * and 40% to the cool-down, each step at most 25 min and never past the long run. What still does
+ * not fit is not run: the week builder then shortens the long run to its share of the week as
  * built.
  */
 export function fillWeek({
@@ -83,31 +85,45 @@ export function fillWeek({
 }: FillWeekInput): FillWeekResult {
   const capM = easyRunCapM({ longM, minRunM });
   const easyM = Math.min(restM - sum(qualityM), easyDays.length * capM);
-  // The shortest easy run: 20 min, or half the cap where 20 min runs would leave a gap.
-  const fewestM = Math.min(minRunM, Math.floor(capM / 2));
-  let easyRunsM: number[] = [];
-  if (easyM > 0 && easyM >= fewestM) {
-    const runs =
-      keepDays && easyM >= easyDays.length * fewestM
+  const halfCapM = Math.min(minRunM, Math.floor(capM / 2));
+  // The shortest easy run where 20 min runs would leave a gap: 15 min or half the cap, whichever is
+  // more, though never over 20 min or the cap.
+  const fewestM = Math.min(
+    minRunM,
+    capM,
+    Math.max(halfCapM, Math.ceil((EASY_RUN_FLOOR_S * 1000) / easyPaceSPerKm)),
+  );
+  // No easy meters, no runs; else every day before the taper while half the cap fits on each, else
+  // enough runs to hold the meters, each at least 20 min where they can be, never under fewestM.
+  const runs =
+    easyM <= 0
+      ? 0
+      : keepDays && easyM >= easyDays.length * halfCapM
         ? easyDays.length
-        : Math.min(easyDays.length, Math.max(Math.floor(easyM / minRunM), Math.ceil(easyM / capM)));
-    if (easyM >= runs * minRunM) {
-      const split = easySplitM({
-        totalM: easyM,
-        days: easyDays.slice(0, runs),
-        afterLongDay,
-        weekNumber,
-        minM: minRunM,
-        maxM: capM,
-      });
-      easyRunsM = roundedRunsM({ runsM: split, capM, minRunM });
-    } else {
-      const share = Math.floor(easyM / runs);
-      easyRunsM = Array.from(
-        { length: runs },
-        (_, k) => share + (k < easyM - share * runs ? 1 : 0),
-      );
-    }
+        : Math.min(
+            easyDays.length,
+            Math.floor(easyM / fewestM),
+            Math.max(Math.floor(easyM / minRunM), Math.ceil(easyM / capM)),
+          );
+  // Runs at the cap hold less than the rest when fewer of them run.
+  const placedM = Math.min(easyM, runs * capM);
+  let easyRunsM: number[] = [];
+  if (runs > 0 && placedM >= runs * minRunM) {
+    const split = easySplitM({
+      totalM: placedM,
+      days: easyDays.slice(0, runs),
+      afterLongDay,
+      weekNumber,
+      minM: minRunM,
+      maxM: capM,
+    });
+    easyRunsM = roundedRunsM({ runsM: split, capM, minRunM });
+  } else if (runs > 0) {
+    const share = Math.floor(placedM / runs);
+    easyRunsM = Array.from(
+      { length: runs },
+      (_, k) => share + (k < placedM - share * runs ? 1 : 0),
+    );
   }
 
   const overflowM = restM - sum(qualityM) - sum(easyRunsM);
