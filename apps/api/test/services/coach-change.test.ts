@@ -15,6 +15,7 @@ import {
   createRunOn,
   createSession,
   createUser,
+  PLAN_INPUTS,
   storedSession,
   TEMPO_STEPS,
 } from "../seed";
@@ -647,6 +648,51 @@ describe("applyCoachChange in a taper or race week", () => {
       ]);
     },
   );
+});
+
+describe("applyCoachChange on a long run near the race", () => {
+  /**
+   * Thursday's 8 km long run in a peak week, `daysOut` days before a half on the plan's own inputs, in a
+   * week of 24 km done beside it after a 32 km week, with a 10 km run this morning: every other cap lets
+   * it rise its full 10% to 8.8 km.
+   */
+  async function longRunDaysOut(raceDate: string) {
+    const { userId, planId, run, session } = await runner(
+      { type: "long", phase: "peak" },
+      {},
+      {
+        inputs: {
+          ...PLAN_INPUTS,
+          goal: { ...PLAN_INPUTS.goal, kind: "race", distanceKey: "half", raceDate },
+        },
+      },
+    );
+    for (const date of ["2026-10-05", "2026-10-06", "2026-10-08", "2026-10-10"]) {
+      await createSession(userId, planId, { date, status: "done" });
+    }
+    for (const date of ["2026-10-12", "2026-10-13", "2026-10-14"]) {
+      await createSession(userId, planId, { date, status: "done" });
+    }
+    return { userId, run, session: session! };
+  }
+
+  it("leaves a peak-week long run 11 days before a half as planned: a rise is rejected no_change", async () => {
+    const { userId, run, session } = await longRunDaysOut("2026-10-26");
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "rejected", reason: "no_change", changed: false });
+    expect(await storedSession(session.id)).toEqual(session);
+  });
+
+  it("still lets a long run 14 days before a half rise its full 10%", async () => {
+    const { userId, run, session } = await longRunDaysOut("2026-10-29");
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "applied", changed: true });
+    expect((await storedSession(session.id)).target.distanceM).toBe(8800);
+  });
 });
 
 describe("planChangesFor", () => {

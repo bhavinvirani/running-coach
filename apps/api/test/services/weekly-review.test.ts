@@ -28,6 +28,7 @@ import {
   createSession,
   createUser,
   garminBundle,
+  PLAN_INPUTS,
   setSettings,
   storedSession,
   TEMPO_STEPS,
@@ -71,6 +72,10 @@ interface RunnerOptions {
   noKey?: boolean;
   /** The coming week's phase (s1 to s3), base by default. */
   comingPhase?: PlanPhase;
+  /** s1 is a 5 km long run instead of the easy 8 km. */
+  s1Long?: boolean;
+  /** The plan's own inputs name a half on this date instead of a fitness goal. */
+  halfOn?: string;
 }
 
 /**
@@ -84,7 +89,22 @@ async function runner(fixture: string, options: RunnerOptions = {}) {
   const key = claudeKey(fixture);
   if (!options.noKey) await setSettings(userId, { claudeKey: key });
   await connectGarmin(userId);
-  const active = await createPlan(userId);
+  const active = await createPlan(
+    userId,
+    options.halfOn === undefined
+      ? {}
+      : {
+          inputs: {
+            ...PLAN_INPUTS,
+            goal: {
+              ...PLAN_INPUTS.goal,
+              kind: "race",
+              distanceKey: "half",
+              raceDate: options.halfOn,
+            },
+          },
+        },
+  );
   const tuesdayRun = await createRunOn(userId, "2026-10-06", {
     distanceM: 8100,
     durationS: 2600,
@@ -114,7 +134,11 @@ async function runner(fixture: string, options: RunnerOptions = {}) {
     activityId: sundayRun.id,
   });
   const phase = options.comingPhase ?? "base";
-  const s1 = await createSession(userId, active.id, { date: "2026-10-13", phase });
+  const s1 = await createSession(userId, active.id, {
+    date: "2026-10-13",
+    phase,
+    ...(options.s1Long ? { type: "long" as const, steps: easySteps(5000) } : {}),
+  });
   const s2 = await createSession(userId, active.id, {
     date: "2026-10-15",
     phase,
@@ -477,6 +501,33 @@ describe("writeWeeklyReview", () => {
       );
     },
   );
+
+  it("lets no long run of a coming peak week rise 10 days before the plan's half: s1's 1.3 is logged rejected no_change", async () => {
+    const { userId, s1 } = await runner("weekly-review-changes", {
+      comingPhase: "peak",
+      s1Long: true,
+      halfOn: "2026-10-23",
+    });
+
+    await write(userId);
+
+    await expectUnchanged(s1);
+    expect(
+      (await storedAdjustments(userId)).find((row) => row.planSessionId === s1.id),
+    ).toMatchObject({ outcome: "rejected", reason: "no_change" });
+  });
+
+  it("still lets that long run rise when the half is 14 days after it", async () => {
+    const { userId, s1 } = await runner("weekly-review-changes", {
+      comingPhase: "peak",
+      s1Long: true,
+      halfOn: "2026-10-27",
+    });
+
+    await write(userId);
+
+    expect((await storedSession(s1.id)).target.distanceM).toBeGreaterThan(5000);
+  });
 
   it.each(["build", "peak"] as const)(
     "still lets an easy run of a coming %s week rise to the week's cap (plan changes clamped)",

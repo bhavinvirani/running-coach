@@ -11,7 +11,13 @@ import type { DbTransaction } from "../db/client";
 import { planAdjustment, type PlanRow, planSession, type PlanSessionRow } from "../db/schema";
 import { addDays, mondayOf } from "../lib/local-date";
 import { logger } from "../lib/logger";
-import { ACCEPTED, daysPerWeekOf, longestRecentRunM, sessionHistories } from "./coach-change";
+import {
+  ACCEPTED,
+  daysPerWeekOf,
+  longestRecentRunM,
+  planRaceOf,
+  sessionHistories,
+} from "./coach-change";
 import { activePlan, type Executor, openPause, pauseCovering, runnerToday } from "./runner-state";
 import { adjustedOf } from "./session-view";
 
@@ -120,6 +126,7 @@ export async function reviewDeltaContext(
         coachAdjusted: histories.get(session.id)?.coachAdjusted ?? false,
         eased: histories.get(session.id)?.eased ?? false,
       })),
+      race: planRaceOf(active),
       previousWeekM,
       longestRecentM: await longestRecentRunM(executor, userId, today),
       daysPerWeek: await daysPerWeekOf(executor, active),
