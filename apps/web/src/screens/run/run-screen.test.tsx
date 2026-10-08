@@ -15,6 +15,7 @@ import {
   meFixture,
   runBestEffortFixture,
 } from "@/test/fixtures";
+import { shoesResponseFixture } from "@/test/fixtures-shoes";
 import { renderScreen } from "@/test/render";
 import { RunScreen } from "./run-screen";
 
@@ -40,6 +41,9 @@ const noKey = () => json({ state: "no_key" });
 const run = activityFixture();
 const runPath = `/api/activities/${run.id}`;
 
+/** The pairs in these tests, which are about the run: none, so the Shoes section is one sentence. */
+const noShoes = () => json(shoesResponseFixture([]));
+
 /** /api/me, GET /api/activities/:id and POST /api/activities/:id/detail, in memory. */
 function fakeRunApi({
   me = meFixture(),
@@ -54,6 +58,7 @@ function fakeRunApi({
   return stubFetch(({ method, path }) => {
     if (method === "GET" && path === "/api/me") return json(me);
     if (method === "GET" && path === `/api/activities/${activity.id}/insight`) return noKey();
+    if (method === "GET" && path === "/api/shoes") return noShoes();
     if (method === "GET" && path === `/api/activities/${activity.id}`) {
       return json(activityResponseFixture({ activity, detail, bestEfforts }));
     }
@@ -168,6 +173,7 @@ describe("RunScreen", () => {
     stubFetch(({ method, path }) => {
       if (path === "/api/me") return json(meFixture());
       if (path.endsWith("/insight")) return noKey();
+      if (path === "/api/shoes") return noShoes();
       if (method === "GET") {
         attempts += 1;
         return attempts === 1
@@ -204,6 +210,7 @@ describe("RunScreen", () => {
     stubFetch(({ path }) => {
       if (path === "/api/me") return json(meFixture());
       if (path.endsWith("/insight")) return noKey();
+      if (path === "/api/shoes") return noShoes();
       return failing
         ? problem(503, ErrorCode.internal)
         : json(activityResponseFixture({ detail: activityDetailFixture() }));

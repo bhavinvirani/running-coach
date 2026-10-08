@@ -21,6 +21,7 @@ import {
   weekFixture,
 } from "@/test/fixtures";
 import { hrZonesResponseFixture } from "@/test/fixtures-hr-zones";
+import { shoesResponseFixture } from "@/test/fixtures-shoes";
 import { REVIEW_ID, reviewListFixture, reviewResponseFixture } from "@/test/fixtures-weekly-review";
 import { testQueryClient } from "@/test/render";
 import { appRoutes } from "./router";
@@ -62,6 +63,7 @@ function signedIn({ path, query }: FakeRequest): Response {
     return json(sessionDetailFixture({ session: customSessionFixture() }));
   }
   if (path === "/api/hr-zones") return json(hrZonesResponseFixture());
+  if (path === "/api/shoes") return json(shoesResponseFixture());
   if (path === "/api/import") {
     return json(
       importProgressFixture({ status: "done", runsStored: 1, finishedAt: "2026-09-27T06:20:00Z" }),
@@ -266,6 +268,7 @@ describe("app routes", () => {
   const settingsScreens = [
     { row: "Garmin, Connected", title: "Garmin", path: "/settings/garmin" },
     { row: "Claude, No key", title: "Claude", path: "/settings/claude" },
+    { row: "Shoes", title: "Shoes", path: "/settings/shoes" },
     { row: "Units, Kilometers", title: "Units", path: "/settings/units" },
     { row: "Coach detail, Standard", title: "Coach detail", path: "/settings/coach-detail" },
     { row: "Heart rate zones", title: "Heart rate zones", path: "/settings/hr-zones" },

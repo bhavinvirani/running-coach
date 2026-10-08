@@ -1,4 +1,4 @@
-import { HeartPulse, KeyRound, MessageSquareText, Ruler, Watch } from "lucide-react";
+import { Footprints, HeartPulse, KeyRound, MessageSquareText, Ruler, Watch } from "lucide-react";
 import type { ReactNode } from "react";
 import { CardSection } from "@/components/card-section";
 import { ListRow } from "@/components/list-row";
@@ -6,7 +6,7 @@ import { LoadError } from "@/components/load-error";
 import { RetryAlert } from "@/components/retry-alert";
 import { coachDetailNames, unitsNames } from "@/lib/settings-names";
 import { AccountSection } from "./parts/account-section";
-import { claudeValue, garminStatusNames } from "./settings-copy";
+import { claudeValue, garminStatusNames, shoesValue } from "./settings-copy";
 import { useSettingsScreen } from "./use-settings";
 
 /**
@@ -49,6 +49,12 @@ export function SettingsScreen() {
           label="Claude"
           value={claudeValue(settings)}
         />
+        <ListRow
+          to="/settings/shoes"
+          icon={Footprints}
+          label="Shoes"
+          value={shoesValue(screen.shoes)}
+        />
       </CardSection>
       <CardSection title="My preferences">
         <ListRow
@@ -89,7 +95,7 @@ function SettingsSkeleton() {
   return (
     <SettingsLayout busy>
       <div role="status" aria-label="Loading settings" className="flex flex-col gap-4">
-        <SkeletonGroup rows={2} />
+        <SkeletonGroup rows={3} />
         <SkeletonGroup rows={3} />
         <AccountSkeleton />
       </div>

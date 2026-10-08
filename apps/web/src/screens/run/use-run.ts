@@ -4,6 +4,7 @@ import { useActivity, useFetchActivityDetail } from "@/api/activities";
 import { useAskCoach, useInsight, useInsightFeedback } from "@/api/insights";
 import { useSettings } from "@/api/me";
 import { screenState } from "@/api/screen-state";
+import { useSetRunShoe, useShoes } from "@/api/shoes";
 
 /** The laps, samples, route and zones below the stats, which load on their own after the run. */
 export type DetailState =
@@ -16,7 +17,8 @@ export type DetailState =
  * screen asks the API to fetch it from Garmin, once: the ref keeps a re-render, a background reload of the
  * run or StrictMode's second effect from asking again, and only Retry repeats a failed fetch. The screen is
  * keyed by run id, so a new run starts with a fresh ref. Units and time zone come from /api/me, which the authenticated
- * loader caches before any screen renders. The coach card loads beside the run, not after it.
+ * loader caches before any screen renders. The coach card and the runner's pairs load beside the run, not
+ * after it, and the pairs never wait on the Garmin fetch.
  */
 export function useRunScreen(id: string) {
   const run = useActivity(id);
@@ -25,6 +27,8 @@ export function useRunScreen(id: string) {
   const insight = useInsight(id);
   const ask = useAskCoach(id);
   const feedback = useInsightFeedback(id);
+  const shoes = useShoes();
+  const setShoe = useSetRunShoe(id);
   const { mutate } = fetchDetail;
   const state = screenState(run);
 
@@ -63,6 +67,13 @@ export function useRunScreen(id: string) {
       feedbackError: feedback.error,
       setFeedback: (insightId: string, value: CoachFeedback | null) =>
         feedback.mutate({ insightId, feedback: value }),
+    },
+    shoes: {
+      state: screenState(shoes),
+      /** The pair being saved, null for none, shown at once so a tap never looks ignored. */
+      pending: setShoe.isPending ? setShoe.variables : undefined,
+      error: setShoe.error,
+      choose: (shoeId: string | null) => setShoe.mutate(shoeId),
     },
   };
 }
