@@ -88,6 +88,41 @@ describe("checkDraft", () => {
     });
   });
 
+  it.each([
+    // 12.5 km is 12500 m; 12.5 × 1609.344 = 20116.8.
+    { units: "km", startDistanceM: 12_500 },
+    { units: "mi", startDistanceM: 20_117 },
+  ] as const)(
+    "reads 12,5 in $units as 12.5, as a comma-locale keypad types it (comma decimal)",
+    ({ units, startDistanceM }) => {
+      expect(checkDraft(typed({ startDistance: "12,5" }, units), NEW_SHOE, units)).toMatchObject({
+        success: true,
+        input: { startDistanceM },
+      });
+    },
+  );
+
+  it("reads a goal typed with a comma decimal (comma decimal)", () => {
+    expect(checkDraft(typed({ retireAt: "500,5" }), NEW_SHOE, "km")).toMatchObject({
+      success: true,
+      input: { retireDistanceM: 500_500 },
+    });
+  });
+
+  it("keeps the stored meters of a distance before the app retyped as shown with a comma (comma decimal)", () => {
+    const old = inputOf(oldShoeFixture({ startDistanceM: 100_123 }));
+    // Shown as 62.2 mi; converting 62.2 back would store 100_101 m.
+    const checked = checkDraft({ ...draftFromInput(old, "mi"), startDistance: "62,2" }, old, "mi");
+    expect(checked).toMatchObject({ success: true, input: { startDistanceM: 100_123 } });
+  });
+
+  it("still refuses a distance with a second comma (comma decimal)", () => {
+    expect(checkDraft(typed({ startDistance: "1,2,3" }), NEW_SHOE, "km")).toEqual({
+      success: false,
+      message: "Distance before this app is a distance from 0 to 5,000 km.",
+    });
+  });
+
   it("takes a blank distance before the app as none", () => {
     const old = inputOf(oldShoeFixture());
     const checked = checkDraft({ ...draftFromInput(old, "km"), startDistance: " " }, old, "km");

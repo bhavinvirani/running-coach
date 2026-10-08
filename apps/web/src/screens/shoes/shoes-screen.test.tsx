@@ -40,7 +40,7 @@ const rows = (name: string) =>
   within(section(name))
     .getAllByRole("link")
     .map((link) =>
-      Array.from(link.querySelectorAll(":scope > div > div > div > span, p"))
+      Array.from(link.querySelectorAll(":scope > div > div > span, p"))
         .map((line) => line.textContent)
         .join(" | "),
     );
@@ -123,6 +123,18 @@ describe("ShoesScreen", () => {
     expect(daily).toHaveAttribute("href", `/settings/shoes/${DAILY_SHOE_ID}`);
   });
 
+  it("opens a pair from its whole row, with no icon on the row, as only Settings' rows carry one", async () => {
+    fakeShoesApi();
+    renderShoes();
+
+    await screen.findByRole("region", { name: "In use" });
+    for (const row of within(section("In use")).getAllByRole("link")) {
+      // The distance bar is the row's one drawing.
+      expect(row.querySelectorAll("svg")).toHaveLength(1);
+      expect(row.querySelector(".lucide")).toBeNull();
+    }
+  });
+
   it("converts each distance and goal to miles, the goal in whole miles (unit conversion)", async () => {
     fakeShoesApi([shoeFixture(), racerShoeFixture()], miles);
     renderShoes();
@@ -140,7 +152,7 @@ describe("ShoesScreen", () => {
     renderShoes();
 
     await screen.findByRole("region", { name: "In use" });
-    const bar = within(section("In use")).getByRole("link").querySelector("svg:not(.lucide)");
+    const bar = within(section("In use")).getByRole("link").querySelector("svg");
     expect(bar).toHaveAttribute("aria-hidden", "true");
     expect(bar?.querySelectorAll("rect")[1]).toHaveAttribute("width", "48.1%");
   });
@@ -155,7 +167,7 @@ describe("ShoesScreen", () => {
     expect(rows("Retired")).toEqual([
       "Old trainer | Northpace Glide 3·Grey | 702.3 of 650 km | 52.3 km past its retire distance | 88 runs·61:20:00",
     ]);
-    const bar = within(section("Retired")).getByRole("link").querySelector("svg:not(.lucide)");
+    const bar = within(section("Retired")).getByRole("link").querySelector("svg");
     expect(bar?.querySelectorAll("rect")[1]).toHaveAttribute("width", "100%");
   });
 

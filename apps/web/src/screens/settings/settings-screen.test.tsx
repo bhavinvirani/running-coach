@@ -4,6 +4,7 @@ import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { detailKey } from "@/api/query-keys";
+import { shoesKey } from "@/api/shoes";
 import { errorMessages } from "@/lib/errors";
 import { json, never, notFound, problem, stubFetch } from "@/test/fake-api";
 import { meFixture } from "@/test/fixtures";
@@ -205,14 +206,15 @@ describe("SettingsScreen", () => {
   });
 
   it("leaves the Shoes row without a value while the pairs fail to load, which the Shoes screen explains", async () => {
-    const calls = stubFetch(({ method, path }) => {
+    stubFetch(({ method, path }) => {
       if (method === "GET" && path === "/api/me") return json(meFixture());
       return problem(503, ErrorCode.internal);
     });
-    renderSettings();
+    const { queryClient } = renderSettings();
 
-    expect(await screen.findByRole("link", { name: "Shoes" })).toBeInTheDocument();
-    await vi.waitFor(() => expect(calls.some(({ path }) => path === "/api/shoes")).toBe(true));
+    // The row reads "Shoes" while the pairs load too, so the failure must have landed first.
+    await vi.waitFor(() => expect(queryClient.getQueryState(shoesKey)?.status).toBe("error"));
+    expect(screen.getByRole("link", { name: "Shoes" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 

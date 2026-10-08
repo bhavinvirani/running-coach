@@ -56,10 +56,18 @@ export function draftFromInput(input: ShoeInput, units: Units): ShoeDraft {
   };
 }
 
-/** A distance as typed, or NaN for anything else: letters, a second point, a sign. */
+/**
+ * A distance field's text with one comma read as the decimal point, which a comma-locale keypad types for
+ * inputMode decimal ("62,1"), as the workout builder reads a step's amount. A second comma stays and fails.
+ */
+function decimalText(text: string): string {
+  return text.trim().replace(",", ".");
+}
+
+/** A distance as typed, or NaN for anything else: letters, a second point or comma, a sign. */
 function parseDistance(text: string): number {
-  const trimmed = text.trim();
-  return /^(\d+\.?\d*|\.\d+)$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+  const decimal = decimalText(text);
+  return /^(\d+\.?\d*|\.\d+)$/.test(decimal) ? Number(decimal) : Number.NaN;
 }
 
 /**
@@ -68,7 +76,7 @@ function parseDistance(text: string): number {
  * A changed value is converted from the runner's unit to whole meters; null when it is not a number.
  */
 function meters(typed: string, shown: string, storedM: number, units: Units): number | null {
-  if (typed.trim() === shown) return storedM;
+  if (decimalText(typed) === shown) return storedM;
   const value = parseDistance(typed);
   return Number.isNaN(value) ? null : Math.round(value * metersPerUnit(units));
 }
