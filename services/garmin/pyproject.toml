@@ -10,7 +10,7 @@ dependencies = [
     "uvicorn==0.54.0",
     "pydantic==2.14.1",
     # garmin:connect's CA store: python.org's macOS Python ships an OpenSSL with none.
-    "certifi==2026.7.22",
+    "certifi==2026.10.19",
 ]
 
 [dependency-groups]
