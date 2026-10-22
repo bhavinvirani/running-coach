@@ -18,19 +18,19 @@
     "fake:claude": "tsx test/fake-claude-cli.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.132.1",
+    "@anthropic-ai/sdk": "0.134.0",
     "@running-coach/engine": "workspace:*",
     "@running-coach/shared": "workspace:*",
-    "better-auth": "1.7.7",
+    "better-auth": "1.7.9",
     "cors": "2.8.6",
-    "drizzle-orm": "0.45.3",
-    "express": "5.2.1",
+    "drizzle-orm": "0.45.4",
+    "express": "5.3.0",
     "helmet": "8.3.0",
     "pg": "8.23.1",
-    "pg-boss": "12.37.0",
+    "pg-boss": "12.38.0",
     "pino": "10.4.0",
     "pino-http": "11.0.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/cors": "2.8.19",
@@ -44,6 +44,6 @@
     "tsup": "8.5.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }
