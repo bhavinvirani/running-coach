@@ -21,7 +21,7 @@
     "@anthropic-ai/sdk": "0.134.0",
     "@running-coach/engine": "workspace:*",
     "@running-coach/shared": "workspace:*",
-    "better-auth": "1.7.9",
+    "better-auth": "1.7.12",
     "cors": "2.8.6",
     "drizzle-orm": "0.45.4",
     "express": "5.3.0",
@@ -44,6 +44,6 @@
     "tsup": "8.5.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "5.0.4"
+    "vitest": "5.0.5"
   }
 }
