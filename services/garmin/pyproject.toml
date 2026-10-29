@@ -5,7 +5,7 @@ description = "FastAPI wrapper around garminconnect, spawned by the API on 127.0
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # Pinned exactly and excluded from Dependabot auto-merge: Garmin breaks the client without notice.
-    "garminconnect==0.3.17",
+    "garminconnect==0.3.19",
     "fastapi==0.159.1",
     "uvicorn==0.54.0",
     "pydantic==2.14.1",
