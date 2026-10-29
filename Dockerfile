@@ -7,7 +7,7 @@
 
 FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
 
-FROM node:24.21.0-trixie-slim AS os
+FROM node:24.22.0-trixie-slim AS os
 # Python's ssl module reads the system trust store; node:slim ships without one.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
