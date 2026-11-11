@@ -1,7 +1,10 @@
 import {
+  planPhaseSchema,
+  raceDistanceKeySchema,
   sessionStatusSchema,
   sessionStepsSchema,
   type PlanDelta,
+  type PlanPhase,
   type PlanPaces,
   type SessionSteps,
   type SessionType,
@@ -27,6 +30,21 @@ const QUALITY = new Set<SessionType>(["intervals", "tempo", "race_practice"]);
 
 const easyRun = (distanceM: number): SessionSteps => [
   { kind: "run", zone: "easy", distanceM, durationS: null },
+];
+// 20 s strides at repetition pace and a 60 s jog: 91 + 188 m a round.
+const withStrides = (runM: number, repeat: number): SessionSteps => [
+  { kind: "run", zone: "easy", distanceM: runM, durationS: null },
+  {
+    repeat,
+    steps: [
+      { kind: "run", zone: "repetition", distanceM: null, durationS: 20 },
+      { kind: "recovery", zone: "easy", distanceM: null, durationS: 60 },
+    ],
+  },
+];
+const withFinish = (easyM: number, finishM: number): SessionSteps => [
+  { kind: "run", zone: "easy", distanceM: easyM, durationS: null },
+  { kind: "run", zone: "marathon", distanceM: finishM, durationS: null },
 ];
 const intervals = (reps: number): SessionSteps => [
   { kind: "warmup", zone: "easy", distanceM: null, durationS: 900 },
@@ -68,6 +86,8 @@ function context(overrides: Partial<DeltaContext> = {}): DeltaContext {
   return {
     today: TODAY,
     session: session(),
+    phase: null,
+    race: null,
     weekSessions: [],
     previousWeekM: null,
     longestRecentM: 20_000,
@@ -501,6 +521,183 @@ describe("validate delta", () => {
     ).toEqual({ ok: false, reason: "no_change" });
   });
 
+  describe.each(["taper", "race"] as const)("in a %s-phase week", (phase) => {
+    // Room for a rise in any other week: 10 000 m planned, 40 000 m of other runs, 20 000 m longest.
+    const roomy = (type: "easy" | "long", ph: PlanPhase | null) =>
+      context({
+        phase: ph,
+        session: session({ type, steps: easyRun(10_000) }),
+        weekSessions: [other(40_000)],
+      });
+
+    it.each([
+      ["easy", 1, 10_000],
+      ["easy", 1.01, 10_100],
+      ["easy", 1.1, 11_000],
+      ["long", 1, 10_000],
+      ["long", 1.01, 10_100],
+      ["long", 1.1, 11_000],
+    ] as const)(
+      "a %s run's rise by %s clamps to 1 and changes nothing, where a base week grows it to %s m",
+      (type, factor, baseM) => {
+        expect(validateDelta(roomy(type, phase), scale(factor))).toEqual({
+          ok: false,
+          reason: "no_change",
+        });
+        const base = validateDelta(roomy(type, "base"), scale(factor));
+        if (factor === 1) expect(base).toEqual({ ok: false, reason: "no_change" });
+        else expect(base).toMatchObject({ ok: true, session: { steps: easyRun(baseM) } });
+      },
+    );
+
+    it.each([
+      ["easy", 0.5],
+      ["easy", 0.9],
+      ["long", 0.5],
+      ["long", 0.9],
+    ] as const)("a %s run's cut by %s applies as in any other week", (type, factor) => {
+      const planned = session({ type });
+      const result = validateDelta(context({ phase, session: planned }), scale(factor));
+      expect(result).toEqual(validateDelta(context({ session: planned }), scale(factor)));
+      expect(result).toMatchObject({
+        ok: true,
+        clamped: false,
+        session: { steps: easyRun(8000 * factor) },
+      });
+    });
+
+    it("a primer with strides cut by 0.9 becomes one plain easy run; a rise changes nothing", () => {
+      // The race week's primer: 20 min easy and 4 strides, 3750 + 4 x 279 = 4866 m.
+      const primer = session({ steps: withStrides(3750, 4) });
+      expect(validateDelta(context({ phase, session: primer }), scale(0.9))).toMatchObject({
+        ok: true,
+        clamped: false,
+        session: { type: "easy", steps: easyRun(4300) },
+      });
+      expect(validateDelta(context({ phase, session: primer }), scale(1.1))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+    });
+
+    it("easy and rest apply as in any other week", () => {
+      expect(validateDelta(context({ phase }), { kind: "rest" })).toMatchObject({
+        ok: true,
+        session: { status: "skipped" },
+      });
+      expect(
+        validateDelta(
+          context({ phase, session: session({ type: "race_practice", steps: intervals(3) }) }),
+          { kind: "easy" },
+        ),
+      ).toMatchObject({ ok: true, session: { type: "easy" } });
+    });
+
+    it("never changes the race", () => {
+      expect(
+        validateDelta(context({ phase, session: session({ type: "race" }) }), scale(0.9)),
+      ).toEqual({ ok: false, reason: "race" });
+    });
+  });
+
+  describe("a long run near the race, whatever its week's phase", () => {
+    // Room for a rise: 10 000 m planned, 40 000 m of other runs, 20 000 m longest; the run is
+    // tomorrow.
+    const nearRace = (
+      type: "easy" | "long",
+      daysOut: number,
+      distanceKey: "half" | "marathon" = "half",
+    ) =>
+      context({
+        phase: "peak",
+        race: { date: addDays(TOMORROW, daysOut), distanceKey },
+        session: session({ type, steps: easyRun(10_000) }),
+        weekSessions: [other(40_000)],
+      });
+
+    it("only shrinks a long run 13 days out: a rise by 1.1 clamps to 1 and changes nothing", () => {
+      expect(validateDelta(nearRace("long", 13), scale(1.1))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+      expect(validateDelta(nearRace("long", 6), scale(1.05))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+      expect(validateDelta(nearRace("long", 13), scale(0.9))).toMatchObject({
+        ok: true,
+        clamped: false,
+        session: { steps: easyRun(9000) },
+      });
+    });
+
+    it("grows a long run 14 days out by 1.1, outside the half's last band", () => {
+      expect(validateDelta(nearRace("long", 14), scale(1.1))).toMatchObject({
+        ok: true,
+        clamped: false,
+        session: { steps: easyRun(11_000) },
+      });
+    });
+
+    it("only shrinks a marathon long run 20 days out and grows one 21 days out", () => {
+      expect(validateDelta(nearRace("long", 20, "marathon"), scale(1.1))).toEqual({
+        ok: false,
+        reason: "no_change",
+      });
+      expect(validateDelta(nearRace("long", 21, "marathon"), scale(1.1))).toMatchObject({
+        ok: true,
+        session: { steps: easyRun(11_000) },
+      });
+    });
+
+    it("leaves an easy run 13 days out free to grow, and a long run with no race", () => {
+      expect(validateDelta(nearRace("easy", 13), scale(1.1))).toMatchObject({
+        ok: true,
+        session: { steps: easyRun(11_000) },
+      });
+      expect(validateDelta({ ...nearRace("long", 13), race: null }, scale(1.1))).toMatchObject({
+        ok: true,
+        session: { steps: easyRun(11_000) },
+      });
+    });
+  });
+
+  it.each([null, "base", "build", "peak"] as const)(
+    "a rise by 1.1 in a %s phase grows the run as before",
+    (phase) => {
+      expect(validateDelta(context({ phase }), scale(1.1))).toMatchObject({
+        ok: true,
+        clamped: false,
+        session: { steps: easyRun(8800) },
+      });
+      expect(
+        validateDelta(
+          context({ phase, session: long(8000), weekSessions: [other(30_000)] }),
+          scale(1.1),
+        ),
+      ).toMatchObject({ ok: true, clamped: false, session: { steps: easyRun(8800) } });
+    },
+  );
+
+  it("grows only the easy run of a long run with a finish, inside the caps on the whole session", () => {
+    // 110% of the 16 000 m recent longest is 17 600 m: the rise stops at 1.1, all of it on the easy run.
+    expect(
+      validateDelta(
+        context({
+          session: session({ type: "long", steps: withFinish(12_000, 4000) }),
+          weekSessions: [other(60_000)],
+          longestRecentM: 16_000,
+        }),
+        scale(1.5),
+      ),
+    ).toMatchObject({
+      ok: true,
+      delta: scale(1.1),
+      clamped: true,
+      session: { type: "long", steps: withFinish(13_200, 4000) },
+    });
+  });
+
   it("never clamps a rise below the planned run: a week already over 10% leaves it as planned", () => {
     expect(
       validateDelta(
@@ -530,10 +727,18 @@ describe("validate delta", () => {
     "race_practice",
     "race",
   );
+  /** An easy or long run's steps: plain, with 6 strides, or with a marathon-pace finish of a fifth. */
+  const runSteps = (distanceM: number, extras: "plain" | "strides" | "finish"): SessionSteps =>
+    extras === "strides"
+      ? withStrides(distanceM, 6)
+      : extras === "finish"
+        ? withFinish(distanceM, Math.max(1000, Math.round(distanceM / 5)))
+        : easyRun(distanceM);
   const sessionArb: fc.Arbitrary<DeltaSession> = fc
     .record({
       type: typeArb,
       distanceM: fc.integer({ min: 1000, max: 40_000 }),
+      extras: fc.constantFrom("plain" as const, "strides" as const, "finish" as const),
       reps: fc.integer({ min: 2, max: 12 }),
       status: fc.constantFrom(...sessionStatusSchema.options),
       source: fc.constantFrom("plan" as const, "custom" as const),
@@ -542,14 +747,9 @@ describe("validate delta", () => {
     .map((s) => {
       const steps: SessionSteps = QUALITY.has(s.type)
         ? intervals(s.reps)
-        : [
-            {
-              kind: "run",
-              zone: s.type === "race" ? "race" : "easy",
-              distanceM: s.distanceM,
-              durationS: null,
-            },
-          ];
+        : s.type === "race"
+          ? [{ kind: "run", zone: "race", distanceM: s.distanceM, durationS: null }]
+          : runSteps(s.distanceM, s.extras);
       return session({
         type: s.type,
         status: s.status,
@@ -561,6 +761,13 @@ describe("validate delta", () => {
   const contextArb: fc.Arbitrary<DeltaContext> = fc
     .record({
       session: sessionArb,
+      phase: fc.constantFrom<PlanPhase | null>(null, ...planPhaseSchema.options),
+      race: fc.option(
+        fc.record({
+          daysOut: fc.integer({ min: 0, max: 30 }),
+          distanceKey: fc.constantFrom(...raceDistanceKeySchema.options),
+        }),
+      ),
       week: fc.array(
         fc.record({
           distanceM: fc.integer({ min: 1000, max: 30_000 }),
@@ -583,6 +790,11 @@ describe("validate delta", () => {
     .map((c) =>
       context({
         session: c.session,
+        phase: c.phase,
+        race:
+          c.race === null
+            ? null
+            : { date: addDays(TODAY, c.race.daysOut), distanceKey: c.race.distanceKey },
         weekSessions: c.week.map((w) => other(w.distanceM, w.status)),
         previousWeekM: c.previousWeekM,
         longestRecentM: c.longestRecentM,
@@ -598,10 +810,36 @@ describe("validate delta", () => {
     fc.constant({ kind: "easy" as const }),
     fc.constant({ kind: "rest" as const }),
   );
+  /** Where a rise lands unless a cap stops it: an open easy or long plan run, nothing eased or paused. */
+  const openContextArb: fc.Arbitrary<DeltaContext> = fc
+    .record({
+      ctx: contextArb,
+      type: fc.constantFrom<SessionType>("easy", "long"),
+      distanceM: fc.integer({ min: 2000, max: 30_000 }),
+      extras: fc.constantFrom("plain" as const, "strides" as const, "finish" as const),
+      othersM: fc.integer({ min: 20_000, max: 80_000 }),
+    })
+    .map(({ ctx, type, distanceM, extras, othersM }) => ({
+      ...ctx,
+      session: session({ type, steps: runSteps(distanceM, extras) }),
+      weekSessions: [other(othersM)],
+      previousWeekM: null,
+      longestRecentM: Math.max(ctx.longestRecentM, distanceM),
+      paused: false,
+      coachAdjusted: false,
+      eased: false,
+      afterPause: false,
+    }));
+  const anyContextArb = fc.oneof(contextArb, openContextArb);
+  /** Mostly rises, so the caps on them are reached. */
+  const riseArb: fc.Arbitrary<PlanDelta> = fc.oneof(
+    { weight: 3, arbitrary: fc.double({ min: 1, max: 1.5, noNaN: true }).map(scale) },
+    { weight: 1, arbitrary: deltaArb },
+  );
 
   it("is deterministic and returns steps the contract accepts", () => {
     fc.assert(
-      fc.property(contextArb, deltaArb, (ctx, delta) => {
+      fc.property(anyContextArb, deltaArb, (ctx, delta) => {
         const result = validateDelta(ctx, delta);
         expect(validateDelta(ctx, delta)).toEqual(result);
         if (result.ok)
@@ -624,9 +862,68 @@ describe("validate delta", () => {
     );
   });
 
-  it("never lets an accepted rise break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow an eased session, one right after a paused week or one after a week that ran nothing", () => {
+  it("never raises a taper or race-week session: an accepted or clamped delta only keeps or cuts it", () => {
     fc.assert(
-      fc.property(contextArb, deltaArb, (ctx, delta) => {
+      fc.property(
+        anyContextArb,
+        fc.constantFrom("taper" as const, "race" as const),
+        riseArb,
+        (drawn, phase, delta) => {
+          const ctx = { ...drawn, phase };
+          const before = ctx.session!.target;
+          const result = validateDelta(ctx, delta);
+          if (result.ok) {
+            expect(result.session.target.distanceM).toBeLessThanOrEqual(before.distanceM);
+            if (result.delta.kind === "scale") expect(result.delta.factor).toBeLessThanOrEqual(1);
+          }
+          // A rise the same session would take in a base week changes nothing here.
+          const base = validateDelta({ ...ctx, phase: "base" }, delta);
+          if (base.ok && base.session.target.distanceM > before.distanceM) {
+            expect(result).toEqual({ ok: false, reason: "no_change" });
+          }
+        },
+      ),
+    );
+  });
+
+  it("never raises a long run inside its distance's taper bands by days to the race, whatever its week's phase", () => {
+    const lastBand = { "5k": 13, "10k": 13, half: 13, marathon: 20 } as const;
+    fc.assert(
+      fc.property(anyContextArb, riseArb, (ctx, delta) => {
+        const s = ctx.session!;
+        const result = validateDelta(ctx, delta);
+        if (!result.ok || s.type !== "long" || ctx.race === null) return;
+        if (daysBetween(s.date, ctx.race.date) > lastBand[ctx.race.distanceKey]) return;
+        expect(result.session.target.distanceM).toBeLessThanOrEqual(s.target.distanceM);
+        if (result.delta.kind === "scale") expect(result.delta.factor).toBeLessThanOrEqual(1);
+      }),
+    );
+  });
+
+  it("never leaves strides or a finish after a cut, and never grows them on a rise", () => {
+    fc.assert(
+      fc.property(anyContextArb, riseArb, (ctx, delta) => {
+        const s = ctx.session!;
+        const result = validateDelta(ctx, delta);
+        if (!result.ok || result.delta.kind !== "scale" || QUALITY.has(s.type)) return;
+        if (s.steps.length < 2) return;
+        if (result.delta.factor < 1) {
+          expect(result.session.steps).toHaveLength(1);
+          expect(result.session.steps[0]).toMatchObject({
+            kind: "run",
+            zone: "easy",
+            durationS: null,
+          });
+        } else {
+          expect(result.session.steps.slice(1)).toEqual(s.steps.slice(1));
+        }
+      }),
+    );
+  });
+
+  it("never lets an accepted rise break 110% of the recent longest, the long-run share, 150 min or +10% on last week, nor grow an eased session, one right after a paused week, one after a week that ran nothing or one in a taper or race week", () => {
+    fc.assert(
+      fc.property(anyContextArb, riseArb, (ctx, delta) => {
         const result = validateDelta(ctx, delta);
         const before = ctx.session!.target.distanceM;
         if (!result.ok || result.session.target.distanceM <= before) return;
@@ -637,6 +934,7 @@ describe("validate delta", () => {
         expect(delta.kind).toBe("scale");
         expect(ctx.eased).toBe(false);
         expect(ctx.afterPause).toBe(false);
+        expect(ctx.phase === "taper" || ctx.phase === "race").toBe(false);
         expect(ctx.previousWeekM).not.toBe(0);
         expect(ctx.longestRecentM).toBeGreaterThan(0);
         expect(newM).toBeLessThanOrEqual(Math.floor(ctx.longestRecentM * 1.1));

@@ -55,14 +55,18 @@ describe("prediction", () => {
 
   it("sets the race pace from the prediction when there is no target, banded +-1.5%", () => {
     // 2000 s over 5 km is 400 s/km: 394 to 406.
-    expect(racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: null })).toEqual({
+    expect(
+      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: null, easySlowSPerKm: 600 }),
+    ).toEqual({
       band: { fastSPerKm: 394, slowSPerKm: 406 },
       warning: null,
     });
   });
 
   it("lets a target exactly 5% faster than the prediction set the race pace", () => {
-    expect(racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 1900 })).toEqual({
+    expect(
+      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 1900, easySlowSPerKm: 600 }),
+    ).toEqual({
       band: { fastSPerKm: 374, slowSPerKm: 386 },
       warning: null,
     });
@@ -70,22 +74,38 @@ describe("prediction", () => {
 
   it("lets a target 1 s inside the 5% set the race pace", () => {
     expect(
-      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 1901 }).warning,
+      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 1901, easySlowSPerKm: 600 })
+        .warning,
     ).toBeNull();
   });
 
   it("warns target_time_ambitious 1 s past the 5% and keeps the predicted pace", () => {
-    expect(racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 1899 })).toEqual({
+    expect(
+      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 1899, easySlowSPerKm: 600 }),
+    ).toEqual({
       band: { fastSPerKm: 394, slowSPerKm: 406 },
       warning: { code: "target_time_ambitious", targetTimeS: 1899, predictedTimeS: 2000 },
     });
   });
 
   it("lets a target slower than the prediction set a slower race pace", () => {
-    expect(racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 2200 })).toEqual({
+    expect(
+      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 2200, easySlowSPerKm: 600 }),
+    ).toEqual({
       band: { fastSPerKm: 433, slowSPerKm: 447 },
       warning: null,
     });
+  });
+
+  it("treats a target slower than the easy band's slow end as no target: a 7:30/km band's 37:30 5K sets the pace, 37:31 does not", () => {
+    // 2250 s over 5 km is 450 s/km: 443 to 457. 2251 s is slower than easy running, so the
+    // prediction's 400 s/km stands, with no warning.
+    expect(
+      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 2250, easySlowSPerKm: 450 }),
+    ).toEqual({ band: { fastSPerKm: 443, slowSPerKm: 457 }, warning: null });
+    expect(
+      racePace({ distanceM: 5000, predictedTimeS: 2000, targetTimeS: 2251, easySlowSPerKm: 450 }),
+    ).toEqual({ band: { fastSPerKm: 394, slowSPerKm: 406 }, warning: null });
   });
 
   it.each([
@@ -93,7 +113,9 @@ describe("prediction", () => {
     [5000, 0],
     [5000, Number.NaN],
   ])("rejects a race pace for %s m in %s s as a programmer error", (distanceM, predictedTimeS) => {
-    expect(() => racePace({ distanceM, predictedTimeS, targetTimeS: null })).toThrow(RangeError);
+    expect(() =>
+      racePace({ distanceM, predictedTimeS, targetTimeS: null, easySlowSPerKm: 600 }),
+    ).toThrow(RangeError);
   });
 
   it("predicts longer races slower and never faster than the source pace", () => {
@@ -114,17 +136,25 @@ describe("prediction", () => {
     );
   });
 
-  it("warns exactly when the target is more than 5% faster, and the band always holds its race pace", () => {
+  it("warns exactly when the target is more than 5% faster, ignores one slower than easy running, and the band always holds its race pace", () => {
     fc.assert(
       fc.property(
         distanceArb,
         fc.integer({ min: 900, max: 30_000 }),
         fc.option(fc.integer({ min: 600, max: 40_000 })),
-        (distanceM, predictedTimeS, targetTimeS) => {
-          const { band, warning } = racePace({ distanceM, predictedTimeS, targetTimeS });
+        fc.integer({ min: 300, max: 900 }),
+        (distanceM, predictedTimeS, targetTimeS, easySlowSPerKm) => {
+          const { band, warning } = racePace({
+            distanceM,
+            predictedTimeS,
+            targetTimeS,
+            easySlowSPerKm,
+          });
           const ambitious = targetTimeS !== null && targetTimeS < predictedTimeS * 0.95 - 1e-9;
+          const slow = targetTimeS !== null && (targetTimeS * 1000) / distanceM > easySlowSPerKm;
           expect(warning !== null).toBe(ambitious);
-          const raceTimeS = targetTimeS === null || ambitious ? predictedTimeS : targetTimeS;
+          const raceTimeS =
+            targetTimeS === null || ambitious || slow ? predictedTimeS : targetTimeS;
           const paceSPerKm = (raceTimeS * 1000) / distanceM;
           expect(band.fastSPerKm).toBeLessThanOrEqual(Math.round(paceSPerKm));
           expect(band.slowSPerKm).toBeGreaterThanOrEqual(Math.round(paceSPerKm));

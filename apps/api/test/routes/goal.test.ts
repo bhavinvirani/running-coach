@@ -20,14 +20,23 @@ import {
   saveGoalResponseSchema,
   sessionStepsSchema,
 } from "@running-coach/shared";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { activity, goal, plan, planSession } from "../../src/db/schema";
 import { addDays } from "../../src/lib/local-date";
 import { createTestApp, expectProblem, ownerId, signedInAgent } from "../helpers";
-import { createComputedRun, createRunOn, createSession, setSettings, storedSession } from "../seed";
+import {
+  createComputedRun,
+  createPlan,
+  createRunOn,
+  createSession,
+  setSettings,
+  storedSession,
+  TEMPO_STEPS,
+} from "../seed";
+import { createAdjustment, storedAdjustments } from "../seed-adaptation";
 
 // PUT /api/goal on the real Postgres, with the clock pinned (Date only, timers run) so
 // "today", the first Monday and the baseline weeks are fixed.
@@ -143,6 +152,37 @@ async function runWeekly(userId: string, distanceM: number): Promise<void> {
 
 async function vdotSourceOf(agent: Agent, body: GoalInput = { ...halfMarathon, recentTime: null }) {
   return (await savePlan(agent, body)).vdotSource;
+}
+
+/** A plan version's stored sessions, by date. */
+async function storedVersion(planId: string) {
+  return db
+    .select()
+    .from(planSession)
+    .where(eq(planSession.planId, planId))
+    .orderBy(asc(planSession.date), asc(planSession.id));
+}
+
+/**
+ * What any race plan holds, whatever the engine's distances: it ends on race day with the race as its
+ * last session and the only one, rest the day before, no long run in the last 5 days, and a taper that
+ * never rises, the race week's own runs (the race excluded) under the week before too.
+ */
+function expectRaceEnd(made: Plan, raceDate: string): void {
+  const sessions = made.weeks.flatMap((week) => week.sessions);
+  expect(made.endDate).toBe(raceDate);
+  expect(sessions.filter((s) => s.type === "race").map((s) => s.date)).toEqual([raceDate]);
+  expect(sessions.every((s) => s.date <= raceDate)).toBe(true);
+  expect(sessions.some((s) => s.date === addDays(raceDate, -1))).toBe(false);
+  const longRuns = sessions.filter((s) => s.type === "long");
+  expect(longRuns.length).toBeGreaterThan(0);
+  expect(longRuns.every((s) => s.date < addDays(raceDate, -5))).toBe(true);
+  const ranM = (week: Plan["weeks"][number]) =>
+    week.sessions.filter((s) => s.type !== "race").reduce((sum, s) => sum + s.target.distanceM, 0);
+  made.weeks.slice(1).forEach((week, index) => {
+    if (week.phase !== "taper" && week.phase !== "race") return;
+    expect(ranM(week)).toBeLessThanOrEqual(ranM(made.weeks[index]!));
+  });
 }
 
 describe("PUT /api/goal", () => {
@@ -525,6 +565,110 @@ describe("PUT /api/goal", () => {
     expect(active).toEqual([{ id: second.id }]);
     expect(await db.select().from(goal)).toHaveLength(1);
     expect((await getPlan(agent)).plan).toEqual(second);
+  });
+
+  it("regenerating a plan without losing history keeps done, missed and adjusted sessions: the 0.5.0 plan is superseded with every session, status, run link and change log row as it was, and the new version is the current engine's", async () => {
+    const agent = await signedInAgent(app);
+    const userId = await ownerId();
+    // A plan an older engine built, run for two weeks and a half.
+    const v1 = await createPlan(userId, {
+      engineVersion: "0.5.0",
+      startDate: "2026-09-14",
+      endDate: "2026-12-06",
+    });
+    const run = await createRunOn(userId, "2026-09-15");
+    const coachedRun = await createRunOn(userId, "2026-09-29");
+    const done = await createSession(userId, v1.id, {
+      date: "2026-09-15",
+      status: "done",
+      activityId: run.id,
+    });
+    const missed = await createSession(userId, v1.id, {
+      date: "2026-09-17",
+      type: "tempo",
+      steps: TEMPO_STEPS,
+      status: "missed",
+    });
+    const moved = await createSession(userId, v1.id, { date: "2026-10-03", status: "moved" });
+    const adjusted = await createSession(userId, v1.id, {
+      date: "2026-10-02",
+      steps: sessionStepsSchema.parse([
+        { kind: "run", zone: "easy", distanceM: 6400, durationS: null },
+      ]),
+    });
+    const change = await createAdjustment(userId, adjusted, { activityId: coachedRun.id });
+    // A session of v1 in the week the new version starts.
+    await createSession(userId, v1.id, { date: "2026-10-06" });
+    const sessionsBefore = await storedVersion(v1.id);
+    const [planBefore] = await db.select().from(plan).where(eq(plan.id, v1.id));
+
+    const v2 = await savePlan(agent, halfMarathon);
+
+    const [planAfter] = await db.select().from(plan).where(eq(plan.id, v1.id));
+    expect({ ...planAfter, updatedAt: null }).toEqual({
+      ...planBefore,
+      status: "superseded",
+      updatedAt: null,
+    });
+    expect(planAfter).toMatchObject({ version: 1, engineVersion: "0.5.0" });
+    expect(await storedVersion(v1.id)).toEqual(sessionsBefore);
+    expect(
+      sessionsBefore.map(({ id, status, activityId }) => ({ id, status, activityId })),
+    ).toEqual([
+      { id: done.id, status: "done", activityId: run.id },
+      { id: missed.id, status: "missed", activityId: null },
+      { id: adjusted.id, status: "planned", activityId: null },
+      { id: moved.id, status: "moved", activityId: null },
+      expect.objectContaining({ status: "planned" }),
+    ]);
+    expect(await storedAdjustments(userId)).toEqual([change]);
+    expect(ENGINE_VERSION).not.toBe("0.5.0");
+    expect(v2).toMatchObject({ version: 2, status: "active", engineVersion: ENGINE_VERSION });
+    expect((await getPlan(agent)).plan).toEqual(v2);
+  });
+
+  it("a race date change reshapes the taper: a Sunday race two weeks later ends the new plan there after one taper week, and the same week's Wednesday tapers a week longer with only the race and at most a Monday primer in its week", async () => {
+    const agent = await signedInAgent(app);
+    const first = await savePlan(agent, halfMarathon);
+    const later = sundayOfWeek(22);
+
+    const moved = await savePlan(agent, { ...halfMarathon, raceDate: later });
+
+    const phasesOf = (made: Plan) => made.weeks.map((week) => week.phase);
+    expectRaceEnd(moved, later);
+    expect(phasesOf(moved).slice(-2)).toEqual(["taper", "race"]);
+    expect(phasesOf(moved).filter((phase) => phase === "taper")).toHaveLength(1);
+    // The weeks the first version tapered and raced in are training weeks now, without a race.
+    const firstTaper = first.weeks.filter((w) => w.phase === "taper" || w.phase === "race");
+    expect(firstTaper.length).toBeGreaterThan(0);
+    for (const { startDate } of firstTaper) {
+      const now = moved.weeks.find((w) => w.startDate === startDate);
+      expect(["base", "build", "peak"]).toContain(now?.phase);
+      expect(now?.sessions.some((s) => s.type === "race")).toBe(false);
+    }
+
+    const wednesday = addDays(later, -4);
+    const midweek = await savePlan(agent, { ...halfMarathon, raceDate: wednesday });
+
+    expectRaceEnd(midweek, wednesday);
+    expect(phasesOf(midweek).slice(-3)).toEqual(["taper", "taper", "race"]);
+    expect(phasesOf(midweek).filter((phase) => phase === "taper")).toHaveLength(2);
+    const raceWeek = midweek.weeks.at(-1)!;
+    expect(raceWeek.startDate).toBe(addDays(wednesday, -2));
+    const beforeRace = raceWeek.sessions.filter((s) => s.type !== "race");
+    expect(beforeRace.length).toBeLessThanOrEqual(1);
+    for (const primer of beforeRace) {
+      expect(primer).toMatchObject({ date: raceWeek.startDate, type: "easy" });
+    }
+    const versions = await db
+      .select({ id: plan.id, version: plan.version, status: plan.status })
+      .from(plan)
+      .orderBy(asc(plan.version));
+    expect(versions).toEqual([
+      { id: first.id, version: 1, status: "superseded" },
+      { id: moved.id, version: 2, status: "superseded" },
+      { id: midweek.id, version: 3, status: "active" },
+    ]);
   });
 
   it("moves a custom 45 min easy workout's distance to the new easy pace from today on, past and skipped ones keeping theirs (regenerating a plan without losing history)", async () => {

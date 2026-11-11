@@ -15,10 +15,11 @@ import {
   WALK_RUN_WALK_S,
   WEEKLY_VOLUME_MAX_INCREASE,
 } from "../constants";
-import { addDays, daysBetween, weekdayIndex, weekdayOf } from "../dates";
+import { daysBetween, mondayOf } from "../dates";
 import { applyDelta, sameSession, type AdjustedSession } from "./apply-delta";
 import { QUALITY_SESSION_TYPES } from "./quality";
 import { reEntryFactor } from "./re-entry";
+import { hasExtras, plainRunSteps } from "./scale-session";
 import { sessionTarget } from "./session-target";
 
 export interface ReEntrySession {
@@ -72,10 +73,6 @@ const RUN_TYPES: ReadonlySet<SessionType> = new Set([
   "tempo",
   "race_practice",
 ]);
-
-function mondayOf(date: string): string {
-  return addDays(date, -weekdayIndex(weekdayOf(date)));
-}
 
 /**
  * Each week's share of its plan from the return on: the first week with plan volume is held to the
@@ -152,11 +149,14 @@ function walkRun(durationS: number, paces: PlanPaces, status: SessionStatus): Ad
  * carries, at most 1, so one break is never eased twice: 15 days off over a plan built at 0.7 runs at
  * 0.5 / 0.7, 9 days off over it as planned. Each later week runs at most 10% over the one before until
  * a week meets its plan, which it and every week after run as planned. In the first 7 days, when the
- * factor is under 1 or after illness or injury, quality becomes an easy run of the same time; after
- * illness or injury every run of those days is walk-run of the session's time once cut. Only plan
- * runs from the return on that are planned or moved change: the race, custom workouts, done, missed
- * and skipped sessions never do. Returns the sessions that differ, in date order; deterministic. A
- * carried factor outside (0, 1] is a programmer error.
+ * factor is under 1 or after illness or injury, quality becomes an easy run of the same time and an
+ * easy or long run with strides or a finish one plain easy run of the same distance, its type kept, so
+ * those days run nothing faster than easy; after illness or injury every run of those days is walk-run
+ * of the session's time once cut, never longer than planned. Later cuts merge extras as scaleSession
+ * does; a week that meets its plan keeps them. Only plan runs from the return on that are planned or
+ * moved change: the race, custom workouts, done, missed and skipped sessions never do. Returns the
+ * sessions that differ, in date order; deterministic. A carried factor outside (0, 1] is a programmer
+ * error.
  */
 export function reEntryPlan({
   fromDate,
@@ -183,15 +183,23 @@ export function reEntryPlan({
     .sort((a, b) => daysBetween(b.date, a.date))
     .flatMap((session) => {
       const firstDays = daysBetween(fromDate, session.date) < RE_ENTRY_EASY_DAYS;
+      const easedDays = firstDays && (afterIllness || factor < 1);
       let after: AdjustedSession = session;
-      if (firstDays && (afterIllness || factor < 1) && QUALITY_SESSION_TYPES.has(session.type)) {
+      if (easedDays && QUALITY_SESSION_TYPES.has(session.type)) {
         after = applyDelta({ ...session, ...after }, { kind: "easy" }, paces);
+      } else if (easedDays && hasExtras(session.steps)) {
+        const steps = plainRunSteps(session.steps, paces);
+        after = { ...after, steps, target: sessionTarget(steps, paces) };
       }
       const ratio = ratios.get(mondayOf(session.date));
       if (ratio !== undefined) {
         after = applyDelta({ ...session, ...after }, { kind: "scale", factor: ratio }, paces);
       }
-      if (firstDays && afterIllness) after = walkRun(after.target.durationS, paces, after.status);
+      if (firstDays && afterIllness) {
+        // A plain run of the same distance takes longer than strides or a finish did.
+        const timeS = Math.min(after.target.durationS, session.target.durationS);
+        after = walkRun(timeS, paces, after.status);
+      }
       return sameSession(session, after) ? [] : [{ id: session.id, session: after }];
     });
   return { factor, changes };

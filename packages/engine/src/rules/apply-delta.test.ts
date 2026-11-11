@@ -35,6 +35,20 @@ const TEMPO: SessionSteps = [
   byTime("cooldown", "easy", 600),
 ];
 
+// 16 000 m easy in 5120 s and a 4000 m finish at the 270.5 s/km marathon midpoint in 1082 s.
+const FINISH: SessionSteps = [
+  { kind: "run", zone: "easy", distanceM: 16_000, durationS: null },
+  { kind: "run", zone: "marathon", distanceM: 4000, durationS: null },
+];
+// 6000 m easy and 6 strides of 20 s with a 60 s jog: 7674 m in 2400 s.
+const STRIDES: SessionSteps = [
+  { kind: "run", zone: "easy", distanceM: 6000, durationS: null },
+  {
+    repeat: 6,
+    steps: [byTime("run", "repetition", 20), byTime("recovery", "easy", 60)],
+  },
+];
+
 function session(type: SessionType, steps: SessionSteps): DeltaSession {
   return {
     date: "2026-10-08",
@@ -95,6 +109,28 @@ describe("apply delta", () => {
     expect(applyDelta(session("intervals", minimum), { kind: "easy" }, PACES).steps).toEqual(
       easyRun(3750),
     );
+  });
+
+  it("turns a long run with a marathon-pace finish into one plain easy run of its time", () => {
+    // 6202 s at 320 s/km is 19 381 m, floored to 19 300.
+    expect(applyDelta(session("long", FINISH), { kind: "easy" }, PACES)).toEqual({
+      type: "easy",
+      title: null,
+      status: "planned",
+      steps: easyRun(19_300),
+      target: { distanceM: 19_300, durationS: 6176, zone: "easy" },
+    });
+  });
+
+  it("cuts an easy run with strides to one plain easy run and sums the new target", () => {
+    // 7674 m at 0.8 is 6139 m, floored to 6100.
+    expect(applyDelta(session("easy", STRIDES), { kind: "scale", factor: 0.8 }, PACES)).toEqual({
+      type: "easy",
+      title: null,
+      status: "planned",
+      steps: easyRun(6100),
+      target: { distanceM: 6100, durationS: 1952, zone: "easy" },
+    });
   });
 
   it("scales the steps by the factor and sums the new target", () => {
@@ -172,7 +208,14 @@ describe("apply delta", () => {
   it("always gives steps the contract accepts, for any factor the validator lets through", () => {
     fc.assert(
       fc.property(
-        fc.constantFrom<SessionSteps>(TEMPO, easyRun(8000), easyRun(3000), easyRun(30_000)),
+        fc.constantFrom<SessionSteps>(
+          TEMPO,
+          easyRun(8000),
+          easyRun(3000),
+          easyRun(30_000),
+          FINISH,
+          STRIDES,
+        ),
         fc.double({ min: 0.5, max: 1.1, noNaN: true }),
         fc.constantFrom("scale" as const, "easy" as const, "rest" as const),
         (steps, factor, kind) => {

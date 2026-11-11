@@ -33,6 +33,8 @@ export function neededWeeklyM(ctx: PlanContext, week: NeededWeekInput): number {
       targetM: weekVolumeM,
       maxRunM: week.maxRunM,
       lastHardDate: null,
+      // A finish is carved out of the long run: it changes no session's meters.
+      fastFinish: false,
     });
     const { sessions } = built.week;
     return (
@@ -43,9 +45,11 @@ export function neededWeeklyM(ctx: PlanContext, week: NeededWeekInput): number {
           built.slots.quality.length)
     );
   };
-  // Under 20 min a day no week holds the days; with every run at its cap, a larger one holds no more.
+  // Under 20 min a day no week holds the days. No run passes the long run and the long run passes
+  // neither the run cap nor, giving way, 20 min, so a week as built holds at most every day at that:
+  // a larger one builds the same runs and holds no more.
   const fewestM = ctx.daysPerWeek * ctx.minRunM - 1;
-  const mostM = 2 * ctx.daysPerWeek * Math.max(week.maxRunM, ctx.minRunM);
+  const mostM = ctx.daysPerWeek * Math.max(week.maxRunM, ctx.minRunM);
   const smallest = (withQuality: boolean): number | null => {
     let notHeldM = fewestM;
     for (let gridM = fewestM + 1; notHeldM < mostM; gridM += NEEDED_VOLUME_STEP_M) {

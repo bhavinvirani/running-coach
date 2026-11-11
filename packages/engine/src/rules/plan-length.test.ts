@@ -101,20 +101,22 @@ describe("plan length", () => {
     });
   });
 
-  it("gives a Monday race one more taper week: its 7-day taper blocks fill the 2 weeks before it", () => {
-    // Every other race day shares its first taper week with the last peak week.
-    expect(race("10k", addDays(START, 56))).toMatchObject({
-      phases: phasesOf([
-        ["base", 1],
-        ["build", 3],
-        ["peak", 2],
-        ["taper", 2],
-        ["race", 1],
-      ]),
-      endDate: addDays(START, 56),
-      warning: null,
-    });
-    expect(race("10k", addDays(START, 57))).toMatchObject({
+  it("gives Monday, Tuesday and Wednesday races one more taper week: the week before them is in the race band", () => {
+    // Every later race day's week before tapers to 70%; a Monday to Wednesday race's runs at 40%.
+    for (const daysOut of [56, 57, 58]) {
+      expect(race("10k", addDays(START, daysOut))).toMatchObject({
+        phases: phasesOf([
+          ["base", 1],
+          ["build", 3],
+          ["peak", 2],
+          ["taper", 2],
+          ["race", 1],
+        ]),
+        endDate: addDays(START, daysOut),
+        warning: null,
+      });
+    }
+    expect(race("10k", addDays(START, 59))).toMatchObject({
       phases: phasesOf([
         ["base", 1],
         ["build", 4],
@@ -125,7 +127,7 @@ describe("plan length", () => {
     });
   });
 
-  it("makes a marathon on the Monday of week 19 three taper weeks and the race day", () => {
+  it("makes a marathon on the Monday of week 19 three taper weeks and the race week", () => {
     expect(race("marathon", addDays(START, 126))).toMatchObject({
       phases: phasesOf([
         ["base", 3],
@@ -197,8 +199,8 @@ describe("plan length", () => {
           }
           if (!result.ok) throw new Error("a race in the first 52 weeks always has a plan");
           const minimumWeeks = { "5k": 8, "10k": 8, half: 12, marathon: 18 }[distanceKey];
-          // A taper week lies wholly in the 7-day blocks before the race: a Monday race has one more.
-          const taperWeeks = (distanceKey === "marathon" ? 3 : 2) + (daysOut % 7 === 0 ? 1 : 0);
+          // A week tapers by its Thursday: a Monday to Wednesday race's week before is in the race band.
+          const taperWeeks = (distanceKey === "marathon" ? 3 : 2) + (daysOut % 7 <= 2 ? 1 : 0);
           expect(result.phases).toHaveLength(weeks);
           expect(result.phases.at(-1)).toBe("race");
           expect(result.endDate).toBe(raceDate);

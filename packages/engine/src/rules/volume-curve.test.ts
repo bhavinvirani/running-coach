@@ -28,17 +28,43 @@ describe("volume curve", () => {
     expect(baseCurveM({ startVolumeM: 20_000, peakVolumeM: 40_000, weeks: 0 })).toEqual([]);
   });
 
-  it("makes every 4th week a down week", () => {
-    expect([1, 2, 3, 4, 5, 7, 8, 12].map(isDownWeek)).toEqual([
-      false,
-      false,
-      false,
-      true,
-      false,
-      false,
-      true,
-      true,
-    ]);
+  it("makes every 4th week of a fitness plan a down week: 4, 8 and 12", () => {
+    const down = (weekNumber: number) => isDownWeek({ weekNumber, firstTaperWeek: null });
+    expect([...Array.from({ length: 12 }, (_, k) => k + 1)].filter(down)).toEqual([4, 8, 12]);
+  });
+
+  it("counts a race plan's down weeks back from the taper: 15, 11, 7 and 3 when it starts at week 19", () => {
+    const down = (weekNumber: number) => isDownWeek({ weekNumber, firstTaperWeek: 19 });
+    expect([...Array.from({ length: 20 }, (_, k) => k + 1)].filter(down)).toEqual([3, 7, 11, 15]);
+  });
+
+  it("keeps the 3 weeks before the taper loading and has no down week before week 3", () => {
+    const downs = (firstTaperWeek: number) =>
+      [...Array.from({ length: firstTaperWeek + 1 }, (_, k) => k + 1)].filter((weekNumber) =>
+        isDownWeek({ weekNumber, firstTaperWeek }),
+      );
+    expect(downs(6)).toEqual([]);
+    expect(downs(7)).toEqual([3]);
+    expect(downs(8)).toEqual([4]);
+    expect(downs(10)).toEqual([6]);
+    expect(downs(11)).toEqual([3, 7]);
+    expect(downs(1)).toEqual([]);
+  });
+
+  it("puts a race plan's down weeks 4 apart, the last 4 weeks before the taper, none from week 1 to 2", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 52 }), (firstTaperWeek) => {
+        const downs = Array.from({ length: 52 }, (_, k) => k + 1).filter((weekNumber) =>
+          isDownWeek({ weekNumber, firstTaperWeek }),
+        );
+        for (const weekNumber of downs) {
+          expect(weekNumber).toBeGreaterThanOrEqual(3);
+          expect((firstTaperWeek - weekNumber) % 4).toBe(0);
+          expect(firstTaperWeek - weekNumber).toBeGreaterThanOrEqual(4);
+        }
+        expect(downs).toHaveLength(Math.max(0, Math.floor((firstTaperWeek - 3) / 4)));
+      }),
+    );
   });
 
   it("cuts a down week to 80% of the curve, in whole meters", () => {

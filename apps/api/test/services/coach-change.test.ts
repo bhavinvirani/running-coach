@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { PlanDelta } from "@running-coach/shared";
+import type { PlanDelta, PlanPhase } from "@running-coach/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
@@ -15,6 +15,7 @@ import {
   createRunOn,
   createSession,
   createUser,
+  PLAN_INPUTS,
   storedSession,
   TEMPO_STEPS,
 } from "../seed";
@@ -576,6 +577,116 @@ describe("applyCoachChange in the week after a pause", () => {
       startedOn: "2026-10-01",
       endedOn: "2026-10-05",
     });
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "applied", changed: true });
+    expect((await storedSession(session.id)).target.distanceM).toBe(8800);
+  });
+});
+
+describe("applyCoachChange in a taper or race week", () => {
+  /**
+   * Thursday's easy 8 km in a week of `phase`, with 8 km done in the week before and a 10 km run this
+   * morning, so in any other week the caps would let it rise its full 10% to 8.8 km.
+   */
+  async function inPhase(phase: PlanPhase) {
+    const { userId, planId, run, session } = await runner({ phase });
+    await createSession(userId, planId, { date: "2026-10-06", status: "done" });
+    return { userId, run, session: session! };
+  }
+
+  it.each(["taper", "race"] as const)(
+    "clamps a rise of a %s-week session to no rise, which leaves it as planned: logged rejected no_change and nothing changed",
+    async (phase) => {
+      const { userId, run, session } = await inPhase(phase);
+      expect((await coachChangeTarget(userId, run.id, NOW)).allowed).toBe(true);
+
+      const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+      expect(result).toEqual({
+        outcome: "rejected",
+        reason: "no_change",
+        planChange: null,
+        changed: false,
+      });
+      expect(await storedSession(session.id)).toEqual(session);
+      expect(await storedAdjustments(userId)).toEqual([
+        expect.objectContaining({
+          planSessionId: session.id,
+          source: "coach",
+          outcome: "rejected",
+          reason: "no_change",
+          requested: { kind: "scale", factor: 1.1 },
+          applied: null,
+          after: null,
+        }),
+      ]);
+    },
+  );
+
+  it.each(["taper", "race"] as const)("still applies a cut to a %s-week session", async (phase) => {
+    const { userId, run, session } = await inPhase(phase);
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 0.8 });
+
+    expect(result).toMatchObject({ outcome: "applied", changed: true });
+    expect((await storedSession(session.id)).target.distanceM).toBe(6400);
+  });
+
+  it.each(["base", "build", "peak"] as const)(
+    "still lets a %s-week session rise its full 10%%",
+    async (phase) => {
+      const { userId, run, session } = await inPhase(phase);
+
+      const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+      expect(result).toMatchObject({ outcome: "applied", changed: true });
+      expect((await storedSession(session.id)).target.distanceM).toBe(8800);
+      expect(await storedAdjustments(userId)).toEqual([
+        expect.objectContaining({ outcome: "applied", applied: { kind: "scale", factor: 1.1 } }),
+      ]);
+    },
+  );
+});
+
+describe("applyCoachChange on a long run near the race", () => {
+  /**
+   * Thursday's 8 km long run in a peak week, `daysOut` days before a half on the plan's own inputs, in a
+   * week of 24 km done beside it after a 32 km week, with a 10 km run this morning: every other cap lets
+   * it rise its full 10% to 8.8 km.
+   */
+  async function longRunDaysOut(raceDate: string) {
+    const { userId, planId, run, session } = await runner(
+      { type: "long", phase: "peak" },
+      {},
+      {
+        inputs: {
+          ...PLAN_INPUTS,
+          goal: { ...PLAN_INPUTS.goal, kind: "race", distanceKey: "half", raceDate },
+        },
+      },
+    );
+    for (const date of ["2026-10-05", "2026-10-06", "2026-10-08", "2026-10-10"]) {
+      await createSession(userId, planId, { date, status: "done" });
+    }
+    for (const date of ["2026-10-12", "2026-10-13", "2026-10-14"]) {
+      await createSession(userId, planId, { date, status: "done" });
+    }
+    return { userId, run, session: session! };
+  }
+
+  it("leaves a peak-week long run 11 days before a half as planned: a rise is rejected no_change", async () => {
+    const { userId, run, session } = await longRunDaysOut("2026-10-26");
+
+    const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
+
+    expect(result).toMatchObject({ outcome: "rejected", reason: "no_change", changed: false });
+    expect(await storedSession(session.id)).toEqual(session);
+  });
+
+  it("still lets a long run 14 days before a half rise its full 10%", async () => {
+    const { userId, run, session } = await longRunDaysOut("2026-10-29");
 
     const { result } = await apply(userId, run.id, { kind: "scale", factor: 1.1 });
 

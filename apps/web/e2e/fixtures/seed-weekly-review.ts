@@ -64,9 +64,12 @@ export const weeklyReviewCard = {
     "Four runs: easy on Monday and Friday, intervals on Wednesday and the long run on Sunday. Leave the missed tempo out.",
 } as const satisfies WeeklyReview;
 
-/** The coach's note on its one change, without the new numbers, which the card shows from the engine. */
+/**
+ * The coach's note on its one change, without the new numbers, which the card shows from the engine. The
+ * week after the coming one is seedPlan's week 3, a down week, so the note does not promise it more.
+ */
 export const weeklyReviewNote =
-  "Held near last week's long run while the missed session is behind you. It grows again the week after.";
+  "Held near last week's long run while the missed session is behind you. The week after is a planned easier one.";
 
 /** The change the review proposed for the coming week's long run, as the engine applied it. */
 const longRunDelta = { kind: "scale", factor: 0.9 } as const satisfies PlanDelta;

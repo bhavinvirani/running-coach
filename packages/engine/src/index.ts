@@ -1,5 +1,5 @@
 export * from "./constants";
-export { addDays, daysBetween, nextMonday, weekdayIndex, weekdayOf } from "./dates";
+export { addDays, daysBetween, mondayOf, nextMonday, weekdayIndex, weekdayOf } from "./dates";
 export { generatePlan, planStartVolume } from "./plan/generate";
 export { applyDelta, sameSession } from "./rules/apply-delta";
 export type { AdjustedSession, DeltaSession } from "./rules/apply-delta";
@@ -16,6 +16,10 @@ export type { BestEffort, BestEffortsInput } from "./rules/best-efforts";
 export { validateDelta } from "./rules/delta";
 export type { DeltaContext, DeltaResult, DeltaWeekSession } from "./rules/delta";
 export { hardShareHolds, hardTimeS } from "./rules/easy-share";
+export { easyRunCapM, easySharesPercent, easySplitM } from "./rules/easy-split";
+export type { EasySharesInput, EasySplitInput } from "./rules/easy-split";
+export { fastFinishM, fastFinishWeeks, longRunSteps, shorterFinishM } from "./rules/fast-finish";
+export type { FastFinishWeek, LongRunStepsInput } from "./rules/fast-finish";
 export { garminWorkout } from "./rules/garmin-workout";
 export type { GarminWorkoutInput } from "./rules/garmin-workout";
 export { hardSessionTooClose, isSpacedFromHardDay, weekLayout } from "./rules/hard-days";
@@ -59,12 +63,20 @@ export {
   qualitySteps,
   qualityWork,
   qualityZones,
+  taperKeepsWork,
   workCapM,
 } from "./rules/quality";
-export type { QualityStepsInput, Work, WorkZone } from "./rules/quality";
-export { raceWeekDays, taperPracticeDate } from "./rules/race-week";
-export type { RaceWeekDays, RaceWeekDaysInput, TaperPracticeInput } from "./rules/race-week";
+export type { QualityStepsInput, QualityWorkInput, Work, WorkZone } from "./rules/quality";
+export { practiceReps, raceWeekDays, raceWeekSessions, raceWeekShortestM } from "./rules/race-week";
+export type {
+  RaceWeekDay,
+  RaceWeekDayKind,
+  RaceWeekDaysInput,
+  RaceWeekSessionsInput,
+} from "./rules/race-week";
 export { reEntryFactor } from "./rules/re-entry";
+export { roundedRunM, roundedRunsM } from "./rules/run-rounding";
+export type { RoundedRunsInput } from "./rules/run-rounding";
 export { reEntryPlan } from "./rules/re-entry-plan";
 export type {
   ReEntryChange,
@@ -72,7 +84,7 @@ export type {
   ReEntryResult,
   ReEntrySession,
 } from "./rules/re-entry-plan";
-export { scaleSession, scaleSteps } from "./rules/scale-session";
+export { hasExtras, plainRunSteps, scaleSession, scaleSteps } from "./rules/scale-session";
 export type { ScaleSessionResult, ScaleStepsInput } from "./rules/scale-session";
 export {
   bandMidpointSPerKm,
@@ -89,18 +101,36 @@ export type {
   MatchSessionsInput,
   SessionMatch,
 } from "./rules/session-match";
-export { taperBlocks, taperPeakM, taperStartDate, taperVolumesM } from "./rules/taper";
+export { stridesM, stridesRepeat, stridesRunIndex, withStrides } from "./rules/strides";
+export type { StridesRunInput, WithStridesInput } from "./rules/strides";
+export { taperPeakM } from "./rules/taper";
+export type { TaperPeakInput } from "./rules/taper";
+export {
+  inTaperLongRunBands,
+  longRunDayCapM,
+  longRunKeepsDay,
+  taperLongRunCapM,
+  weekRunCaps,
+} from "./rules/taper-long-run";
 export type {
-  TaperBlock,
-  TaperBlocksInput,
-  TaperDatesInput,
-  TaperPeakInput,
-  TaperVolumesInput,
-} from "./rules/taper";
+  LongRunDayCapInput,
+  TaperLongRunBandsInput,
+  TaperLongRunInput,
+  WeekRunCaps,
+  WeekRunCapsInput,
+} from "./rules/taper-long-run";
+export {
+  isRaceBandWeek,
+  taperCeilingM,
+  taperShare,
+  taperWeekCount,
+  thursdayDaysOut,
+} from "./rules/taper-share";
+export type { TaperShareInput, TaperWeekInput } from "./rules/taper-share";
 export { paceAtShareSPerKm, pacesFromVdot, roundVdot, vdotFromPerformance } from "./rules/vdot";
 export type { Performance, TrainingPaces } from "./rules/vdot";
 export { baseCurveM, downWeekM, isDownWeek, weekTargetM } from "./rules/volume-curve";
-export type { BaseCurveInput, WeekTargetInput } from "./rules/volume-curve";
+export type { BaseCurveInput, DownWeekInput, WeekTargetInput } from "./rules/volume-curve";
 export { validateWeekDeltas } from "./rules/week-delta";
 export type {
   WeekDeltaContext,
@@ -109,6 +139,6 @@ export type {
   WeekDeltaSession,
 } from "./rules/week-delta";
 export { fillWeek, minRunDistanceM } from "./rules/week-fill";
-export type { FillWeekInput, FillWeekResult } from "./rules/week-fill";
+export type { FillWeekInput, FillWeekResult, QualityPad } from "./rules/week-fill";
 export { clampWeeklyVolume, maxWeeklyVolumeM } from "./rules/weekly-volume";
 export type { WeeklyVolumeInput, WeeklyVolumeResult } from "./rules/weekly-volume";

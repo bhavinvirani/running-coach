@@ -1,10 +1,10 @@
-import type { PlanGenerationInput } from "@running-coach/shared";
+import type { GeneratedSession, PlanGenerationInput, SessionSteps } from "@running-coach/shared";
 import { describe, expect, it } from "vitest";
 import { addDays } from "../dates";
 import { longestRunSeedM, maxRunM } from "../rules/long-run";
-import { bandMidpointSPerKm } from "../rules/session-target";
+import { bandMidpointSPerKm, sessionTarget } from "../rules/session-target";
 import { minRunDistanceM } from "../rules/week-fill";
-import { buildTrainingWeek, type PlanContext } from "./build-week";
+import { buildTrainingWeek, sizeWeek, type PlanContext } from "./build-week";
 import { generatePlan } from "./generate";
 
 const START = "2026-10-05"; // a Monday
@@ -56,13 +56,16 @@ function weekOne(of: PlanGenerationInput, phase: "base" | "build", targetM: numb
     targetM,
     maxRunM: maxRunM(longestRunSeedM(of.baseline.longestRunM)),
     lastHardDate: null,
+    fastFinish: false,
   }).week;
 }
 
 describe("build week", () => {
   it("keeps the long run the week's longest run: a 3-day week's one-block tempo that would pass it runs easy", () => {
     // A base week of 15 km: 20 min on the easy day would leave a 5763 m long run beside a 5798 m tempo.
-    // The tempo's one block is its last rep, so the tempo runs easy and the long run keeps 6136 m.
+    // The tempo's one block is its last rep, so the tempo runs easy and the long run keeps 6136 m. The two
+    // easy runs split the 8864 m left 58 to 42, Thursday first in an odd week; 500 m steps would take
+    // Thursday past 85% of the long run (5215 m), so the week stays unrounded.
     const fitness: PlanGenerationInput = {
       goal: {
         kind: "fitness",
@@ -81,8 +84,8 @@ describe("build week", () => {
     expect(week.distanceM).toBe(15_000);
     expect(week.sessions.map((session) => [session.type, session.target.distanceM])).toEqual([
       ["long", 6136],
-      ["easy", 4432],
-      ["easy", 4432],
+      ["easy", 5142],
+      ["easy", 3722],
     ]);
   });
 
@@ -130,5 +133,63 @@ describe("build week", () => {
       minRunM,
       20_000 - intervalsM - 3 * minRunM,
     ]);
+  });
+
+  it("caps the long run at what the fixed sessions leave of the week, and runs none where that is under 20 min", () => {
+    // A taper week holding a 4500 m day of the race week's: a 20 min long run fits beside it only
+    // when the week holds 20 min more.
+    const ctx = contextOf(fiveK(4, 5000));
+    const steps: SessionSteps = [{ kind: "run", zone: "easy", distanceM: 4500, durationS: null }];
+    const fixed: GeneratedSession[] = [
+      { date: addDays(START, 5), type: "easy", target: sessionTarget(steps, ctx.paces), steps },
+    ];
+    const sized = (targetM: number) =>
+      sizeWeek(ctx, {
+        slots: { long: addDays(START, 2), quality: [], easy: [] },
+        fixed,
+        keepsBaselineLongest: false,
+        targetM,
+        maxRunM: 20_000,
+        weekNumber: 1,
+        fastFinish: false,
+      }).map((session) => [session.type, session.target.distanceM]);
+    expect(sized(4500 + ctx.minRunM - 1)).toEqual([]);
+    expect(sized(4500 + ctx.minRunM)).toEqual([["long", ctx.minRunM]]);
+  });
+
+  it("runs under 20 min in taper weeks: none, fewer and longer runs instead, the long run alone where the week holds one 20 min run but not two", () => {
+    // A taper week of a long run on Sunday and 3 easy days: each run at least 20 min, so a week
+    // that holds one 20 min run but not two runs the long run alone, and a week under 20 min runs it
+    // at what it holds.
+    const ctx = contextOf(fiveK(4, 5000));
+    const { minRunM } = ctx;
+    const sized = (targetM: number) =>
+      sizeWeek(ctx, {
+        slots: {
+          long: addDays(START, 6),
+          quality: [],
+          easy: [addDays(START, 1), addDays(START, 3), addDays(START, 4)],
+        },
+        keepsBaselineLongest: false,
+        targetM,
+        maxRunM: 20_000,
+        weekNumber: 1,
+        fastFinish: false,
+      }).map((session) => [session.type, session.target.distanceM]);
+    expect(sized(minRunM - 1)).toEqual([["long", minRunM - 1]]);
+    expect(sized(minRunM)).toEqual([["long", minRunM]]);
+    expect(sized(2 * minRunM - 1)).toEqual([["long", 2 * minRunM - 1]]);
+    expect(sized(2 * minRunM)).toEqual([
+      ["long", minRunM],
+      ["easy", minRunM],
+    ]);
+    // 4 runs at 20 min need 4 of them; a week 1 m short runs 3, none under 20 min.
+    const fourM = sized(4 * minRunM);
+    expect(fourM).toHaveLength(4);
+    const threeM = sized(4 * minRunM - 1);
+    expect(threeM).toHaveLength(3);
+    for (const [, meters] of [...fourM, ...threeM]) {
+      expect(meters).toBeGreaterThanOrEqual(minRunM);
+    }
   });
 });
