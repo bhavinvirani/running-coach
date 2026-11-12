@@ -8,7 +8,7 @@ dependencies = [
     "garminconnect==0.3.17",
     "fastapi==0.162.0",
     "uvicorn==0.54.0",
-    "pydantic==2.14.1",
+    "pydantic==2.14.3",
     # garmin:connect's CA store: python.org's macOS Python ships an OpenSSL with none.
     "certifi==2026.10.23",
 ]
