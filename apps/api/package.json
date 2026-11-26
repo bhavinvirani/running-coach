@@ -21,13 +21,13 @@
     "@anthropic-ai/sdk": "0.134.0",
     "@running-coach/engine": "workspace:*",
     "@running-coach/shared": "workspace:*",
-    "better-auth": "1.7.12",
+    "better-auth": "1.7.26",
     "cors": "2.8.6",
     "drizzle-orm": "0.45.4",
     "express": "5.3.0",
     "helmet": "8.3.0",
     "pg": "8.23.1",
-    "pg-boss": "12.38.0",
+    "pg-boss": "12.38.2",
     "pino": "10.4.0",
     "pino-http": "11.0.0",
     "zod": "4.6.7"
@@ -40,10 +40,10 @@
     "@types/supertest": "7.2.1",
     "drizzle-kit": "0.31.11",
     "pino-pretty": "13.2.0",
-    "supertest": "7.3.1",
+    "supertest": "7.3.2",
     "tsup": "8.5.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "5.0.5"
+    "vitest": "5.1.1"
   }
 }
