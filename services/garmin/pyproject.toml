@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     # Pinned exactly and excluded from Dependabot auto-merge: Garmin breaks the client without notice.
     "garminconnect==0.3.17",
-    "fastapi==0.162.5",
+    "fastapi==0.165.0",
     "uvicorn==0.54.0",
     "pydantic==2.14.3",
     # garmin:connect's CA store: python.org's macOS Python ships an OpenSSL with none.
@@ -15,7 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.17.4",
+    "ruff==0.17.5",
     "mypy==2.4.1",
     "pytest==9.2.0",
     "httpx==0.28.1",
